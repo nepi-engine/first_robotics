@@ -1,0 +1,15 @@
+APP_DICT:
+  display_name: WPILib
+  description: Connects to WPILib
+  pkg_name: nepi_app_wpilib
+  group_name: DATA
+  config_file: app_wpilib.yaml
+  app_file: wpilib_app_node.py
+  node_name: app_wpilib
+  license_type: 3-clause BSD
+  license_link: https://opensource.org/licenses/BSD-3-Clause
+RUI_DICT:
+  rui_files:
+  - NepiAppWpilib.js
+  rui_main_file: NepiAppWpilib.js
+  rui_main_class: NepiAppWpilib
