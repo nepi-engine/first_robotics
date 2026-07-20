@@ -1,0 +1,15 @@
+APP_DICT:
+  display_name: Obstacle App
+  description: Obstacle Localization App
+  pkg_name: nepi_app_obstacles
+  group_name: PROCESS
+  config_file: app_obstacles.yaml
+  app_file: obstacles_app_node.py
+  node_name: app_obstacles
+  license_type: 3-clause BSD
+  license_link: https://opensource.org/licenses/BSD-3-Clause
+RUI_DICT:
+  rui_files:
+  - NepiAppObstacles.js
+  rui_main_file: NepiAppObstacles.js
+  rui_main_class: NepiAppObstacles
