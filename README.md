@@ -1,3 +1,3 @@
 # first_robotics
-NEPI First Robotic Project Repos and Files.
+NEPI First Robotic Project Repos and Files
 
