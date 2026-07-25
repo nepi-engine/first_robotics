@@ -2,16 +2,7 @@
 """Custom stereo depth library for NEPI.
 
 Produces a metric depth map (distance in millimeters) from a rectified
-left/right stereo image pair using OpenCV block matching.
-
-Pipeline
---------
-    L / R cv2 images
-        -> (optional) grayscale
-        -> disparity  (cv2.StereoSGBM / cv2.StereoBM)
-        -> depth in mm  ( Z = focal_px * baseline_mm / disparity )
-        -> (optional) clamp + median smooth
-        -> (H, W) float32 matrix, each entry = distance in mm
+left/right stereo image pair using OpenCV block matching algorithm.
 
 Assumptions
 -----------
@@ -179,7 +170,7 @@ def compute_depth_map(left_image: np.ndarray, right_image: np.ndarray, settings:
     matcher = _build_matcher(cfg)
 
     
-    # StereoBM/SGBM return disparity as int16 fixed-point scaled by 16.
+    # BM/SGBM return disparity as int16 fixed-point scaled by 16.
     raw_disparity = matcher.compute(left, right)
     disparity = raw_disparity.astype(np.float32) / 16.0
 
