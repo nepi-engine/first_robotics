@@ -19,7 +19,7 @@ from nepi_sdk import nepi_utils
 from nepi_api.device_if_idx import IDXDeviceIF 
 
 from nepi_idx_custom_stereo.calibrate import Rectifier
-from nepi_stereo import (
+from nepi_idx_custom_stereo.stereo_settings import (
     PROCESSES_DICT,
     DEFAULT_PROCESS,
     create_processes_dict,
