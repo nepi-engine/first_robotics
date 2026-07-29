@@ -169,7 +169,7 @@ fi
 SCRIPTS_SOURCE_PATH=$(pwd)/test_data
 SCRIPTS_DEST_PATH=/mnt/nepi_storage/test_data
 echo ""
-echo "Syncing NEPI scripts from ${SCRIPTS_SOURCE_PATH} to ${SCRIPTS_DEST_PATH}"
+echo "Syncing NEPI test_data from ${SCRIPTS_SOURCE_PATH} to ${SCRIPTS_DEST_PATH}"
 if [ "${NEPI_REMOTE_SETUP}" == "0" ]; then
   rsync -arh  --delete ${RSYNC_EXCLUDES} ${SCRIPTS_SOURCE_PATH}/ ${SCRIPTS_DEST_PATH}/
 
