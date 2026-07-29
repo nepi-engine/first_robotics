@@ -137,7 +137,7 @@ fi
 ###############################################
 # Deploy Nepi Apps
 ###############################################
-  APPS="nepi_app_obstacles nepi_auto_move_app nepi_stereo_cam_app nepi_wpilib_if_app "
+  APPS="nepi_app_obstacles nepi_app_auto_move nepi_app_stereo_cam nepi_app_wpilib_if "
 
   RSYNC_EXCLUDES=" --exclude .git --exclude .gitmodules --exclude empty.txt"
   #echo "Excluding ${RSYNC_EXCLUDES}"
