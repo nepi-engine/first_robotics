@@ -19,6 +19,8 @@ import time
 
 from std_msgs.msg import Bool, Empty, String, Float32
 
+from nepi_interfaces.msg import UpdateFloat
+
 from nepi_app_custom_stereo.msg import NepiAppCustomStereoStatus
 
 from nepi_sdk import nepi_sdk
@@ -75,6 +77,43 @@ class ConnectAppCustomStereo:
             'reload_processes': {
                 'namespace': self.namespace,
                 'topic': 'reload_processes',
+                'msg': Empty,
+                'qsize': 1
+            },
+            # Stereo calibration (same topics the RUI calibration panel drives)
+            'set_calib_board_value': {
+                'namespace': self.namespace,
+                'topic': 'set_calib_board_value',
+                'msg': UpdateFloat,
+                'qsize': 1
+            },
+            'set_calib_file': {
+                'namespace': self.namespace,
+                'topic': 'set_calib_file',
+                'msg': String,
+                'qsize': 1
+            },
+            'capture_calib_frame': {
+                'namespace': self.namespace,
+                'topic': 'capture_calib_frame',
+                'msg': Empty,
+                'qsize': 1
+            },
+            'solve_calib': {
+                'namespace': self.namespace,
+                'topic': 'solve_calib',
+                'msg': Empty,
+                'qsize': 1
+            },
+            'clear_calib': {
+                'namespace': self.namespace,
+                'topic': 'clear_calib',
+                'msg': Empty,
+                'qsize': 1
+            },
+            'load_calib': {
+                'namespace': self.namespace,
+                'topic': 'load_calib',
                 'msg': Empty,
                 'qsize': 1
             },
@@ -162,6 +201,48 @@ class ConnectAppCustomStereo:
     def reload_processes(self):
         """Trigger a reload of the stereo processes module."""
         self.con_node_if.publish_pub('reload_processes', Empty())
+
+    def set_calib_board(self, board_cols=None, board_rows=None, square_mm=None):
+        """Describe the chessboard: INNER corner counts + printed square size.
+
+        Changing the corner counts clears any captured views in the app node.
+        """
+        for name, value in (('board_cols', board_cols),
+                            ('board_rows', board_rows),
+                            ('square_mm', square_mm)):
+            if value is None:
+                continue
+            msg = UpdateFloat()
+            msg.name = name
+            msg.value = float(value)
+            self.con_node_if.publish_pub('set_calib_board_value', msg)
+
+    def set_calib_file(self, calib_file):
+        """Set where the calibration .npz is written / read."""
+        msg = String()
+        msg.data = calib_file
+        self.con_node_if.publish_pub('set_calib_file', msg)
+
+    def capture_calib_frame(self):
+        """Find the board in the current L/R pair and keep it for the solve.
+
+        Call this once per board pose (~10-20 poses at varied distances, angles
+        and image corners). Results land in the status message's calib_message /
+        calib_capture_count.
+        """
+        self.con_node_if.publish_pub('capture_calib_frame', Empty())
+
+    def solve_calib(self):
+        """Solve from the captured views, save the .npz, and start rectifying."""
+        self.con_node_if.publish_pub('solve_calib', Empty())
+
+    def clear_calib(self):
+        """Drop the captured views (does not delete a saved .npz)."""
+        self.con_node_if.publish_pub('clear_calib', Empty())
+
+    def load_calib(self):
+        """Reload the calibration .npz at the configured path."""
+        self.con_node_if.publish_pub('load_calib', Empty())
 
     def save_config(self):
         self.con_node_if.publish_pub('save_config', Empty())

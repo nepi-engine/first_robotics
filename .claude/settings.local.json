@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find \"\\\\\\\\\\\\\\\\wsl.localhost\\\\\\\\Ubuntu\\\\\\\\home\\\\\\\\sohum\\\\\\\\first_robotics\" -type f -name \"*.py\" 2>/dev/null | head -50)",
+      "Read(///wsl.localhost/Ubuntu/home/sohum/**)"
+    ]
+  }
+}

@@ -31,6 +31,28 @@ string left_image_topic
 string right_image_topic
 
 #####################
+# Stereo calibration (RUI-driven; see calibrate.StereoCalibrator)
+# True once a calibration .npz is loaded and frames are being rectified
+bool calib_loaded
+# Path the .npz is written to / read from
+string calib_file
+# Chessboard description (INNER corner counts + printed square size)
+int32 calib_board_cols
+int32 calib_board_rows
+float32 calib_square_mm
+# Board views captured so far in this calibration session
+int32 calib_capture_count
+# Minimum captures needed before a solve is allowed
+int32 calib_min_captures
+# Last calibration action result, shown verbatim in the RUI
+string calib_message
+# Geometry from the loaded calibration (0.0 when none loaded)
+float32 calib_focal_length_px
+float32 calib_baseline_mm
+# Rectified epipolar RMS from the last solve; < 1 px is good
+float32 calib_epipolar_rms_px
+
+#####################
 # Depth output
 # Depth map topic published by this app's IDX interface (feeds the large viewer)
 string depth_map_topic

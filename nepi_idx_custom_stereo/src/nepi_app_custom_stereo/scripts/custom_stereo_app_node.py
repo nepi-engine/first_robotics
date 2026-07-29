@@ -29,15 +29,22 @@ idx_custom_stereo_node.py logic. It brings up:
     (create/update_processes_dict), following nepi_app_pan_tilt_auto.
   * An IDXDeviceIF that reports the depth_map data product, using the
     developer's getDepthMap logic.
+  * A stereo calibration panel (RUI NepiAppCustomStereo-Calibration.js ->
+    the set_calib_* / capture_calib_frame / solve_calib / clear_calib /
+    load_calib topics), backed by calibrate.StereoCalibrator. Solving writes
+    the .npz, loads it into a Rectifier, and pushes the measured
+    focal_length_px / baseline_mm into every process so depth is true mm.
 
 WHAT IS DEFERRED (clearly marked TODOs for the next developer):
   * The real per-frame path: subscribing to the two SELECTED camera image
     topics, converting to cv2 frames, rectifying, and feeding them into
-    compute_depth_map. Right now grabPair() is a marked skeleton.
-  * Real stereo calibration (calibrate.py) and the calib .npz path.
+    compute_depth_map. Right now grabPair() is a marked skeleton -- it is the
+    ONE seam still missing, and both depth AND calibration capture read their
+    frames through it, so both start working the moment it returns frames.
   * Filling out device_info / capSettings / factorySettings for the IDX IF.
 """
 
+import os
 import time
 import copy
 import importlib
@@ -65,7 +72,8 @@ from nepi_api.connect_device_if_idx import ConnectIDXDeviceIF
 # developer's original node used package-qualified names for the wrong package
 # (nepi_idx_custom_stereo.*); reconciled here to bare sibling imports, matching
 # stereo_settings.py / calibrate.py.
-from calibrate import Rectifier
+import calibrate
+from calibrate import Rectifier, StereoCalibrator
 import stereo_settings
 
 
@@ -111,9 +119,12 @@ class NepiCustomStereoApp(object):
     processes_dict = stereo_settings.create_processes_dict()
     process_ready = True
 
-    # Rectification (calibration is offline; see calibrate.py)
+    # Rectification + calibration (driven from the RUI; see calibrate.py)
     rectifier = None
-    calib_path = None
+    calibrator = None
+    calib_file = None
+    calib_message = 'no calibration loaded'
+    calib_epipolar_rms_px = 0.0
 
     # Framerate throttle + runtime data
     max_framerate = DEFAULT_MAX_FRAMERATE
@@ -152,15 +163,15 @@ class NepiCustomStereoApp(object):
         self.stereo_data_dict = stereo_settings.get_blank_data_dict()
         self.max_framerate = self.DEFAULT_MAX_FRAMERATE
 
-        # ---- Rectification ----
-        # TODO: point calib_path at the real stereo calibration .npz produced by
-        # calibrate.calibrate(); when present, push the true geometry into every
-        # process's settings (developer's original loop, kept for the next dev):
-        #   self.rectifier = Rectifier(self.calib_path)
-        #   for proc in self.processes_dict.values():
-        #       proc["focal_length_px"] = self.rectifier.focal_length_px
-        #       proc["baseline_mm"] = self.rectifier.baseline_mm
+        # ---- Calibration / rectification ----
+        # Calibration is driven from the RUI "Stereo Calibration" panel (see the
+        # calib_* subscribers below and calibrate.StereoCalibrator). The solved
+        # .npz is loaded into a Rectifier, whose true focal_length_px /
+        # baseline_mm are pushed into every process's settings so depth comes out
+        # in real mm. A previously saved calibration is reloaded in initCb().
         self.rectifier = None
+        self.calib_file = calibrate.default_calib_path()
+        self.calibrator = StereoCalibrator()
 
         ##############################
         ### Setup Node
@@ -183,6 +194,24 @@ class NepiCustomStereoApp(object):
             'processes_dict': {
                 'namespace': self.node_namespace,
                 'factory_val': self.processes_dict
+            },
+            # Calibration is persisted as (file path + board description) only --
+            # the maps themselves live in the .npz, which is reloaded on boot.
+            'calib_file': {
+                'namespace': self.node_namespace,
+                'factory_val': self.calib_file
+            },
+            'calib_board_cols': {
+                'namespace': self.node_namespace,
+                'factory_val': calibrate.DEFAULT_BOARD_COLS
+            },
+            'calib_board_rows': {
+                'namespace': self.node_namespace,
+                'factory_val': calibrate.DEFAULT_BOARD_ROWS
+            },
+            'calib_square_mm': {
+                'namespace': self.node_namespace,
+                'factory_val': calibrate.DEFAULT_SQUARE_MM
             }
         }
 
@@ -221,6 +250,57 @@ class NepiCustomStereoApp(object):
                 'msg': UpdateFloat,
                 'qsize': 10,
                 'callback': self.setProcessControlValueCb,
+                'callback_args': ()
+            },
+            # ---- RUI stereo calibration panel ----
+            # Board description, one value at a time (UpdateFloat name/value):
+            # 'board_cols', 'board_rows' or 'square_mm'.
+            'set_calib_board_value': {
+                'namespace': self.node_namespace,
+                'topic': 'set_calib_board_value',
+                'msg': UpdateFloat,
+                'qsize': 10,
+                'callback': self.setCalibBoardValueCb,
+                'callback_args': ()
+            },
+            'set_calib_file': {
+                'namespace': self.node_namespace,
+                'topic': 'set_calib_file',
+                'msg': String,
+                'qsize': 10,
+                'callback': self.setCalibFileCb,
+                'callback_args': ()
+            },
+            'capture_calib_frame': {
+                'namespace': self.node_namespace,
+                'topic': 'capture_calib_frame',
+                'msg': Empty,
+                'qsize': 10,
+                'callback': self.captureCalibFrameCb,
+                'callback_args': ()
+            },
+            'solve_calib': {
+                'namespace': self.node_namespace,
+                'topic': 'solve_calib',
+                'msg': Empty,
+                'qsize': 10,
+                'callback': self.solveCalibCb,
+                'callback_args': ()
+            },
+            'clear_calib': {
+                'namespace': self.node_namespace,
+                'topic': 'clear_calib',
+                'msg': Empty,
+                'qsize': 10,
+                'callback': self.clearCalibCb,
+                'callback_args': ()
+            },
+            'load_calib': {
+                'namespace': self.node_namespace,
+                'topic': 'load_calib',
+                'msg': Empty,
+                'qsize': 10,
+                'callback': self.loadCalibCb,
                 'callback_args': ()
             }
         }
@@ -360,6 +440,97 @@ class NepiCustomStereoApp(object):
 
 
     ###################
+    ## Stereo calibration (RUI "Stereo Calibration" panel)
+    #
+    # Flow: point the board at both cameras -> Capture (repeat ~10-20x at varied
+    # distances / angles / image corners) -> Solve. Solve writes the .npz to
+    # calib_file, loads it into a Rectifier, and pushes the measured
+    # focal_length_px / baseline_mm into every process so depth is real mm.
+    # Every step sets self.calib_message, which the RUI displays verbatim.
+
+    def applyRectifier(self, rectifier):
+        """Install a Rectifier and push its geometry into every process."""
+        self.rectifier = rectifier
+        if rectifier is None:
+            return
+        for settings in self.processes_dict.values():
+            settings['focal_length_px'] = rectifier.focal_length_px
+            settings['baseline_mm'] = rectifier.baseline_mm
+        if self.node_if is not None:
+            self.node_if.set_param('processes_dict', self.processes_dict)
+
+    def loadCalibration(self, calib_file=None, quiet=False):
+        """Load a saved .npz and start rectifying. Returns (ok, message)."""
+        calib_file = calib_file if calib_file is not None else self.calib_file
+        if not calib_file or not os.path.isfile(calib_file):
+            message = 'no calibration file at ' + str(calib_file)
+            if not quiet:
+                self.msg_if.pub_warn(message)
+            self.calib_message = message
+            return False, message
+        try:
+            rectifier = Rectifier(calib_file)
+        except Exception as e:
+            # A truncated / wrong-format .npz must not take the node down.
+            message = 'failed to load ' + str(calib_file) + ': ' + str(e)
+            self.msg_if.pub_warn(message)
+            self.calib_message = message
+            return False, message
+        self.applyRectifier(rectifier)
+        self.calib_file = calib_file
+        message = ('loaded ' + os.path.basename(calib_file) +
+                   ': f %.1f px, baseline %.1f mm, %dx%d' % (
+                       rectifier.focal_length_px, rectifier.baseline_mm,
+                       rectifier.image_size[0], rectifier.image_size[1]))
+        self.msg_if.pub_info(message)
+        self.calib_message = message
+        return True, message
+
+    def setCalibBoardValue(self, name, value):
+        """RUI edited one of the board description values."""
+        if name in ('board_cols', 'cols'):
+            ok, message = self.calibrator.set_board(cols=int(round(value)))
+        elif name in ('board_rows', 'rows'):
+            ok, message = self.calibrator.set_board(rows=int(round(value)))
+        elif name in ('square_mm', 'calib_square_mm'):
+            ok, message = self.calibrator.set_board(square_mm=float(value))
+        else:
+            return False, 'unknown calibration board value: ' + str(name)
+        if ok and self.node_if is not None:
+            self.node_if.set_param('calib_board_cols', self.calibrator.cols)
+            self.node_if.set_param('calib_board_rows', self.calibrator.rows)
+            self.node_if.set_param('calib_square_mm', self.calibrator.square_mm)
+            self.node_if.save_config()
+        return ok, message
+
+    def captureCalibFrame(self):
+        """Grab the live L/R pair and look for the board in both."""
+        ok, left, right = self.grabPair()
+        if not ok:
+            return False, 'no camera frames -- select both cameras first'
+        # Raw (unrectified) frames on purpose: calibration is what PRODUCES the
+        # rectification, so feeding it rectified frames would bake the current
+        # calibration into the new one.
+        return self.calibrator.capture(left, right)
+
+    def solveCalibration(self):
+        """Solve from the captured views, save, and start rectifying."""
+        ok, message, info = self.calibrator.solve(self.calib_file)
+        if not ok:
+            return False, message
+        loaded, load_message = self.loadCalibration(self.calib_file)
+        if not loaded:
+            return False, message + ' | ' + load_message
+        self.calib_epipolar_rms_px = float(info['epipolar_rms_px'])
+        if self.node_if is not None:
+            self.node_if.set_param('calib_file', self.calib_file)
+            self.node_if.save_config()
+        # Keep the captures: a poor epipolar RMS is usually fixed by adding a
+        # few more views and solving again, not by starting over.
+        return True, message
+
+
+    ###################
     ## Frame acquisition + depth map (developer's idx_custom_stereo_node logic)
 
     def grabPair(self):
@@ -400,6 +571,19 @@ class NepiCustomStereoApp(object):
 
         # Rectify (compute_depth_map assumes rectified input)
         if self.rectifier is not None:
+            if not self.rectifier.matches(left):
+                # Camera resolution changed since calibration -- the maps no
+                # longer apply, and matching unrectified frames would produce
+                # confidently wrong depth. Refuse rather than publish garbage.
+                message = (
+                    'frame %dx%d does not match calibration %dx%d -- recalibrate'
+                    % (left.shape[1], left.shape[0],
+                       self.rectifier.image_size[0], self.rectifier.image_size[1]))
+                # Warn once per distinct problem instead of every update tick.
+                if message != self.calib_message:
+                    self.msg_if.pub_warn(message)
+                    self.calib_message = message
+                return False
             left, right = self.rectifier.rectify(left, right)
 
         # Run the selected stereo process (fills self.stereo_data_dict)
@@ -516,6 +700,56 @@ class NepiCustomStereoApp(object):
                 values.append(float(val))
         return names, values
 
+    ## RUI stereo calibration panel callbacks. Each one records the result in
+    ## self.calib_message and republishes status, so the panel always shows what
+    ## the last press actually did.
+
+    def _finishCalibAction(self, ok, message):
+        self.calib_message = message
+        if ok:
+            self.msg_if.pub_info(message)
+        else:
+            self.msg_if.pub_warn(message)
+        self.publish_status()
+
+    def setCalibBoardValueCb(self, msg):
+        ok, message = self.setCalibBoardValue(msg.name, msg.value)
+        self._finishCalibAction(ok, message)
+
+    def setCalibFileCb(self, msg):
+        calib_file = msg.data.strip()
+        if not calib_file:
+            self._finishCalibAction(False, 'calibration file path cannot be empty')
+            return
+        if not calib_file.endswith('.npz'):
+            calib_file = calib_file + '.npz'
+        self.calib_file = calib_file
+        if self.node_if is not None:
+            self.node_if.set_param('calib_file', self.calib_file)
+            self.node_if.save_config()
+        # Loading is best-effort: the path may be where a future solve will
+        # WRITE, in which case there is nothing to read yet.
+        ok, message = self.loadCalibration(self.calib_file, quiet=True)
+        if not ok:
+            message = 'calibration file set to ' + self.calib_file + ' (not present yet)'
+        self._finishCalibAction(True, message)
+
+    def captureCalibFrameCb(self, msg):
+        ok, message = self.captureCalibFrame()
+        self._finishCalibAction(ok, message)
+
+    def solveCalibCb(self, msg):
+        ok, message = self.solveCalibration()
+        self._finishCalibAction(ok, message)
+
+    def clearCalibCb(self, msg):
+        ok, message = self.calibrator.clear()
+        self._finishCalibAction(ok, message)
+
+    def loadCalibCb(self, msg):
+        ok, message = self.loadCalibration(self.calib_file)
+        self._finishCalibAction(ok, message)
+
     def reloadProcessesCb(self, msg):
         # Reload the stereo_settings module so edits to the processes registry are
         # picked up without restarting the node (pattern from pan_tilt_auto
@@ -528,6 +762,9 @@ class NepiCustomStereoApp(object):
             self.available_processes = list(stereo_settings.PROCESSES_DICT.keys())
             if self.selected_process not in self.available_processes:
                 self.selected_process = self.available_processes[0]
+            # A reload re-seeds settings from the module defaults, which would
+            # otherwise throw away the calibrated geometry.
+            self.applyRectifier(self.rectifier)
             self.msg_if.pub_info("Stereo processes reloaded")
             self.process_ready = True
         except Exception as e:
@@ -545,6 +782,15 @@ class NepiCustomStereoApp(object):
             self.processes_dict = stereo_settings.update_processes_dict(processes_dict)
             if self.selected_process not in self.processes_dict.keys():
                 self.selected_process = list(self.processes_dict.keys())[0]
+            # Restore the calibration the operator saved from the RUI: the board
+            # description plus the .npz path, which is reloaded if it still
+            # exists (quiet -- a device with no calibration yet is normal).
+            self.calib_file = self.node_if.get_param('calib_file')
+            self.calibrator.set_board(
+                cols=self.node_if.get_param('calib_board_cols'),
+                rows=self.node_if.get_param('calib_board_rows'),
+                square_mm=self.node_if.get_param('calib_square_mm'))
+            self.loadCalibration(self.calib_file, quiet=True)
         if do_updates:
             pass
         self.publish_status()
@@ -621,6 +867,21 @@ class NepiCustomStereoApp(object):
         # Depth map topic published by our IDX interface
         status_msg.depth_map_topic = nepi_sdk.create_namespace(
             self.node_namespace, IDX_DEPTH_SUBTOPIC)
+
+        # Stereo calibration panel state
+        status_msg.calib_loaded = (self.rectifier is not None)
+        status_msg.calib_file = str(self.calib_file)
+        status_msg.calib_board_cols = int(self.calibrator.cols)
+        status_msg.calib_board_rows = int(self.calibrator.rows)
+        status_msg.calib_square_mm = float(self.calibrator.square_mm)
+        status_msg.calib_capture_count = int(self.calibrator.count)
+        status_msg.calib_min_captures = int(calibrate.MIN_PAIRS)
+        status_msg.calib_message = str(self.calib_message)
+        status_msg.calib_focal_length_px = (
+            float(self.rectifier.focal_length_px) if self.rectifier is not None else 0.0)
+        status_msg.calib_baseline_mm = (
+            float(self.rectifier.baseline_mm) if self.rectifier is not None else 0.0)
+        status_msg.calib_epipolar_rms_px = float(self.calib_epipolar_rms_px)
 
         # Framerate + depth summary
         status_msg.max_framerate = self.max_framerate

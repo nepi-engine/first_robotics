@@ -12,5 +12,6 @@ RUI_DICT:
   rui_files:
   - NepiAppCustomStereo.js
   - NepiAppCustomStereo-Controls.js
+  - NepiAppCustomStereo-Calibration.js
   rui_main_file: NepiAppCustomStereo.js
   rui_main_class: NepiAppCustomStereo

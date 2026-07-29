@@ -30,6 +30,7 @@ import NepiIFImageViewer from "./Nepi_IF_ImageViewer"
 import NepiIFConfig from "./Nepi_IF_Config"
 
 import NepiAppCustomStereoControls from "./NepiAppCustomStereo-Controls"
+import NepiAppCustomStereoCalibration from "./NepiAppCustomStereo-Calibration"
 
 @inject("ros")
 @observer
@@ -248,6 +249,13 @@ class NepiAppCustomStereo extends Component {
 
           <div style={{ width: "25%" }}>
             <NepiAppCustomStereoControls
+              appNamespace={appNamespace}
+              status_msg={this.state.status_msg}
+            />
+            {/* Stereo calibration (chessboard capture -> solve -> rectify).
+                Lives under the process controls in the same column: it is
+                setup you do once, not a per-frame control. */}
+            <NepiAppCustomStereoCalibration
               appNamespace={appNamespace}
               status_msg={this.state.status_msg}
             />

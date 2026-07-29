@@ -92,7 +92,7 @@ sgbm_1_settings = {
     # Required Fields (camera geometry, from calibration)
     'baseline_mm': 60.0,
     'focal_length_px': 700.0,
-    'is_grayscale': True,
+    'convert_to_grayscale': True,
 
     # Block matching
     'min_disparity': 0,
