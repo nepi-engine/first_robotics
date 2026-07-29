@@ -1,8 +1,8 @@
 <?xml version="1.0"?>
 <package format="2">
-  <name>nepi_app_obstacles</name>
+  <name>nepi_app_wpilib_if</name>
   <version>0.0.0</version>
-  <description>Obstacle Localization App</description>
+  <description>Connects NEPI to WPILib Network Tables</description>
 
   <maintainer email="nepi@numurus.com">numurus</maintainer>
 

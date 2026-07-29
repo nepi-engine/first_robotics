@@ -1,8 +1,8 @@
 <?xml version="1.0"?>
 <package format="2">
-  <name>nepi_app_obstacles</name>
+  <name>nepi_app_auto_move</name>
   <version>0.0.0</version>
-  <description>Obstacle Localization App</description>
+  <description>Auto move with obstacle avoidance application</description>
 
   <maintainer email="nepi@numurus.com">numurus</maintainer>
 

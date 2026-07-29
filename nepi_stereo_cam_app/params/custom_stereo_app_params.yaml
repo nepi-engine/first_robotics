@@ -1,0 +1,16 @@
+APP_DICT:
+  display_name: Stereo Cam Depth
+  description: Stereo depth from left/right Images
+  pkg_name: nepi_app_stereo_cam
+  group_name: DATA
+  config_file: app_stereo_cam.yaml
+  app_file: stereo_cam_app_node.py
+  node_name: app_stereo_cam
+  license_type: 3-clause BSD
+  license_link: https://opensource.org/licenses/BSD-3-Clause
+RUI_DICT:
+  rui_files:
+  - NepiAppStereoCam.js
+  - NepiAppStereoCam-Controls.js
+  rui_main_file: NepiAppStereoCam.js
+  rui_main_class: NepiAppStereoCam

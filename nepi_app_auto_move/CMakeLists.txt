@@ -7,7 +7,7 @@ This file is part of nepi-engine
 License: 3-clause BSD, see https://opensource.org/licenses/BSD-3-Clause
 ]]
 cmake_minimum_required(VERSION 3.5)
-project(nepi_app_obstacles)
+project(nepi_app_auto_move)
 
 find_package(catkin REQUIRED COMPONENTS
   message_generation
@@ -16,7 +16,7 @@ find_package(catkin REQUIRED COMPONENTS
 
 ## Generate messages in the 'msg' folder
 add_message_files(FILES
-  NepiAppObstaclesStatus.msg
+  NepiAppAutoMoveStatus.msg
 )
 
 ## Generate services in the 'srv' folder
@@ -40,7 +40,7 @@ include_directories(
 )
 
 catkin_install_python(PROGRAMS
-  scripts/obstacles_app_node.py
+  scripts/auto_move_app_node.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 

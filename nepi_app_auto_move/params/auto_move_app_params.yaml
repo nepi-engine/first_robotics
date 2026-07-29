@@ -1,0 +1,15 @@
+APP_DICT:
+  display_name: Auto Move App
+  description: Auto move with obstacle avoidance application
+  pkg_name: nepi_app_auto_move
+  group_name: PROCESS
+  config_file: app_auto_move.yaml
+  app_file: auto_move_app_node.py
+  node_name: app_auto_move
+  license_type: 3-clause BSD
+  license_link: https://opensource.org/licenses/BSD-3-Clause
+RUI_DICT:
+  rui_files:
+  - NepiAppAutoMove.js
+  rui_main_file: NepiAppAutoMove.js
+  rui_main_class: NepiAppAutoMove
