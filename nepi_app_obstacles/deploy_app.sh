@@ -23,19 +23,13 @@
 # In the case that NEPI_REMOTE_SETUP == 1, some further environment variables must be set
 #    NEPI_TARGET_IP: Target IP address/hostname
      NEPI_TARGET_IP=${NEPI_IP} #/${NEPI_DEVICE_ID}
-#    NEPI_TARGET_USERNAME: Target username
-    nepihost=nepi
-    if [[ "$NEPI_IN_CONTAINER" -eq 1 ]]; then
-      nepihost=nepihost
-    fi
 
-     NEPI_TARGET_USERNAME=${nepihost}
+    nepi_user_build=nepihost
+    nepi_user_live=nepi
+
 #    NEPI_SSH_KEY: Private SSH key for SSH/Rsync to target (as applicable)
      NEPI_SSH_KEY=/home/${USER}/.ssh/nepi_default_ssh_key
-#    NEPI_TARGET_SRC_DIR: Directory to deploy source code to
-     NEPI_TARGET_SRC_DIR=/mnt/nepi_storage/nepi_src
-#    NEPI_SETUP_SRC_DIR: Directory to deploy setup source to
-     NEPI_SETUP_SRC_DIR=/home/${nepihost}
+
 #######################################################################################################
 # # Clear known hosts keys
 # sudo rm /home/${USER}/.ssh/known*
@@ -88,10 +82,7 @@ elif [ "${NEPI_REMOTE_SETUP}" == "1" ]; then
     echo "Remote setup requires env. variable NEPI_TARGET_IP be assigned"
     exit 1
   fi
-  if [[ -z "${NEPI_TARGET_USERNAME}" ]]; then
-    echo "Remote setup requires env. variable NEPI_TARGET_USERNAME be assigned"
-    exit 1
-  fi
+ 
   if [[ -z "${NEPI_SSH_KEY}" ]]; then
     echo "Remote setup requires env. variable NEPI_SSH_KEY be assigned"
     exit 1
@@ -101,29 +92,73 @@ fi
 
 echo $(pwd)
 
-
-###############################################
-# Deploy Nepi App
 ###############################################
 
 APP_FOLDER=$(cd -P "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)
 APP_NAME=$(basename "$APP_FOLDER")
 
+###############################################
+# Deploy Nepi App
+###############################################
+SOURCE_PATH=$APP_FOLDER
+DEST_PATH="/mnt/nepi_storage/nepi_src/nepi_engine_ws/src/nepi_apps/${APP_NAME}"
+
 RSYNC_EXCLUDES=" --exclude .git --exclude .gitmodules"
-echo "Excluding ${RSYNC_EXCLUDES}"
+#echo "Excluding ${RSYNC_EXCLUDES}"
 
-APP_PATH=$APP_FOLDER
-echo "Syncing App Repo ${APP_NAME} from ${APP_PATH}"
-DEST_PATH=${NEPI_TARGET_SRC_DIR}/nepi_engine_ws/src/nepi_apps/${APP_NAME}
+
+echo ""
+echo "--------------------------------------------"
+echo "DEPLOYING BUILD UPDATES"
+echo ""
+echo "Syncing App ${APP_NAME} from ${SOURCE_PATH} to NEPI Build Repo at:" 
 echo "Destination Path ${DEST_PATH}"
-# Push everything but the EXCLUDES to the specified source folder on the target
-
+echo ""
 if [ "${NEPI_REMOTE_SETUP}" == "0" ]; then
-  rsync -avrh  ${RSYNC_EXCLUDES} ${APP_PATH}/* ${DEST_PATH}/
-
+  rsync -avrh  ${RSYNC_EXCLUDES} ${SOURCE_PATH}/* ${DEST_PATH}/
+  echo ""
+  if [[ $? -ne 0 ]]; then
+    echo "Failed connect to NEPI host at: ${DEST_PATH}"
+  else
+    echo "Build Updates Deployed"
+  fi
 elif [ "${NEPI_REMOTE_SETUP}" == "1" ]; then
-  rsync -avzhe "ssh -i ${NEPI_SSH_KEY} -o StrictHostKeyChecking=no" ${RSYNC_EXCLUDES} ${APP_PATH}/* ${NEPI_TARGET_USERNAME}@${NEPI_TARGET_IP}:${DEST_PATH}/
-
+  rsync -avzhe "ssh -i ${NEPI_SSH_KEY} -o StrictHostKeyChecking=no  -p 22" ${RSYNC_EXCLUDES} ${SOURCE_PATH}/* ${nepi_user_build}@${NEPI_TARGET_IP}:${DEST_PATH}/
+  echo ""
+  if [[ $? -ne 0 ]]; then
+    echo "Failed connect to NEPI host: ${NEPI_TARGET_IP}"
+  else
+    echo "Build Updates Deployed"
+  fi
 fi
-  
 
+
+###############################################
+# Deploy App Scripts Live
+###############################################
+SOURCE_PATH=${APP_FOLDER}/scripts
+DEST_PATH=/opt/nepi/nepi_engine/lib/${APP_NAME}
+
+RSYNC_EXCLUDES=" --exclude .git --exclude .gitmodules"
+#echo "Excluding ${RSYNC_EXCLUDES}"
+
+echo ""
+echo "--------------------------------------------"
+echo "DEPLOYING LIVE UPDATES"
+echo ""
+echo "Syncing App ${APP_NAME} from ${SOURCE_PATH} to NEPI Live Folders at:" 
+echo "Destination Path ${DEST_PATH}"
+echo ""
+rsync -avzhe "ssh -i ${NEPI_SSH_KEY} -o StrictHostKeyChecking=no -p 2222" ${RSYNC_EXCLUDES} ${SOURCE_PATH}/* ${nepi_user_live}@${NEPI_TARGET_IP}:${DEST_PATH}/ 2> /dev/null
+echo ""
+if [[ $? -ne 0 ]]; then
+  if [ "${NEPI_REMOTE_SETUP}" == "0" ]; then
+    local_host_ip="localhost"
+  elif [ "${NEPI_REMOTE_SETUP}" == "1" ]; then
+    local_host_ip=$NEPI_TARGET_IP
+  fi
+  echo "Failed connect to a running NEPI container on host: ${local_host_ip}"
+  echo "Live Updates Failed"
+else
+  echo "Live Updates Deployed"
+fi
