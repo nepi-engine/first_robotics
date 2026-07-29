@@ -109,7 +109,7 @@ def _build_matcher(settings: dict):
             mode=cv2.STEREO_SGBM_MODE_SGBM_3WAY,
         )
 
-    #raise ValueError(f"Unknown matcher '{settings['matcher']}' (use 'sgbm' or 'bm')") 
+    raise ValueError(f"Unknown matcher '{settings['matcher']}' (use 'sgbm' or 'bm')")
 
 
 def _disparity_to_depth_mm(disparity: np.ndarray, settings: dict) -> np.ndarray:

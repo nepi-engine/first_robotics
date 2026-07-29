@@ -29,7 +29,12 @@ import NepiIFConnectIDX from "./Nepi_IF_ConnectIDX"
 import NepiIFImageViewer from "./Nepi_IF_ImageViewer"
 import NepiIFConfig from "./Nepi_IF_Config"
 
+<<<<<<< HEAD:nepi_app_stereo_cam/rui/NepiAppStereoCam.js
 import NepiAppStereoCamControls from "./NepiAppStereoCam-Controls"
+=======
+import NepiAppCustomStereoControls from "./NepiAppCustomStereo-Controls"
+import NepiAppCustomStereoCalibration from "./NepiAppCustomStereo-Calibration"
+>>>>>>> 613b70cc1dcbe04f182a97fa90a342c4119f4e8b:nepi_idx_custom_stereo/src/nepi_app_custom_stereo/rui/NepiAppCustomStereo.js
 
 @inject("ros")
 @observer
@@ -248,6 +253,13 @@ class NepiAppStereoCam extends Component {
 
           <div style={{ width: "25%" }}>
             <NepiAppStereoCamControls
+              appNamespace={appNamespace}
+              status_msg={this.state.status_msg}
+            />
+            {/* Stereo calibration (chessboard capture -> solve -> rectify).
+                Lives under the process controls in the same column: it is
+                setup you do once, not a per-frame control. */}
+            <NepiAppCustomStereoCalibration
               appNamespace={appNamespace}
               status_msg={this.state.status_msg}
             />
