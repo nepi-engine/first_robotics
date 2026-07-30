@@ -108,65 +108,13 @@ source /home/${USER}/.bashrc
 
 reset_path=$(pwd)
 
-###############################################
-# Deploy Nepi Engine Overrides Folders and Files
-###############################################
-RSYNC_EXCLUDES=" --exclude .git --exclude .gitmodules --exclude empty.txt"
-#echo "Excluding ${RSYNC_EXCLUDES}"
-
-
-SOURCE_PATH=$(pwd)/nepi_engine_overrides
-SOURCE_DEST_PATH=${NEPI_CONFIG}/system_cfg/src
-# echo -e "${GREEN}Clearing __pycache__ folders"
-find $SOURCE_PATH -type d -name "__pycache__" -exec rm -rf {} +
-echo ""
-echo "Syncing NEPI system config from ${SOURCE_PATH} to ${SOURCE_DEST_PATH}"
-if [ "${NEPI_REMOTE_SETUP}" == "0" ]; then
-  sudo rm -r /mnt/nepi_config/system_cfg/src 2>/dev/null
-  rsync -arh  --delete ${RSYNC_EXCLUDES} ${SOURCE_PATH}/ ${SOURCE_DEST_PATH}/
-
-elif [ "${NEPI_REMOTE_SETUP}" == "1" ]; then
-  ssh -o StrictHostKeyChecking=no -p 22 -i ${NEPI_SSH_KEY} ${NEPI_DEPLOY_USERNAME}@${NEPI_TARGET_IP} \
-  "sudo -S rm -r /mnt/nepi_config/system_cfg/src "
-  echo 'rsync -avzhe "ssh -i '${NEPI_SSH_KEY}' -p '${NEPI_SSH_PORT}' -o StrictHostKeyChecking=no" --delete '${RSYNC_EXCLUDES}' '${SOURCE_PATH}'/ '${NEPI_DEPLOY_USERNAME}'@'${NEPI_TARGET_IP}':'${SOURCE_DEST_PATH}'/'
-  rsync -azhe "ssh -i ${NEPI_SSH_KEY} -p ${NEPI_SSH_PORT} -o StrictHostKeyChecking=no" ${RSYNC_EXCLUDES} ${SOURCE_PATH}/ ${NEPI_DEPLOY_USERNAME}@${NEPI_TARGET_IP}:${SOURCE_DEST_PATH}/
-
-fi
-
-
-###############################################
-# Deploy Nepi Apps
-###############################################
-  APPS="nepi_app_obstacles nepi_app_auto_move nepi_app_stereo_cam nepi_app_wpilib_if "
-
-  RSYNC_EXCLUDES=" --exclude .git --exclude .gitmodules --exclude empty.txt"
-  #echo "Excluding ${RSYNC_EXCLUDES}"
-
-  DEST_PATH=${NEPI_TARGET_SRC_DIR}/nepi_engine_ws/nepi_apps
-  for APP in $APPS; do
-    APP_PATH="$(pwd)/${APP}"
-    echo ""
-    echo "Syncing repo ${APP} from ${APP_PATH} to"
-    echo "${DEST_PATH}"
-    sleep 1
-    # Push everything but the EXCLUDES to the specified source folder on the target
-
-    if [ "${NEPI_REMOTE_SETUP}" == "0" ]; then
-      sudo rsync -arh  --chown=1000:1000 ${RSYNC_EXCLUDES} $(pwd)/${APP} ${DEST_PATH}/
-
-    elif [ "${NEPI_REMOTE_SETUP}" == "1" ]; then
-      rsync -azhe "ssh -i ${NEPI_SSH_KEY} -o StrictHostKeyChecking=no" --chown=1000:1000 ${RSYNC_EXCLUDES} $(pwd)/${APP} ${NEPI_DEPLOY_USERNAME}@${NEPI_TARGET_IP}:${DEST_PATH}/
-
-    fi
-
-  done
 
 
 ###############################################
 # Deploy Nepi Test Data
 ###############################################
 
-SCRIPTS_SOURCE_PATH=$(pwd)/test_data
+SCRIPTS_SOURCE_PATH=$(pwd)
 SCRIPTS_DEST_PATH=/mnt/nepi_storage/test_data
 echo ""
 echo "Syncing NEPI test_data from ${SCRIPTS_SOURCE_PATH} to ${SCRIPTS_DEST_PATH}"
@@ -177,30 +125,5 @@ elif [ "${NEPI_REMOTE_SETUP}" == "1" ]; then
   rsync -azhe "ssh -i ${NEPI_SSH_KEY} -p ${NEPI_SSH_PORT} -o StrictHostKeyChecking=no" --delete ${RSYNC_EXCLUDES} ${SCRIPTS_SOURCE_PATH}/ ${NEPI_DEPLOY_USERNAME}@${NEPI_TARGET_IP}:${SCRIPTS_DEST_PATH}/
 
 fi
-
-###############################################
-# Deploy Nepi Scripts
-###############################################
-
-# SCRIPTS_SOURCE_PATH=$(pwd)/src/nepi_scripts
-# SCRIPTS_DEST_PATH=/mnt/nepi_storage/nepi_scripts
-# echo ""
-# echo "Syncing NEPI scripts from ${SCRIPTS_SOURCE_PATH} to ${SCRIPTS_DEST_PATH}"
-# if [ "${NEPI_REMOTE_SETUP}" == "0" ]; then
-#   rsync -arh  --delete ${RSYNC_EXCLUDES} ${SCRIPTS_SOURCE_PATH}/ ${SCRIPTS_DEST_PATH}/
-
-# elif [ "${NEPI_REMOTE_SETUP}" == "1" ]; then
-#   rsync -azhe "ssh -i ${NEPI_SSH_KEY} -p ${NEPI_SSH_PORT} -o StrictHostKeyChecking=no" --delete ${RSYNC_EXCLUDES} ${SCRIPTS_SOURCE_PATH}/ ${NEPI_DEPLOY_USERNAME}@${NEPI_TARGET_IP}:${SCRIPTS_DEST_PATH}/
-
-# fi
-
-
-# NEPI_ENGINE_WS_FOLDER=/home/${USER}/nepi_engine_ws
-# echo ""
-# echo "Running NEPI Deploy"
-# run_folder=$(pwd)
-# cd $NEPI_ENGINE_WS_FOLDER
-# source ./deploy_nepi_complete.sh
-# cd $run_folder
 
 cd $reset_path
