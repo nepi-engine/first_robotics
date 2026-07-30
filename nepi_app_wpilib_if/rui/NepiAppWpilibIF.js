@@ -286,4 +286,4 @@ class NepiAppWpilibIF extends Component {
   }
 }
 
-export default NepiAppWpilib
+export default NepiAppWpilibIF

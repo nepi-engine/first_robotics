@@ -20,7 +20,7 @@ import copy
 
 from std_msgs.msg import Bool, Empty, String, Float32
 
-from nepi_app_wpilib.msg import NepiAppWpilibIFStatus
+from nepi_app_wpilib_if.msg import NepiAppWpilibIFStatus
 
 from nepi_sdk import nepi_sdk
 
