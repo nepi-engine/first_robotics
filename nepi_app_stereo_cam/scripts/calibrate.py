@@ -58,19 +58,27 @@ MIN_PAIRS = 5
 # Rectified rows must line up this well or block matching will produce mush.
 GOOD_EPIPOLAR_RMS_PX = 1.0
 
-# Where calibration files live on a NEPI device. /mnt/nepi_storage is the
-# device storage mount (see deploy_nepi_apps.sh); the home fallback keeps this
-# usable on a dev box where that mount does not exist.
-CALIB_SUBFOLDER = "stereo_calib"
+# Where calibration files live on a NEPI device: the user config tier on the
+# storage mount, 'cals' subfolder. That is the standard NEPI camera-calibration
+# location -- system_mgr creates user_cfg/cals on boot, and the ZED driver backs
+# its factory cal files up to exactly this folder
+# (idx_zed_node.ZedCamNode.CAL_BACKUP_PATH), so a calibration written here
+# survives a software update along with the rest of the user config.
+USER_CFG_PATH = "/mnt/nepi_storage/user_cfg"
+CAL_PATH = USER_CFG_PATH + "/cals"
 CALIB_FILENAME = "stereo_calib.npz"
 
 
 def default_calib_folder():
-    """First writable calibration folder: env override, storage mount, home."""
+    """First writable calibration folder: env override, device cals, home.
+
+    The home fallback keeps this usable on a dev box, where the device storage
+    mount does not exist.
+    """
     candidates = [
         os.environ.get("NEPI_STEREO_CALIB_DIR"),
-        os.path.join("/mnt/nepi_storage", CALIB_SUBFOLDER),
-        os.path.join(os.path.expanduser("~"), ".nepi", CALIB_SUBFOLDER),
+        CAL_PATH,
+        os.path.join(os.path.expanduser("~"), ".nepi", "cals"),
     ]
     for folder in candidates:
         if not folder:
@@ -81,7 +89,7 @@ def default_calib_folder():
         parent = os.path.dirname(os.path.normpath(folder))
         if os.path.isdir(parent) and os.access(parent, os.W_OK):
             return folder
-    return os.path.join(os.path.expanduser("~"), CALIB_SUBFOLDER)
+    return os.path.join(os.path.expanduser("~"), "cals")
 
 
 def default_calib_path():

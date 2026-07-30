@@ -46,9 +46,9 @@ import NepiAppStereoCamCalibration from "./NepiAppStereoCam-Calibration"
 //     pattern from NepiAppPTAuto-Controls.js).
 //   * Two small image viewers side by side wired to the left/right selected
 //     camera image topics (status_msg.left_image_topic / right_image_topic).
-//   * One large image viewer wired to the depth map topic
-//     (status_msg.depth_map_topic). (pattern from the NepiAppPTAuto-ImageViewer*
-//     family.)
+//   * One large image viewer wired to the colorized depth image topic
+//     (status_msg.depth_map_image_topic, published by the node's DepthMapIF).
+//     (pattern from the NepiAppPTAuto-ImageViewer* family.)
 class NepiAppStereoCam extends Component {
 
   constructor(props) {
@@ -179,7 +179,11 @@ class NepiAppStereoCam extends Component {
     const status_msg = this.state.status_msg
     const left_image_topic = (status_msg != null) ? status_msg.left_image_topic : "None"
     const right_image_topic = (status_msg != null) ? status_msg.right_image_topic : "None"
-    const depth_map_topic = (status_msg != null) ? status_msg.depth_map_topic : "None"
+    // The viewer renders the COLORIZED depth image, not the raw 32FC1 depth
+    // array on status_msg.depth_map_topic (which is millimeter floats, not a
+    // displayable image). Same split NepiDeviceIDX makes for the depth_map
+    // product.
+    const depth_map_topic = (status_msg != null) ? status_msg.depth_map_image_topic : "None"
 
     return (
       <React.Fragment>

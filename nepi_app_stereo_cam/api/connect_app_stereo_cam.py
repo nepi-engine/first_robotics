@@ -80,6 +80,12 @@ class ConnectAppStereoCam:
                 'msg': Empty,
                 'qsize': 1
             },
+            'set_max_framerate': {
+                'namespace': self.namespace,
+                'topic': 'set_max_framerate',
+                'msg': Float32,
+                'qsize': 1
+            },
             # Stereo calibration (same topics the RUI calibration panel drives)
             'set_calib_board_value': {
                 'namespace': self.namespace,
@@ -201,6 +207,12 @@ class ConnectAppStereoCam:
     def reload_processes(self):
         """Trigger a reload of the stereo processes module."""
         self.con_node_if.publish_pub('reload_processes', Empty())
+
+    def set_max_framerate(self, max_framerate):
+        """Cap the depth compute rate (Hz)."""
+        msg = Float32()
+        msg.data = float(max_framerate)
+        self.con_node_if.publish_pub('set_max_framerate', msg)
 
     def set_calib_board(self, board_cols=None, board_rows=None, square_mm=None):
         """Describe the chessboard: INNER corner counts + printed square size.
