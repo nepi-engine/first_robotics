@@ -8,21 +8,11 @@
 ## License: 3-clause BSD, see https://opensource.org/licenses/BSD-3-Clause
 ##
 
-#######################################################################################################
-# Usage: $ ./deploy_nepi_engine_complete.sh
-#
-# This script copies the complete nepi_engine source code to proper filesystem locations on target
-# hardware in preparation for building nepi-engine from source. 
-#
-# It can be run from a development host or directly on the target hardware as described in this
-# repository's README
-#
-# The script requires the following environment variable be set
-#    NEPI_REMOTE_SETUP: Indicates whether running from development host or directly on target 
-#                      (1 = Dev. Host, 0 = From Target)
-# In the case that NEPI_REMOTE_SETUP == 1, some further environment variables must be set
 #    NEPI_TARGET_IP: Target IP address/hostname
-     NEPI_TARGET_IP=${NEPI_IP} #/${NEPI_DEVICE_ID}
+     NEPI_TARGET_IP=192.168.179.103
+     if [[ -n $NEPI_TARGET_IP ]]; then
+        NEPI_TARGET_IP=${NEPI_IP}
+     fi
 
     nepi_user_build=nepihost
     nepi_user_live=nepi

@@ -1,5 +1,5 @@
-# This message details the CustomStereo App Status Msg
-# Fields mirror NepiCustomStereoApp.publish_status()
+# This message details the Stereo Cam App Status Msg
+# Fields mirror NepiStereoCamApp.publish_status()
 
 #####################
 # Stereo processes dropdown (nepi processes pattern)

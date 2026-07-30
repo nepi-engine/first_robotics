@@ -12,5 +12,6 @@ RUI_DICT:
   rui_files:
   - NepiAppStereoCam.js
   - NepiAppStereoCam-Controls.js
+  - NepiAppStereoCam-Calibration.js
   rui_main_file: NepiAppStereoCam.js
   rui_main_class: NepiAppStereoCam

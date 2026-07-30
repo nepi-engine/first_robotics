@@ -49,7 +49,7 @@ import { onChangeSwitchStateValue } from "./Utilities"
 // the current status_msg + app namespace down as props.
 @inject("ros")
 @observer
-class NepiAppCustomStereoCalibration extends Component {
+class NepiAppStereoCamCalibration extends Component {
   constructor(props) {
     super(props)
 
@@ -319,4 +319,4 @@ class NepiAppCustomStereoCalibration extends Component {
   }
 }
 
-export default NepiAppCustomStereoCalibration
+export default NepiAppStereoCamCalibration
