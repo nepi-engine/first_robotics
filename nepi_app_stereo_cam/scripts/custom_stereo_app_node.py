@@ -15,7 +15,7 @@
 # ====================
 # - mailto:nepi@numurus.com
 
-"""Stereo Depth app node (OUTLINE / SKELETON).
+"""Stereo Depth app node.
 
 Assembled from the NEPI app template plus the developer-authored
 idx_stereo_cam_node.py logic. It brings up:
@@ -35,24 +35,25 @@ idx_stereo_cam_node.py logic. It brings up:
     the .npz, loads it into a Rectifier, and pushes the measured
     focal_length_px / baseline_mm into every process so depth is true mm.
 
-WHAT IS DEFERRED (clearly marked TODOs for the next developer):
-  * The real per-frame path: subscribing to the two SELECTED camera image
-    topics, converting to cv2 frames, rectifying, and feeding them into
-    compute_depth_map. Right now grabPair() is a marked skeleton -- it is the
-    ONE seam still missing, and both depth AND calibration capture read their
-    frames through it, so both start working the moment it returns frames.
-  * Filling out device_info / capSettings / factorySettings for the IDX IF.
+THE PER-FRAME PATH: updaterCb keeps image subscriptions pointed at whichever
+two cameras the RUI selectors have chosen; the image callbacks decode each
+sensor_msgs/Image into a cv2 BGR frame; grabPair() hands back the nearest
+time-matched L/R pair. Depth AND calibration capture both read their frames
+through grabPair(), so both run off the same synchronized pair.
 """
 
 import os
 import time
 import copy
 import importlib
+import threading
+from collections import deque
 
 import numpy as np
 import cv2
 
 from std_msgs.msg import String, Empty, Float32
+from sensor_msgs.msg import Image
 
 from nepi_interfaces.msg import UpdateFloat
 
@@ -60,6 +61,7 @@ from nepi_app_stereo_cam.msg import NepiAppStereoCamStatus
 
 from nepi_sdk import nepi_sdk
 from nepi_sdk import nepi_utils
+from nepi_sdk import nepi_img
 
 from nepi_api.node_if import NodeClassIF
 from nepi_api.messages_if import MsgIF
@@ -81,6 +83,24 @@ import stereo_settings
 # Control Values
 STATUS_PUBLISH_RATE_HZ = 1.0
 UPDATE_RATE_HZ = 1.0
+
+# Depth compute loop rate. The real ceiling is max_framerate, throttled inside
+# updateDepthMap; this only has to tick faster than that so the throttle -- not
+# the timer -- is what sets the rate. The timer is re-armed after each pass, so
+# a compute slower than the tick just runs back-to-back rather than piling up.
+DEPTH_RATE_HZ = 30.0
+
+# Reported as the IDX device sw_version. Keep in step with package.xml.
+APP_VERSION = '0.0.0'
+
+# Left and right are independent IDX devices, so their frames never arrive in
+# lockstep. A pair further apart in capture time than this is not the same
+# instant, and block matching it would put confidently wrong depth on anything
+# moving. 100 ms is about one frame period at the default framerate cap.
+FRAME_SYNC_TOLERANCE_S = 0.1
+# Right-camera frames kept for pairing. Deep enough to absorb a second of
+# arrival jitter at the default cap without growing without bound.
+FRAME_BUFFER_LEN = 10
 
 # IDX data product subtopics.
 #
@@ -137,10 +157,26 @@ class NepiStereoCamApp(object):
     # gate for standing up the IDX device interface.
     depth_map = None
     depth_map_timestamp = None
+    # Timestamp of the map last handed to the IDX interface, so the same frame is
+    # not republished on every pass of its (much faster) acquisition loop.
+    depth_map_served_time = None
+    # Depth acquisition gate. IDX calls stopDepthMap() when the last depth_map
+    # subscriber drops and getDepthMap() when one returns, so this pauses the
+    # expensive block matching while nothing is watching. Starts True: the first
+    # depth map is what triggers the lazy IDX bring-up below.
+    depth_acquiring = True
 
-    # Selected camera frames (populated by the per-frame wiring -- TODO skeleton)
+    # Per-frame camera wiring. left_frame is the newest left frame; the right
+    # side keeps a short history so grabPair() can pick the nearest time match
+    # rather than whatever happened to arrive last.
+    frame_lock = None
     left_frame = None
-    right_frame = None
+    right_frames = None
+    left_sub = None
+    right_sub = None
+    left_img_topic = 'None'
+    right_img_topic = 'None'
+    last_pair_dt_s = 0.0
 
     def __init__(self):
         #### APP NODE INIT SETUP ####
@@ -162,6 +198,13 @@ class NepiStereoCamApp(object):
         self.processes_dict = stereo_settings.create_processes_dict()
         self.stereo_data_dict = stereo_settings.get_blank_data_dict()
         self.max_framerate = self.DEFAULT_MAX_FRAMERATE
+
+        # ---- Per-frame camera wiring ----
+        # The image callbacks run on ROS subscriber threads while grabPair() runs
+        # on the depth timer thread, so the frame stores are lock-guarded.
+        self.frame_lock = threading.Lock()
+        self.left_frame = None
+        self.right_frames = deque(maxlen=FRAME_BUFFER_LEN)
 
         # ---- Calibration / rectification ----
         # Calibration is driven from the RUI "Stereo Calibration" panel (see the
@@ -345,6 +388,10 @@ class NepiStereoCamApp(object):
 
         time.sleep(1)
         nepi_sdk.start_timer_process(float(1) / UPDATE_RATE_HZ, self.updaterCb, oneshot=True)
+        # Depth runs on its own timer: the slow updaterCb is for discovery and
+        # re-wiring, and running depth off it would cap the output at 1 Hz no
+        # matter what max_framerate says.
+        nepi_sdk.start_timer_process(float(1) / DEPTH_RATE_HZ, self.depthCb, oneshot=True)
         nepi_sdk.start_timer_process(float(1) / STATUS_PUBLISH_RATE_HZ, self.statusPublishCb)
 
         time.sleep(1)
@@ -358,15 +405,22 @@ class NepiStereoCamApp(object):
     ## IDX interface bring-up
 
     def createIdxIf(self):
-        # TODO: fill device_info / capSettings / factorySettings from the real
-        # stereo rig. device_info is required by IDXDeviceIF; these are skeleton
-        # placeholders so the interface registers and reports depth_map.
+        # This is a virtual IDX device -- its "hardware" is whichever two cameras
+        # are selected plus the calibration that ties them together, so that is
+        # what device_info reports. Both cameras are necessarily selected by the
+        # time this runs: it is only called once a depth map exists, which takes
+        # frames from both.
+        left_ns, _, right_ns, _ = self.computeImageTopics()
         device_info = {
             'device_name': self.node_name,
             'path': self.node_namespace,
-            'serial_number': 'TODO',
-            'hw_version': 'TODO',
-            'sw_version': '0.0.0'
+            # The pair of source cameras is what identifies this depth stream.
+            'serial_number': (self.deviceNameFromNamespace(left_ns) + '+' +
+                              self.deviceNameFromNamespace(right_ns)),
+            # The one physical property of the rig we actually measure.
+            'hw_version': ('baseline %.1f mm' % self.rectifier.baseline_mm
+                           if self.rectifier is not None else 'uncalibrated'),
+            'sw_version': APP_VERSION
         }
         # IDX device-settings channel (SettingsIF). This is SEPARATE from the
         # "processes" dropdown, which the app node handles itself via its own
@@ -374,9 +428,11 @@ class NepiStereoCamApp(object):
         # / reload_processes subscribers. SettingsIF expects a settings dict of
         # {name: {'name','type','value'}} entries and iterates them at init, so
         # the processes_dict (nested process definitions, no 'name' key) must NOT
-        # be handed to it -- doing so raises KeyError: 'name'. Until the next
-        # developer exposes real device settings (resolution, framerate, gain,
-        # ...), these are empty so the interface registers cleanly.
+        # be handed to it -- doing so raises KeyError: 'name'. There are no
+        # device settings to expose here: resolution / gain / exposure belong to
+        # the two source cameras and are set on their own IDX interfaces, and
+        # framerate has its own setMaxFramerate hook below. So capSettings and
+        # factorySettings are deliberately empty rather than unfinished.
         self.idx_if = IDXDeviceIF(
             device_info,
             data_products=self.data_products,
@@ -389,25 +445,36 @@ class NepiStereoCamApp(object):
             getDepthMap=self.getDepthMap,
             stopDepthMapAcquisition=self.stopDepthMap,
             msg_if=self.msg_if
-            # TODO: getColorImage, getNavPoseCb, ...
+            # depth_map is the only data product this device adds. The left and
+            # right color images are already published by the source cameras
+            # (the RUI viewers read them straight off those topics), and the app
+            # has no pose source of its own, so getColorImage / getNavPoseCb
+            # would only duplicate what already exists upstream.
         )
 
+    def deviceNameFromNamespace(self, namespace):
+        # A selected IDX namespace is '<base>/<device_node>/idx'; the device node
+        # name is the part that names the camera.
+        if namespace in (None, 'None', ''):
+            return 'none'
+        return os.path.basename(os.path.dirname(namespace.rstrip('/')))
+
     def getCapSettings(self):
-        # IDX device-settings capabilities. Empty skeleton -- return the same
-        # {name: {'name','type','options'}} shape real IDX drivers build (see
-        # idx_v4l2_node.getCapSettings) once real device controls are exposed.
+        # IDX device-settings capabilities. Empty by design -- see the note in
+        # createIdxIf(): this device has no settings of its own.
         return dict()
 
     def getIdxSettings(self):
-        # IDX device-settings read path (getSettingsFunction). Returns a settings
-        # dict of {name: {'name','type','value'}} entries; empty for the skeleton.
+        # IDX device-settings read path (getSettingsFunction). Matches
+        # getCapSettings(): no device settings, so nothing to report.
         # NOTE: this is NOT the processes dict -- see setSelectedProcess().
         return dict()
 
     def updateIdxSetting(self, setting):
-        # IDX device-settings write path (settingUpdateFunction). No device
-        # settings are exposed yet, so accept and no-op. Returns (success, msg).
-        return True, "no device settings exposed"
+        # IDX device-settings write path (settingUpdateFunction). Nothing is
+        # advertised in getCapSettings(), so there is nothing addressable here.
+        # Returns (success, msg).
+        return False, "this device exposes no settings"
 
 
     ###################
@@ -433,16 +500,18 @@ class NepiStereoCamApp(object):
         return False
 
     def setMaxFramerate(self, max_framerate):
-        self.max_framerate = max_framerate
+        # IDX setMaxFramerate contract: returns (status, err_str) -- device_if_idx
+        # unpacks the result, so returning None here would raise in its callback.
+        if max_framerate is None or max_framerate <= 0.0:
+            return False, "max framerate must be > 0, got " + str(max_framerate)
+        self.max_framerate = float(max_framerate)
+        return True, ""
 
     def getFramerate(self):
         return self.max_framerate
 
 
     ###################
-<<<<<<< HEAD:nepi_app_stereo_cam/scripts/custom_stereo_app_node.py
-    ## Frame acquisition + depth map (developer's idx_stereo_cam_node logic)
-=======
     ## Stereo calibration (RUI "Stereo Calibration" panel)
     #
     # Flow: point the board at both cameras -> Capture (repeat ~10-20x at varied
@@ -508,9 +577,10 @@ class NepiStereoCamApp(object):
 
     def captureCalibFrame(self):
         """Grab the live L/R pair and look for the board in both."""
-        ok, left, right = self.grabPair()
+        ok, left, right, _ = self.grabPair()
         if not ok:
-            return False, 'no camera frames -- select both cameras first'
+            return False, ('no synchronized camera frames -- select both cameras '
+                           'and check they are publishing')
         # Raw (unrectified) frames on purpose: calibration is what PRODUCES the
         # rectification, so feeding it rectified frames would bake the current
         # calibration into the new one.
@@ -535,29 +605,46 @@ class NepiStereoCamApp(object):
 
     ###################
     ## Frame acquisition + depth map (developer's idx_custom_stereo_node logic)
->>>>>>> 613b70cc1dcbe04f182a97fa90a342c4119f4e8b:nepi_idx_custom_stereo/src/nepi_app_custom_stereo/scripts/custom_stereo_app_node.py
 
     def grabPair(self):
-        # Return (ok, left_bgr, right_bgr). Frames must be time-synced.
-        #
-        # TODO (NEXT DEVELOPER -- THE CORE WIRING): this is the per-frame path.
-        # Subscribe to the two SELECTED camera image topics (see
-        # computeImageTopics()/updaterCb), convert the latest sensor_msgs/Image
-        # from each into cv2 BGR frames, and return them here. If the cameras are
-        # not hardware-synced, depth on moving scenes will be wrong.
-        #   left = self.left_frame
-        #   right = self.right_frame
-        #   if left is None or right is None:
-        #       return False, None, None
-        #   return True, left, right
-        return False, None, None
+        """Return (ok, left_bgr, right_bgr, timestamp) for the closest time match.
+
+        The two cameras are independent IDX devices, so their frames do not
+        arrive in lockstep: the newest left frame is matched against a short
+        history of right frames and the nearest one wins. A pair further apart
+        than FRAME_SYNC_TOLERANCE_S is refused rather than returned -- matching
+        a stale frame against a fresh one yields confidently wrong depth on
+        anything that moved in between.
+        """
+        with self.frame_lock:
+            left = self.left_frame
+            rights = list(self.right_frames)
+        if left is None or len(rights) == 0:
+            return False, None, None, None
+
+        best = min(rights, key=lambda right: abs(left['ts'] - right['ts']))
+        best_dt = abs(left['ts'] - best['ts'])
+        self.last_pair_dt_s = best_dt
+        if best_dt > FRAME_SYNC_TOLERANCE_S:
+            return False, None, None, None
+        return True, left['img'], best['img'], left['ts']
 
     def updateDepthMap(self):
-        # Compute a depth map and cache it. Called from the app's own updaterCb
+        # Compute a depth map and cache it. Called from the app's own depthCb
         # loop (NOT the IDX callback) so that depth can be produced BEFORE the IDX
         # device interface exists -- the first successful compute is what triggers
         # createIdxIf(). Returns True if a new depth map was produced.
         #
+        # Skip the work while nobody is subscribed to depth_map. Only once the
+        # IDX interface exists, though: before that, producing a depth map is
+        # exactly what brings it up.
+        if self.idx_if is not None and self.depth_acquiring is False:
+            return False
+
+        # A reload swaps the process registry out from under us.
+        if self.process_ready is False:
+            return False
+
         # framerate throttle
         last_time = self.dm_data_last_time
         current_time = nepi_utils.get_time()
@@ -566,41 +653,59 @@ class NepiStereoCamApp(object):
             if (current_time - last_time) < fr_delay:
                 return False
 
-        # Grab a synchronized L/R pair (TODO skeleton -- returns no frames yet).
-        # Until the per-frame wiring is implemented this returns False, so no
-        # depth map is ever produced and the IDX device is never brought up.
-        ok, left, right = self.grabPair()
+        # Grab a synchronized L/R pair from the two selected cameras.
+        ok, left, right, timestamp = self.grabPair()
         if not ok:
             return False
 
-        # Rectify (compute_depth_map assumes rectified input)
-        if self.rectifier is not None:
-            if not self.rectifier.matches(left):
-                # Camera resolution changed since calibration -- the maps no
-                # longer apply, and matching unrectified frames would produce
-                # confidently wrong depth. Refuse rather than publish garbage.
-                message = (
-                    'frame %dx%d does not match calibration %dx%d -- recalibrate'
-                    % (left.shape[1], left.shape[0],
-                       self.rectifier.image_size[0], self.rectifier.image_size[1]))
-                # Warn once per distinct problem instead of every update tick.
-                if message != self.calib_message:
-                    self.msg_if.pub_warn(message)
-                    self.calib_message = message
-                return False
-            left, right = self.rectifier.rectify(left, right)
+        # Rectify (compute_depth_map assumes rectified input). With no
+        # calibration there is nothing to rectify with, and block matching raw
+        # frames against placeholder geometry yields numbers that look like depth
+        # but are not -- same call as the resolution-mismatch refusal below. The
+        # calibration panel is unaffected: it reads grabPair() directly, so the
+        # capture/solve flow still works with depth held off. calib_message is
+        # deliberately left alone here so this does not stomp on the panel's
+        # per-press feedback.
+        if self.rectifier is None:
+            self.msg_if.pub_warn(
+                "No calibration loaded -- depth needs rectified frames",
+                throttle_s=10.0)
+            return False
 
-        # Run the selected stereo process (fills self.stereo_data_dict)
-        process_fn = stereo_settings.PROCESSES_DICT[self.selected_process]['process_function']
-        settings = self.processes_dict[self.selected_process]
-        self.stereo_data_dict, _ = process_fn(left, right, self.stereo_data_dict, settings)
+        if not self.rectifier.matches(left):
+            # Camera resolution changed since calibration -- the maps no
+            # longer apply, and matching unrectified frames would produce
+            # confidently wrong depth. Refuse rather than publish garbage.
+            message = (
+                'frame %dx%d does not match calibration %dx%d -- recalibrate'
+                % (left.shape[1], left.shape[0],
+                   self.rectifier.image_size[0], self.rectifier.image_size[1]))
+            # Warn once per distinct problem instead of every update tick.
+            if message != self.calib_message:
+                self.msg_if.pub_warn(message)
+                self.calib_message = message
+            return False
+        left, right = self.rectifier.rectify(left, right)
+
+        # Run the selected stereo process (fills self.stereo_data_dict). A
+        # reload_processes between the check above and here would leave the two
+        # dicts briefly out of step, so read both defensively.
+        process = stereo_settings.PROCESSES_DICT.get(self.selected_process, None)
+        settings = self.processes_dict.get(self.selected_process, None)
+        if process is None or settings is None:
+            return False
+        self.stereo_data_dict, _ = process['process_function'](
+            left, right, self.stereo_data_dict, settings)
 
         np_depth_map = self.stereo_data_dict['depth_map']   # (H,W) float32 mm
         # Match the ZED stereo convention: invalid pixels -> nan instead of 0.0.
         np_depth_map[np_depth_map <= 0.0] = np.nan
 
         self.depth_map = np_depth_map
-        self.depth_map_timestamp = nepi_utils.get_time()
+        # Stamp the depth map with the CAPTURE time of the pair it came from, not
+        # the time the compute finished, so downstream consumers can line it up
+        # against the source images.
+        self.depth_map_timestamp = timestamp
         self.dm_data_last_time = nepi_utils.get_time()
         return True
 
@@ -608,27 +713,132 @@ class NepiStereoCamApp(object):
         # IDX getDepthMap contract (mirrors idx_zed_node.getDepthMap). Serves the
         # latest depth map cached by updateDepthMap(). Returns
         # (status, msg, np_depth_map, timestamp, encoding).
-        if self.depth_map is None:
+        #
+        # Being called at all means something is subscribed, so this is also the
+        # signal to resume computing after a stopDepthMap().
+        self.depth_acquiring = True
+        depth_map = self.depth_map
+        timestamp = self.depth_map_timestamp
+        if depth_map is None:
             return False, "No depth map yet", None, None, None
-        return True, "", self.depth_map, self.depth_map_timestamp, '32FC1'
+        # The IDX acquisition loop polls far faster than depth is produced;
+        # handing back an already-published map would republish the same frame
+        # dozens of times a second and wreck the reported fps.
+        if timestamp == self.depth_map_served_time:
+            return False, "Waiting for next depth map", None, None, None
+        self.depth_map_served_time = timestamp
+        return True, "", depth_map, timestamp, '32FC1'
 
     def stopDepthMap(self):
-        # TODO: any teardown when the RUI stops the depth subscription.
-        pass
+        # IDX stopDepthMapAcquisition contract: the last depth_map subscriber
+        # dropped. Pause the block matching (the expensive part) and drop the
+        # cached map so a returning subscriber gets a freshly computed frame
+        # instead of however stale the last one had become. The camera image
+        # subscriptions stay up -- the calibration panel reads its frames through
+        # the same path and must keep working with depth stopped.
+        self.depth_acquiring = False
+        self.depth_map = None
+        self.depth_map_timestamp = None
+        self.depth_map_served_time = None
+        self.dm_data_last_time = None
+
+
+    ###################
+    ## Per-frame camera subscriptions
+
+    def updateImageSubs(self):
+        # The RUI's left/right selectors drive the two ConnectIDXDeviceIF
+        # instances; whenever either resolves to a different color image topic,
+        # move our image subscription with it.
+        _, left_img, _, right_img = self.computeImageTopics()
+        if left_img != self.left_img_topic:
+            self.subscribeLeft(left_img)
+        if right_img != self.right_img_topic:
+            self.subscribeRight(right_img)
+
+    def subscribeLeft(self, topic):
+        self.left_sub = self.unsubscribeImage(self.left_sub)
+        with self.frame_lock:
+            self.left_frame = None
+        self.left_img_topic = topic
+        if topic not in (None, 'None', ''):
+            # qsize 1: on a depth map that takes longer than a frame period,
+            # queued frames are stale by the time they are read -- drop them and
+            # work from the newest instead.
+            self.left_sub = nepi_sdk.create_subscriber(
+                topic, Image, self.leftImageCb, queue_size=1)
+            self.msg_if.pub_info("Subscribed to left camera image: " + str(topic))
+
+    def subscribeRight(self, topic):
+        self.right_sub = self.unsubscribeImage(self.right_sub)
+        with self.frame_lock:
+            self.right_frames.clear()
+        self.right_img_topic = topic
+        if topic not in (None, 'None', ''):
+            self.right_sub = nepi_sdk.create_subscriber(
+                topic, Image, self.rightImageCb, queue_size=1)
+            self.msg_if.pub_info("Subscribed to right camera image: " + str(topic))
+
+    def unsubscribeImage(self, sub):
+        # Returns None so callers can assign the result straight back.
+        if sub is not None:
+            try:
+                sub.unregister()
+            except Exception as e:
+                self.msg_if.pub_warn("Failed to unregister image subscriber: " + str(e))
+        return None
+
+    def leftImageCb(self, msg):
+        frame = self.rosImgToCv2(msg)
+        if frame is None:
+            return
+        with self.frame_lock:
+            self.left_frame = {'img': frame, 'ts': self.frameTimestamp(msg)}
+
+    def rightImageCb(self, msg):
+        frame = self.rosImgToCv2(msg)
+        if frame is None:
+            return
+        with self.frame_lock:
+            self.right_frames.append({'img': frame, 'ts': self.frameTimestamp(msg)})
+
+    def rosImgToCv2(self, msg):
+        # bgr8 rather than passthrough: compute_depth_map and the chessboard
+        # finder both branch on channel count, so the two cameras must not
+        # disagree about it (one mono, one color would).
+        try:
+            return nepi_img.rosimg_to_cv2img(msg, encoding='bgr8')
+        except Exception as e:
+            self.msg_if.pub_warn("Failed to convert camera image: " + str(e),
+                                 throttle_s=5.0)
+            return None
+
+    def frameTimestamp(self, msg):
+        # Capture time is what pairing needs. Some publishers leave the header
+        # stamp at zero, in which case arrival time is the only ordering
+        # available -- worse, but still monotonic and shared by both cameras.
+        timestamp = nepi_sdk.sec_from_msg_stamp(msg.header.stamp)
+        if timestamp <= 0.0:
+            timestamp = nepi_utils.get_time()
+        return timestamp
 
 
     ###################
     ## App Callbacks
 
-    def updaterCb(self, timer):
-        # TODO (NEXT DEVELOPER): (re)wire the per-frame camera subscriptions here.
-        # When the left/right selector picks a device, compute its color image
-        # topic (computeImageTopics) and (re)subscribe an image callback that
-        # decodes into self.left_frame / self.right_frame for grabPair(). Left as
-        # a marked skeleton -- no subscription is created yet.
+    def depthCb(self, timer):
+        # Depth runs on its own timer so block matching neither blocks the image
+        # subscriber threads nor gets capped by the slow updaterCb rate.
+        try:
+            self.updateDepthMap()
+        except Exception as e:
+            self.msg_if.pub_warn("Depth update failed: " + str(e), throttle_s=5.0)
+        nepi_sdk.start_timer_process(float(1) / DEPTH_RATE_HZ, self.depthCb, oneshot=True)
 
-        # Try to produce a depth map from the current frame pair.
-        self.updateDepthMap()
+    def updaterCb(self, timer):
+        # Keep the per-frame image subscriptions pointed at whichever cameras the
+        # left/right selectors currently have chosen.
+        self.updateImageSubs()
 
         # Bring up the IDX device interface the first time real depth exists. This
         # is deliberately lazy: until a depth map is produced, the app does not
@@ -821,7 +1031,7 @@ class NepiStereoCamApp(object):
     def computeImageTopics(self):
         # Build the color image topic for each selected IDX device from its
         # selected device namespace. Returns (left_ns, left_img, right_ns,
-        # right_img); 'None' where unselected. TODO: confirm IDX_COLOR_SUBTOPIC.
+        # right_img); 'None' where unselected.
         left_ns = 'None'
         right_ns = 'None'
         if self.left_cam_connect_if is not None:
@@ -907,7 +1117,9 @@ class NepiStereoCamApp(object):
             self.left_cam_connect_if.unregister()
         if self.right_cam_connect_if is not None:
             self.right_cam_connect_if.unregister()
-        # TODO: release any per-frame camera subscriptions created by the wiring.
+        # Release the per-frame camera subscriptions.
+        self.subscribeLeft('None')
+        self.subscribeRight('None')
 
 
 #########################################

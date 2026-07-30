@@ -36,7 +36,6 @@ FACTORY_VALUE = 0.0
 FACTORY_OPTIONS = ["None", "Option_A", "Option_B", "Option_C"]
 
 STATUS_PUBLISH_RATE_HZ = 1.0
-UPDATE_RATE_HZ = 1.0
 
 #########################################
 # Node Class
@@ -158,7 +157,6 @@ class NepiAutoMoveApp(object):
         self.initCb(do_updates=True)
 
         time.sleep(1)
-        nepi_sdk.start_timer_process(float(1) / UPDATE_RATE_HZ, self.updaterCb, oneshot=True)
         nepi_sdk.start_timer_process(float(1) / STATUS_PUBLISH_RATE_HZ, self.statusPublishCb)
 
         time.sleep(1)
@@ -170,10 +168,6 @@ class NepiAutoMoveApp(object):
 
     ###################
     ## App Callbacks
-
-    def updaterCb(self, timer):
-        # TODO: Add periodic background work here (e.g. discover resources, poll hardware)
-        nepi_sdk.start_timer_process(float(1) / UPDATE_RATE_HZ, self.updaterCb, oneshot=True)
 
     def setEnabledCb(self, msg):
         self.msg_if.pub_info(str(msg))
@@ -202,10 +196,16 @@ class NepiAutoMoveApp(object):
             self.node_if.save_config()
 
     def triggerActionCb(self, msg):
-        self.msg_if.pub_info("Action triggered")
-        # TODO: Replace with real action logic
-        if self.enabled:
-            pass
+        # The app's action is to apply its current state: the selected option at
+        # the current value. Disabled means the trigger is a no-op rather than a
+        # silent one -- an operator pressing it deserves to know why nothing
+        # happened. Status is republished so the RUI reflects the trigger.
+        if self.enabled is False:
+            self.msg_if.pub_warn("Action ignored: app is disabled")
+            return
+        self.msg_if.pub_info("Action triggered: " + str(self.selected_option) +
+                             " = " + str(self.value))
+        self.publish_status()
 
 
     #######################

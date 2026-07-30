@@ -19,13 +19,9 @@ import time
 
 from std_msgs.msg import Bool, Empty, String, Float32
 
-<<<<<<< HEAD:nepi_app_stereo_cam/api/connect_app_stereo_cam.py
-from nepi_app_stereo_cam.msg import NepiAppStereoCamStatus
-=======
 from nepi_interfaces.msg import UpdateFloat
 
-from nepi_app_custom_stereo.msg import NepiAppCustomStereoStatus
->>>>>>> 613b70cc1dcbe04f182a97fa90a342c4119f4e8b:nepi_idx_custom_stereo/src/nepi_app_custom_stereo/api/connect_app_custom_stereo.py
+from nepi_app_stereo_cam.msg import NepiAppStereoCamStatus
 
 from nepi_sdk import nepi_sdk
 
