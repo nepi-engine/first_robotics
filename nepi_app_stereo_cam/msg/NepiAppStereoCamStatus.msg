@@ -53,10 +53,12 @@ float32 calib_baseline_mm
 float32 calib_epipolar_rms_px
 
 #####################
-# Depth output
-# Depth map topic published by this app's IDX interface (feeds the large viewer)
+# Depth output (published by this app's DepthMapIF)
+# Raw depth map topic: sensor_msgs/Image, 32FC1, millimeters, nan == invalid
 string depth_map_topic
-# Max depth framerate (Hz)
+# Colorized depth image topic (feeds the large RUI viewer)
+string depth_map_image_topic
+# Max depth framerate (Hz); settable via set_max_framerate
 float32 max_framerate
 # Depth summary from the last processed frame
 float32 valid_ratio
