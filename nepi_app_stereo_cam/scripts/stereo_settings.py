@@ -11,7 +11,8 @@ Patterned on nepi_stab_pt.py:
 
 Each process_function(left, right, data_dict, settings_dict) computes a depth
 map (mm, float32) via stereo_library.compute_depth_map and stashes it in
-data_dict['depth_map']; the node then hands that to the IDX getDepthMap contract.
+data_dict['depth_map']; the node then hands that to DepthMapIF, which publishes
+the raw map plus a colorized image of it.
 """
 
 import copy
