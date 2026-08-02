@@ -27,6 +27,12 @@ from nepi_sdk import nepi_sdk
 from nepi_api.node_if import NodeClassIF
 from nepi_api.messages_if import MsgIF
 
+from nepi_api.connect_detections_if import ConnectDetectionsIF
+from nepi_api.connect_targets_if import ConnectTargetsIF
+from nepi_api.connect_device_if_rbx import ConnectRBXDeviceIF
+from nepi_api.connect_device_if_motor import ConnectMotorsDeviceIF
+from nepi_api.connect_data_if import ConnectNavPoseIF
+
 
 #########################################
 # Factory Control Values
@@ -49,6 +55,14 @@ class NepiWpilibApp(object):
     options = FACTORY_OPTIONS
 
     node_if = None
+
+    # Per-IF first-connection flags. Each connect IF's callback prints the first
+    # data dict and status msg it receives exactly once, then sets its flag.
+    got_first_detections = False
+    got_first_targets = False
+    got_first_rbx = False
+    got_first_motors = False
+    got_first_navpose = False
 
     DEFAULT_NODE_NAME = "app_wpilib"
 
@@ -154,6 +168,16 @@ class NepiWpilibApp(object):
         self.node_if.wait_for_ready()
 
         ##############################
+        # Surface NEPI connect (consumer) IFs in this app's RUI. Each of the five
+        # connect IFs is built with show_selector=True (expose the source/device
+        # selector panel) and show_controls=False / show_data=False (hide the
+        # controls and data panels), plus a per-IF first-connection callback.
+        # ConnectDetectionsIF/ConnectTargetsIF/ConnectNavPoseIF consume their
+        # data products; ConnectRBXDeviceIF/ConnectMotorsDeviceIF have no
+        # separate data product, so their callback fires with the status dict.
+        self.setupInterfaceIFs()
+
+        ##############################
         self.initCb(do_updates=True)
 
         time.sleep(1)
@@ -234,6 +258,100 @@ class NepiWpilibApp(object):
 
 
     ###################
+    ## Interface IF Setup
+
+    def setupInterfaceIFs(self):
+        # Connect-side (consumer) IFs. Each auto-discovers the matching producer
+        # topic and exposes a selector in this app's RUI (show_selector=True),
+        # with the controls and data panels hidden (show_controls=False,
+        # show_data=False). Each is given a per-IF first-connection callback that
+        # fires once with the received data dict. The connect IFs take no
+        # device_info dict or driver callbacks -- they consume the wire contract
+        # rather than produce it.
+        self.detections_if = ConnectDetectionsIF(
+                        show_selector = True,
+                        show_controls = False,
+                        show_data = False,
+                        callback_function = self.detectionsConnectCb,
+                        msg_if = self.msg_if)
+
+        self.targets_if = ConnectTargetsIF(
+                        show_selector = True,
+                        show_controls = False,
+                        show_data = False,
+                        callback_function = self.targetsConnectCb,
+                        msg_if = self.msg_if)
+
+        self.navpose_if = ConnectNavPoseIF(
+                        show_selector = True,
+                        show_controls = False,
+                        show_data = False,
+                        callback_function = self.navposeConnectCb,
+                        msg_if = self.msg_if)
+
+        # RBX and Motors connect IFs have no separate data product, so their
+        # callback_function fires with their status dict on each status update.
+        self.rbx_if = ConnectRBXDeviceIF(
+                        show_selector = True,
+                        show_controls = False,
+                        show_data = False,
+                        callback_function = self.rbxConnectCb,
+                        msg_if = self.msg_if)
+
+        self.motors_if = ConnectMotorsDeviceIF(
+                        show_selector = True,
+                        show_controls = False,
+                        show_data = False,
+                        callback_function = self.motorsConnectCb,
+                        msg_if = self.msg_if)
+
+
+    ###################
+    ## Connect IF First-Connection Callbacks
+    #
+    # Each connect IF invokes its callback_function with a single data dict. On
+    # the FIRST invocation per IF, log the received data dict and that IF's
+    # status message (via get_status_msg()), then set the got_first flag so it
+    # logs only once. RBX and Motors have no separate data product, so their
+    # callback receives the status dict.
+
+    def detectionsConnectCb(self, data_dict):
+        if self.got_first_detections is True:
+            return
+        self.got_first_detections = True
+        self.msg_if.pub_info("Detections first-connection data dict: " + str(data_dict))
+        self.msg_if.pub_info("Detections status msg: " + str(self.detections_if.get_status_msg()))
+
+    def targetsConnectCb(self, data_dict):
+        if self.got_first_targets is True:
+            return
+        self.got_first_targets = True
+        self.msg_if.pub_info("Targets first-connection data dict: " + str(data_dict))
+        self.msg_if.pub_info("Targets status msg: " + str(self.targets_if.get_status_msg()))
+
+    def rbxConnectCb(self, data_dict):
+        if self.got_first_rbx is True:
+            return
+        self.got_first_rbx = True
+        self.msg_if.pub_info("RBX first-connection data dict: " + str(data_dict))
+        self.msg_if.pub_info("RBX status msg: " + str(self.rbx_if.get_status_msg()))
+
+    def motorsConnectCb(self, data_dict):
+        if self.got_first_motors is True:
+            return
+        self.got_first_motors = True
+        self.msg_if.pub_info("Motors first-connection data dict: " + str(data_dict))
+        self.msg_if.pub_info("Motors status msg: " + str(self.motors_if.get_status_msg()))
+
+    def navposeConnectCb(self, data_dict):
+        if self.got_first_navpose is True:
+            return
+        self.got_first_navpose = True
+        self.msg_if.pub_info("NavPose first-connection data dict: " + str(data_dict))
+        self.msg_if.pub_info("NavPose status msg: " + str(self.navpose_if.get_status_msg()))
+
+
+    ###################
     ## Status Publishers
 
     def statusPublishCb(self, timer):
@@ -245,6 +363,7 @@ class NepiWpilibApp(object):
         status_msg.options = self.options
         status_msg.selected_option = self.selected_option
         status_msg.value = self.value
+        status_msg.heartbeat = True
         if self.node_if is not None:
             self.node_if.publish_pub('status_pub', status_msg)
 

@@ -8,3 +8,6 @@ string[] options
 string selected_option
 # Current value setting
 float32 value
+
+# Liveness heartbeat: always published True on every status update
+bool heartbeat
