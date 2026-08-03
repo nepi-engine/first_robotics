@@ -64,6 +64,20 @@ class NepiWpilibApp(object):
     got_first_motors = False
     got_first_navpose = False
 
+    # Latest data dict and status msg per connect IF. Each callback stores both
+    # on every invocation, so the rest of the app reads the most recent values
+    # from here rather than re-querying the IF.
+    detections_dict = None
+    detections_status = None
+    targets_dict = None
+    targets_status = None
+    rbx_dict = None
+    rbx_status = None
+    motors_dict = None
+    motors_status = None
+    navpose_dict = None
+    navpose_status = None
+
     DEFAULT_NODE_NAME = "app_wpilib"
 
     def __init__(self):
@@ -309,46 +323,57 @@ class NepiWpilibApp(object):
     ###################
     ## Connect IF First-Connection Callbacks
     #
-    # Each connect IF invokes its callback_function with a single data dict. On
-    # the FIRST invocation per IF, log the received data dict and that IF's
-    # status message (via get_status_msg()), then set the got_first flag so it
-    # logs only once. RBX and Motors have no separate data product, so their
-    # callback receives the status dict.
+    # Each connect IF invokes its callback_function with a single data dict. The
+    # callback stores that dict and the IF's current status message (via
+    # get_status_msg()) on every invocation. On the FIRST invocation per IF it
+    # also logs both, then sets the got_first flag so it logs only once. RBX and
+    # Motors have no separate data product, so their callback receives the
+    # status dict.
 
     def detectionsConnectCb(self, data_dict):
+        self.detections_dict = data_dict
+        self.detections_status = self.detections_if.get_status_msg()
         if self.got_first_detections is True:
             return
         self.got_first_detections = True
-        self.msg_if.pub_info("Detections first-connection data dict: " + str(data_dict))
-        self.msg_if.pub_info("Detections status msg: " + str(self.detections_if.get_status_msg()))
+        self.msg_if.pub_info("Detections first-connection data dict: " + str(self.detections_dict))
+        self.msg_if.pub_info("Detections first-connection status message: " + str(self.detections_status))
 
     def targetsConnectCb(self, data_dict):
+        self.targets_dict = data_dict
+        self.targets_status = self.targets_if.get_status_msg()
         if self.got_first_targets is True:
             return
         self.got_first_targets = True
-        self.msg_if.pub_info("Targets first-connection data dict: " + str(data_dict))
-        self.msg_if.pub_info("Targets status msg: " + str(self.targets_if.get_status_msg()))
+        self.msg_if.pub_info("Targets first-connection data dict: " + str(self.targets_dict))
+        self.msg_if.pub_info("Targets first-connection status message: " + str(self.targets_status))
 
     def rbxConnectCb(self, data_dict):
+        self.rbx_dict = data_dict
+        self.rbx_status = self.rbx_if.get_status_msg()
         if self.got_first_rbx is True:
             return
         self.got_first_rbx = True
-        self.msg_if.pub_info("RBX first-connection data dict: " + str(data_dict))
-        self.msg_if.pub_info("RBX status msg: " + str(self.rbx_if.get_status_msg()))
+        self.msg_if.pub_info("RBX first-connection data dict: " + str(self.rbx_dict))
+        self.msg_if.pub_info("RBX first-connection status message: " + str(self.rbx_status))
 
     def motorsConnectCb(self, data_dict):
+        self.motors_dict = data_dict
+        self.motors_status = self.motors_if.get_status_msg()
         if self.got_first_motors is True:
             return
         self.got_first_motors = True
-        self.msg_if.pub_info("Motors first-connection data dict: " + str(data_dict))
-        self.msg_if.pub_info("Motors status msg: " + str(self.motors_if.get_status_msg()))
+        self.msg_if.pub_info("Motors first-connection data dict: " + str(self.motors_dict))
+        self.msg_if.pub_info("Motors first-connection status message: " + str(self.motors_status))
 
     def navposeConnectCb(self, data_dict):
+        self.navpose_dict = data_dict
+        self.navpose_status = self.navpose_if.get_status_msg()
         if self.got_first_navpose is True:
             return
         self.got_first_navpose = True
-        self.msg_if.pub_info("NavPose first-connection data dict: " + str(data_dict))
-        self.msg_if.pub_info("NavPose status msg: " + str(self.navpose_if.get_status_msg()))
+        self.msg_if.pub_info("NavPose first-connection data dict: " + str(self.navpose_dict))
+        self.msg_if.pub_info("NavPose first-connection status message: " + str(self.navpose_status))
 
 
     ###################
