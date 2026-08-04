@@ -23,6 +23,8 @@ import { observer, inject } from "mobx-react"
 
 import Section from "./Section"
 import { Columns, Column } from "./Columns"
+import Label from "./Label"
+import Styles from "./Styles"
 
 import NepiIFConnectDetections from "./Nepi_IF_ConnectDetections"
 import NepiIFConnectTargets from "./Nepi_IF_ConnectTargets"
@@ -138,73 +140,76 @@ class NepiAppWpilibIF extends Component {
     }
   }
 
-  // One selector per connect IF, in node order. Each Nepi_IF_Connect*
-  // component renders its own selector row: the source/device Select in the
-  // left column and the green "Connected" BooleanIndicator in the right column,
-  // both driven by that connect namespace's ConnectIFStatus.
+  // One selector per connect IF, in node order. Each Nepi_IF_Connect* component
+  // renders its own selector row: the source/device Select in the left column
+  // and the green "Connected" BooleanIndicator in the right column, both driven
+  // by that connect namespace's ConnectIFStatus. make_section={false} keeps each
+  // component from drawing a bordered box of its own -- the rows share this one
+  // panel, separated by the standard RUI divider, with the bold Label carrying
+  // the name the per-component Section title used to.
   renderControls() {
+    const divider = <div style={{ borderTop: "1px solid #ffffff", marginTop: Styles.vars.spacing.medium, marginBottom: Styles.vars.spacing.xs }}/>
+
     return (
       <React.Fragment>
 
-        <Columns>
-          <Column>
-            <NepiIFConnectDetections
-              namespace={this.getConnectNamespace("detections_connect")}
-              title={"Detections"}
-              show_selector={true}
-              show_data={false}
-              show_controls={false}
-            />
-          </Column>
-        </Columns>
+        <Label title={"Detections"} style={{fontWeight: 'bold'}} align={"left"} textAlign={"left"}/>
+        <NepiIFConnectDetections
+          namespace={this.getConnectNamespace("detections_connect")}
+          title={"Detections"}
+          show_selector={true}
+          show_data={false}
+          show_controls={false}
+          make_section={false}
+        />
 
-        <Columns>
-          <Column>
-            <NepiIFConnectTargets
-              namespace={this.getConnectNamespace("targets_connect")}
-              title={"Targets"}
-              show_selector={true}
-              show_data={false}
-              show_controls={false}
-            />
-          </Column>
-        </Columns>
+        {divider}
 
-        <Columns>
-          <Column>
-            <NepiIFConnectRBX
-              namespace={this.getConnectNamespace("rbx_connect")}
-              title={"RBX"}
-              show_selector={true}
-              show_data={false}
-              show_controls={false}
-            />
-          </Column>
-        </Columns>
+        <Label title={"Targets"} style={{fontWeight: 'bold'}} align={"left"} textAlign={"left"}/>
+        <NepiIFConnectTargets
+          namespace={this.getConnectNamespace("targets_connect")}
+          title={"Targets"}
+          show_selector={true}
+          show_data={false}
+          show_controls={false}
+          make_section={false}
+        />
 
-        <Columns>
-          <Column>
-            <NepiIFConnectMotor
-              namespace={this.getConnectNamespace("motor_connect")}
-              title={"Motors"}
-              show_selector={true}
-              show_data={false}
-              show_controls={false}
-            />
-          </Column>
-        </Columns>
+        {divider}
 
-        <Columns>
-          <Column>
-            <NepiIFConnectNavPose
-              namespace={this.getConnectNamespace("navpose_connect")}
-              title={"NavPose"}
-              show_selector={true}
-              show_data={false}
-              show_controls={false}
-            />
-          </Column>
-        </Columns>
+        <Label title={"RBX"} style={{fontWeight: 'bold'}} align={"left"} textAlign={"left"}/>
+        <NepiIFConnectRBX
+          namespace={this.getConnectNamespace("rbx_connect")}
+          title={"RBX"}
+          show_selector={true}
+          show_data={false}
+          show_controls={false}
+          make_section={false}
+        />
+
+        {divider}
+
+        <Label title={"Motors"} style={{fontWeight: 'bold'}} align={"left"} textAlign={"left"}/>
+        <NepiIFConnectMotor
+          namespace={this.getConnectNamespace("motor_connect")}
+          title={"Motors"}
+          show_selector={true}
+          show_data={false}
+          show_controls={false}
+          make_section={false}
+        />
+
+        {divider}
+
+        <Label title={"NavPose"} style={{fontWeight: 'bold'}} align={"left"} textAlign={"left"}/>
+        <NepiIFConnectNavPose
+          namespace={this.getConnectNamespace("navpose_connect")}
+          title={"NavPose"}
+          show_selector={true}
+          show_data={false}
+          show_controls={false}
+          make_section={false}
+        />
 
       </React.Fragment>
     )

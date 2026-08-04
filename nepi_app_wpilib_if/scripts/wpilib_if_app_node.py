@@ -286,44 +286,44 @@ class NepiWpilibApp(object):
                         show_selector = True,
                         show_controls = False,
                         show_data = False,
-                        callback_function = self.detectionsConnectCb,
+                        dataCB = self.detectionsConnectCb,
                         msg_if = self.msg_if)
 
         self.targets_if = ConnectTargetsIF(
                         show_selector = True,
                         show_controls = False,
                         show_data = False,
-                        callback_function = self.targetsConnectCb,
+                        dataCB = self.targetsConnectCb,
                         msg_if = self.msg_if)
 
         self.navpose_if = ConnectNavPoseIF(
                         show_selector = True,
                         show_controls = False,
                         show_data = False,
-                        callback_function = self.navposeConnectCb,
+                        dataCB = self.navposeConnectCb,
                         msg_if = self.msg_if)
 
         # RBX and Motors connect IFs have no separate data product, so their
-        # callback_function fires with their status dict on each status update.
+        # dataCB fires with their status dict on each status update.
         self.rbx_if = ConnectRBXDeviceIF(
                         show_selector = True,
                         show_controls = False,
                         show_data = False,
-                        callback_function = self.rbxConnectCb,
+                        dataCB = self.rbxConnectCb,
                         msg_if = self.msg_if)
 
         self.motors_if = ConnectMotorsDeviceIF(
                         show_selector = True,
                         show_controls = False,
                         show_data = False,
-                        callback_function = self.motorsConnectCb,
+                        dataCB = self.motorsConnectCb,
                         msg_if = self.msg_if)
 
 
     ###################
     ## Connect IF First-Connection Callbacks
     #
-    # Each connect IF invokes its callback_function with a single data dict. The
+    # Each connect IF invokes its dataCB with a single data dict. The
     # callback stores that dict and the IF's current status message (via
     # get_status_msg()) on every invocation. On the FIRST invocation per IF it
     # also logs both, then sets the got_first flag so it logs only once. RBX and
