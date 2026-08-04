@@ -896,9 +896,9 @@ class NepiStereoCamApp(object):
         if not calib_file:
             self._finishCalibAction(False, 'calibration file path cannot be empty')
             return
-        if not calib_file.endswith('.npz'):
-            calib_file = calib_file + '.npz'
-        self.calib_file = calib_file
+        # Adds a missing .npz and puts a bare filename in the device cal folder
+        # (next to the ZED cal files) rather than the node's working directory.
+        self.calib_file = calibrate.resolve_calib_path(calib_file)
         if self.node_if is not None:
             self.node_if.set_param('calib_file', self.calib_file)
             self.node_if.save_config()
@@ -961,7 +961,17 @@ class NepiStereoCamApp(object):
             # Restore the calibration the operator saved from the RUI: the board
             # description plus the .npz path, which is reloaded if it still
             # exists (quiet -- a device with no calibration yet is normal).
-            self.calib_file = self.node_if.get_param('calib_file')
+            # Rebase a stored path that holds no calibration onto the current
+            # default folder (the ZED cal folder). Configs written before
+            # default_calib_folder() reliably resolved to that folder carry a home
+            # fallback path, and the stale param would keep new solves out of the
+            # cal folder forever. A stored path that DOES have a file is left
+            # alone: that is a real calibration the operator chose.
+            calib_file = calibrate.resolve_calib_path(self.node_if.get_param('calib_file'))
+            if not os.path.isfile(calib_file):
+                calib_file = os.path.join(calibrate.default_calib_folder(),
+                                          os.path.basename(calib_file))
+            self.calib_file = calib_file
             self.calibrator.set_board(
                 cols=self.node_if.get_param('calib_board_cols'),
                 rows=self.node_if.get_param('calib_board_rows'),
