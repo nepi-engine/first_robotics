@@ -26,6 +26,7 @@ from nepi_sdk import nepi_sdk
 
 from nepi_api.node_if import NodeClassIF
 from nepi_api.messages_if import MsgIF
+from nepi_api.system_if import ControlsIF
 
 from nepi_api.connect_detections_if import ConnectDetectionsIF
 from nepi_api.connect_targets_if import ConnectTargetsIF
@@ -44,6 +45,14 @@ FACTORY_OPTIONS = ["None", "Option_A", "Option_B", "Option_C"]
 STATUS_PUBLISH_RATE_HZ = 1.0
 
 #########################################
+# Example Controls
+#
+# Controls name of the example control set: the <app>/example_controls namespace
+# one ControlsIF owns and the Nepi_IF_Controls box at the bottom of this app's RUI
+# column binds to. See setupExampleControlsIF().
+EXAMPLE_CONTROLS_NAME = "example_controls"
+
+#########################################
 # Node Class
 #########################################
 
@@ -55,6 +64,10 @@ class NepiWpilibApp(object):
     options = FACTORY_OPTIONS
 
     node_if = None
+
+    # The one ControlsIF this app owns: the example control set copied from
+    # nepi_app_controls_sandbox. See setupExampleControlsIF().
+    example_controls_if = None
 
     # Per-IF first-connection flags. Each connect IF's callback prints the first
     # data dict and status msg it receives exactly once, then sets its flag.
@@ -192,6 +205,11 @@ class NepiWpilibApp(object):
         self.setupInterfaceIFs()
 
         ##############################
+        # Example controls, built after the app's NodeClassIF and before initCb so
+        # the first status publish can already report the controls namespace.
+        self.setupExampleControlsIF()
+
+        ##############################
         self.initCb(do_updates=True)
 
         time.sleep(1)
@@ -260,15 +278,124 @@ class NepiWpilibApp(object):
 
     def resetCb(self, do_updates=True):
         self.msg_if.pub_warn("Resetting")
+        if self.example_controls_if is not None:
+            self.example_controls_if.reset()
         if do_updates:
             pass
         self.initCb(do_updates=do_updates)
 
     def factoryResetCb(self, do_updates=True):
         self.msg_if.pub_warn("Factory Resetting")
+        if self.example_controls_if is not None:
+            self.example_controls_if.factory_reset()
         if do_updates:
             pass
         self.initCb(do_updates=do_updates)
+
+
+    ###################
+    ## Example Controls
+    #
+    # A copy of nepi_app_controls_sandbox's demonstration control set, rendered as
+    # the Example Controls box at the bottom of this app's RUI column. It drives
+    # nothing here: the values are logged when they change and read by nothing
+    # else, so the widgets, persistence and update callbacks behave exactly as they
+    # do on the sandbox page.
+    #
+    # node_if is left as None so the IF builds and owns its own NodeClassIF -- the
+    # current device-IF convention, and what the sandbox app does. Every registry
+    # and param key a ControlsIF creates is prefixed from its own controls_name
+    # (system_if.py builds node_if_prefix that way), so it cannot overwrite this
+    # app's own entries -- the collision the 2026-07 DECISION LOG entry warns about.
+
+    def setupExampleControlsIF(self):
+        self.example_controls_if = ControlsIF(
+                        controls_name = EXAMPLE_CONTROLS_NAME,
+                        controls_display_name = 'Example Controls',
+                        controls_description = 'One control of every supported type',
+                        controls_init_dict = self.createExampleControlsInitDict(),
+                        controls_updated_callback = self.exampleControlsUpdatedCb,
+                        show_controls = True,
+                        has_show_control = False,
+                        log_name = EXAMPLE_CONTROLS_NAME,
+                        msg_if = self.msg_if)
+        self.example_controls_if.wait_for_controls_ready()
+
+    # One entry per CONTROL_TYPE, copied from controls_sandbox_app_node.py
+    # createControlsInitDict() so the box renders identically to the sandbox page.
+    # Insertion order sets the display order.
+    #
+    # demo_floats_slider is carried for fidelity with the sandbox but does not
+    # reach the RUI: nepi_controls' FloatSliders branch references an undefined
+    # name and silently drops the control. It is dropped on the sandbox page too.
+    def createExampleControlsInitDict(self):
+        controls_init_dict = {
+            'demo_menu': {
+                'type': 'Menu', 'default': 1, 'options': ['Off', 'Low', 'High'],
+                'display_name': 'Demo Menu', 'description': 'Pick one menu option (index based).', 'hidden': False},
+
+            'demo_selection': {
+                'type': 'Selection', 'default': 'Bravo', 'options': ['Alpha', 'Bravo', 'Charlie'],
+                'display_name': 'Demo Selection', 'description': 'Select a single option by name.', 'hidden': False},
+
+            'demo_selections': {
+                'type': 'Selections', 'default': ['Red', 'Blue'], 'options': ['Red', 'Green', 'Blue'],
+                'display_name': 'Demo Selections', 'description': 'Select any number of options.', 'hidden': False},
+
+            'demo_trigger': {
+                'type': 'Trigger', 'default': 0,
+                'display_name': 'Demo Trigger', 'description': 'Fire a one-shot trigger.', 'hidden': False},
+
+            'demo_bool': {
+                'type': 'Bool', 'default': True,
+                'display_name': 'Demo Bool', 'description': 'Toggle a boolean on or off.', 'hidden': False},
+
+            'demo_string': {
+                'type': 'String', 'default': 'hello nepi',
+                'display_name': 'Demo String', 'description': 'Free-form text value.', 'hidden': False},
+
+            'demo_int': {
+                'type': 'Int', 'default': 5, 'bounds': [0, 10],
+                'display_name': 'Demo Int', 'description': 'Integer value within [0, 10].', 'hidden': False},
+
+            'demo_float': {
+                'type': 'Float', 'default': 2.5, 'bounds': [0.0, 10.0], 'round_value': 2,
+                'display_name': 'Demo Float', 'description': 'Float value within [0.0, 10.0].', 'hidden': False},
+
+            'demo_float_slider': {
+                'type': 'FloatSlider', 'default': 50.0, 'bounds': [0.0, 100.0], 'round_value': 1,
+                'display_name': 'Demo Float Slider', 'description': 'Single-value slider over [0, 100].', 'hidden': False},
+
+            'demo_floats_slider': {
+                'type': 'FloatSliders', 'default': [0.25, 0.75], 'bounds': [0.0, 1.0], 'round_value': 2,
+                'display_name': 'Demo Floats Slider', 'description': 'Dual-value range slider (0.0-1.0 ratio).', 'hidden': False},
+        }
+        return controls_init_dict
+
+    def exampleControlsUpdatedCb(self, control_name):
+        # Called by ControlsIF after a control value/display change is applied.
+        value = None
+        if self.example_controls_if is not None:
+            value = self.example_controls_if.get_control_value(control_name)
+        self.msg_if.pub_info("Example control '" + str(control_name) + "' updated to: " + str(value))
+
+    # Fully-qualified namespace of the example ControlsIF.
+    #
+    # Built from self.node_namespace rather than read off
+    # ControlsIF.get_namespace(). That method returns
+    # create_namespace(node_NAME, controls_name) -- 'app_wpilib_if/example_controls',
+    # with no leading slash. It resolves correctly where the IF itself uses it, since
+    # rospy resolves a relative name against the node's parent namespace, but this
+    # app publishes the value for the RUI, which appends '/status' and hands it to
+    # rosbridge -- where a name with no leading slash resolves at the global root
+    # instead of under /<prefix>/<device_id>.
+    def getExampleControlsNamespace(self):
+        return nepi_sdk.create_namespace(self.node_namespace, EXAMPLE_CONTROLS_NAME)
+
+    def getExampleControlsReadyState(self):
+        if self.example_controls_if is None:
+            return False
+        return self.example_controls_if.get_controls_ready_state()
 
 
     ###################
@@ -389,6 +516,12 @@ class NepiWpilibApp(object):
         status_msg.selected_option = self.selected_option
         status_msg.value = self.value
         status_msg.heartbeat = True
+        # Example controls namespace, fully qualified -- see
+        # getExampleControlsNamespace() for why it is not ControlsIF.get_namespace().
+        # Reported before the IF exists too: initCb() publishes status while
+        # NodeClassIF is still being constructed, ahead of setupExampleControlsIF().
+        status_msg.example_controls_namespace = self.getExampleControlsNamespace()
+        status_msg.example_controls_ready = self.getExampleControlsReadyState()
         if self.node_if is not None:
             self.node_if.publish_pub('status_pub', status_msg)
 

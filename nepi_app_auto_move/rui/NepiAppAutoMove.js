@@ -6,7 +6,7 @@
 # (see https://github.com/nepi-engine/nepi_apps)
 #
 # License: NEPI RUI repo source-code and NEPI Images that use this source-code
-# are licensed under the "Numurus Software License", 
+# are licensed under the "Numurus Software License",
 # which can be found at: <https://numurus.com/wp-content/uploads/Numurus-Software-License-Terms.pdf>
 #
 # Redistributions in source code must retain this top-level comment block.
@@ -24,20 +24,43 @@ import { observer, inject } from "mobx-react"
 import Section from "./Section"
 import { Columns, Column } from "./Columns"
 import Label from "./Label"
-import Input from "./Input"
-import Button from "./Button"
-import Toggle from "react-toggle"
-import Select, { Option } from "./Select"
 import Styles from "./Styles"
 
-import { setElementStyleModified, clearElementStyleModified } from "./Utilities"
+import NepiIFConnectMotor from "./Nepi_IF_ConnectMotor"
+import NepiIFConnectNavPose from "./Nepi_IF_ConnectNavPose"
+import NepiIFConnectData from "./Nepi_IF_ConnectData"
 
+import NepiIFControls from "./Nepi_IF_Controls"
 import NepiIFConfig from "./Nepi_IF_Config"
 
 @inject("ros")
 @observer
 
 // AutoMove Application page
+//
+// Layout follows NepiAppWpilibIF.js: the selectors and config panel sit in the
+// right column, the image viewer fills the left column, and the page owns no
+// bespoke controls -- it selects sources, it does not drive them. Every connect
+// namespace is <app>/<connect_name>, owned by the matching connect IF in
+// auto_move_app_node.py:
+//   Motor 1 -> <app>/motor_1_connect  (ConnectMotorsDeviceIF)
+//   Motor 2 -> <app>/motor_2_connect  (ConnectMotorsDeviceIF)
+//   Motor 3 -> <app>/motor_3_connect  (ConnectMotorsDeviceIF)
+//   Motor 4 -> <app>/motor_4_connect  (ConnectMotorsDeviceIF)
+//   NavPose -> <app>/navpose_connect  (ConnectNavPoseIF)
+//   Image   -> <app>/image_connect    (ConnectImageIF)
+// Each connect IF is constructed with an explicit connect_name in the node so the
+// binding is greppable from both sides; the names held in state below must match
+// those node-side names character for character.
+//
+// The image row is the one place two components share a namespace. The selector
+// instance in the right column runs with show_data={false}; a SECOND
+// Nepi_IF_ConnectData on the SAME image_connect namespace runs in the left column
+// with show_selector={false} show_data={true}, and that second instance is what
+// renders Nepi_IF_ImageViewer -- Nepi_IF_ConnectData.renderData() reads the image
+// topic off ConnectIFStatus.selected_topic. The viewer topic therefore comes from
+// the connect status, not from this app's status message, so
+// NepiAppAutoMoveStatus.msg carries no image topic field.
 class NepiAppAutoMove extends Component {
 
   constructor(props) {
@@ -47,29 +70,32 @@ class NepiAppAutoMove extends Component {
       appName: "app_auto_move",
       appNamespace: null,
 
-      // Status fields — mirror NepiAppAutoMoveStatus.msg
-      enabled: false,
-      selected_option: "None",
-      options: ["None"],
-      value: 0.0,
+      // Connect names, one per connect IF the node instantiates. Held here
+      // rather than inlined at each call site so the six strings that must match
+      // the node read as one list.
+      motor1ConnectName: "motor_1_connect",
+      motor2ConnectName: "motor_2_connect",
+      motor3ConnectName: "motor_3_connect",
+      motor4ConnectName: "motor_4_connect",
+      navposeConnectName: "navpose_connect",
+      imageConnectName: "image_connect",
 
-      // Local edit buffer for the value Input (committed on Enter)
-      value_edit: "0.0",
+      status_msg: null,
+      connected: false,
 
       statusListener: null,
-      connected: false,
+      needs_update: true,
     }
 
     this.getBaseNamespace = this.getBaseNamespace.bind(this)
     this.getAppNamespace = this.getAppNamespace.bind(this)
+    this.getConnectNamespace = this.getConnectNamespace.bind(this)
     this.statusListener = this.statusListener.bind(this)
     this.updateStatusListener = this.updateStatusListener.bind(this)
-    this.onToggleEnabled = this.onToggleEnabled.bind(this)
-    this.onSelectOption = this.onSelectOption.bind(this)
-    this.onUpdateValueText = this.onUpdateValueText.bind(this)
-    this.onKeyValueText = this.onKeyValueText.bind(this)
-    this.onTriggerAction = this.onTriggerAction.bind(this)
     this.renderControls = this.renderControls.bind(this)
+    this.renderImageViewer = this.renderImageViewer.bind(this)
+    this.getExampleControlsNamespace = this.getExampleControlsNamespace.bind(this)
+    this.renderExampleControls = this.renderExampleControls.bind(this)
     this.renderConfig = this.renderConfig.bind(this)
   }
 
@@ -89,48 +115,62 @@ class NepiAppAutoMove extends Component {
     return null
   }
 
+  // Connect namespace a Nepi_IF_Connect* component subscribes to, i.e.
+  // <app>/<connect_name>, matching the connect_name each connect IF in the node
+  // passes to ConnectNodeIF.
+  getConnectNamespace(connectName) {
+    const appNamespace = this.getAppNamespace()
+    if (appNamespace !== null) {
+      return appNamespace + "/" + connectName
+    }
+    return null
+  }
+
+  // Namespace of this app's example ControlsIF. Taken from the app status, which
+  // publishes it fully qualified, with the conventional <app>/example_controls path
+  // as the fallback for the window before the first status message arrives. Mirrors
+  // NepiAppControlsSandbox.js getControlsNamespace().
+  getExampleControlsNamespace() {
+    const status_msg = this.state.status_msg
+    if (status_msg != null && status_msg.example_controls_namespace) {
+      return status_msg.example_controls_namespace
+    }
+    const appNamespace = this.getAppNamespace()
+    return (appNamespace != null) ? appNamespace + "/example_controls" : null
+  }
+
   statusListener(message) {
     this.setState({
-      enabled: message.enabled,
-      selected_option: message.selected_option,
-      options: (message.options && message.options.length > 0) ? message.options : this.state.options,
-      value: message.value,
-      // Seed the edit buffer on first connect only, so typing isn't clobbered
-      value_edit: this.state.connected ? this.state.value_edit : String(message.value),
+      status_msg: message,
       connected: true,
     })
   }
 
   updateStatusListener(namespace) {
-    const statusNamespace = namespace + '/status'
     if (this.state.statusListener) {
       this.state.statusListener.unsubscribe()
+      this.setState({ statusListener: null, status_msg: null })
     }
-    var statusListener = this.props.ros.setupStatusListener(
-      statusNamespace,
-      "nepi_app_auto_move/NepiAppAutoMoveStatus",
-      this.statusListener
-    )
-    this.setState({
-      appNamespace: namespace,
-      statusListener: statusListener,
-    })
+    if (namespace != null && namespace.indexOf('null') === -1) {
+      const statusNamespace = namespace + '/status'
+      var statusListener = this.props.ros.setupStatusListener(
+        statusNamespace,
+        "nepi_app_auto_move/NepiAppAutoMoveStatus",
+        this.statusListener
+      )
+      this.setState({ statusListener: statusListener })
+    }
+    this.setState({ appNamespace: namespace, needs_update: false })
   }
 
   componentDidMount() {
-    const namespace = this.getAppNamespace()
-    if (namespace !== null) {
-      this.updateStatusListener(namespace)
-    }
+    this.setState({ needs_update: true })
   }
 
   componentDidUpdate(prevProps, prevState) {
     const namespace = this.getAppNamespace()
-    const namespace_updated = (this.state.appNamespace !== namespace && namespace !== null)
-    if (namespace_updated) {
-      if (namespace.indexOf('null') === -1) {
-        this.updateStatusListener(namespace)
-      }
+    if ((namespace != null && namespace !== this.state.appNamespace) || this.state.needs_update === true) {
+      this.updateStatusListener(namespace)
     }
   }
 
@@ -140,114 +180,146 @@ class NepiAppAutoMove extends Component {
     }
   }
 
-  onToggleEnabled() {
-    const { sendBoolMsg } = this.props.ros
-    sendBoolMsg(this.getAppNamespace() + '/set_enabled', !this.state.enabled)
-  }
-
-  onSelectOption(event) {
-    const { sendStringMsg } = this.props.ros
-    const topic = this.getAppNamespace() + '/set_option'
-    sendStringMsg(topic, event.target.value)
-  }
-
-  // Editable Input pattern: typing marks the box modified (red + bold),
-  // Enter commits the value and clears the modified style.
-  onUpdateValueText(e) {
-    const el = document.getElementById("AppAutoMoveValue")
-    if (el) {
-      setElementStyleModified(el)
-    }
-    this.setState({ value_edit: e.target.value })
-  }
-
-  onKeyValueText(e) {
-    const { sendFloatMsg } = this.props.ros
-    if (e.key === 'Enter') {
-      const el = document.getElementById("AppAutoMoveValue")
-      const val = parseFloat(el.value)
-      if (!isNaN(val)) {
-        clearElementStyleModified(el)
-        sendFloatMsg(this.getAppNamespace() + '/set_value', val)
-      }
-    }
-  }
-
-  onTriggerAction() {
-    const { sendTriggerMsg } = this.props.ros
-    sendTriggerMsg(this.getAppNamespace() + '/trigger_action')
-  }
-
+  // One selector per connect IF, in node order: the four motors, NavPose, then
+  // the image. All of them live inside ONE bordered Section -- the connect rows
+  // are a single panel of source selections, not six unrelated blocks, so the
+  // box goes around the whole set and each row is separated from the next by the
+  // standard RUI divider. make_section={false} keeps each component from drawing
+  // a bordered box of its own inside that panel.
+  //
+  // show_connect_header={true} is what titles each row: the component renders its
+  // title prop and its green "Connected" BooleanIndicator on one line ABOVE the
+  // Select, both driven by that connect namespace's ConnectIFStatus, so the page
+  // no longer renders a bold Label of its own. Nepi_IF_ConnectData reads no
+  // show_controls prop, so only show_selector and show_data are passed to the
+  // image row; Nepi_IF_ConnectMotor and Nepi_IF_ConnectNavPose read all three.
   renderControls() {
-    // Options come from the app's status message, so the RUI always matches the node
-    const appNamespace = this.getAppNamespace()
-    const { connected, enabled, selected_option, options, value_edit } = this.state
+    const divider = <div style={{ borderTop: "1px solid #ffffff", marginTop: Styles.vars.spacing.medium, marginBottom: Styles.vars.spacing.xs }}/>
 
     return (
-      <React.Fragment>
+      <Section title={"Connections"}>
 
-        <div style={{ borderTop: "1px solid #ffffff", marginTop: Styles.vars.spacing.medium, marginBottom: Styles.vars.spacing.xs }} />
+        <NepiIFConnectMotor
+          namespace={this.getConnectNamespace(this.state.motor1ConnectName)}
+          title={"Motor 1"}
+          show_selector={true}
+          show_data={false}
+          show_controls={false}
+          show_connect_header={true}
+          make_section={false}
+        />
 
-        <Columns>
-          <Column>
-            <Label title={"Enabled"} />
-          </Column>
-          <Column>
-            <Toggle
-              checked={enabled}
-              onClick={this.onToggleEnabled}
-              disabled={!connected}
-            />
-          </Column>
-        </Columns>
+        {divider}
 
-        <Columns>
-          <Column>
-            <Label title={"Option"} />
-          </Column>
-          <Column>
-            <Select
-              onChange={this.onSelectOption}
-              value={selected_option}
-              disabled={!connected}
-            >
-              {options.map((opt) => (
-                <Option key={opt} value={opt}>{opt}</Option>
-              ))}
-            </Select>
-          </Column>
-        </Columns>
+        <NepiIFConnectMotor
+          namespace={this.getConnectNamespace(this.state.motor2ConnectName)}
+          title={"Motor 2"}
+          show_selector={true}
+          show_data={false}
+          show_controls={false}
+          show_connect_header={true}
+          make_section={false}
+        />
 
-        <Columns>
-          <Column>
-            <Label title={"Value"} />
-          </Column>
-          <Column>
-            <Input
-              id={"AppAutoMoveValue"}
-              value={value_edit}
-              onChange={this.onUpdateValueText}
-              onKeyDown={this.onKeyValueText}
-              disabled={!connected}
-            />
-          </Column>
-        </Columns>
+        {divider}
 
-        <div style={{ borderTop: "1px solid #ffffff", marginTop: Styles.vars.spacing.medium, marginBottom: Styles.vars.spacing.xs }} />
+        <NepiIFConnectMotor
+          namespace={this.getConnectNamespace(this.state.motor3ConnectName)}
+          title={"Motor 3"}
+          show_selector={true}
+          show_data={false}
+          show_controls={false}
+          show_connect_header={true}
+          make_section={false}
+        />
 
-        <Columns>
-          <Column>
-            <Button
-              style={{}}
-              onClick={this.onTriggerAction}
-              disabled={!connected || !enabled}
-            >
-              Trigger Action
-            </Button>
-          </Column>
-        </Columns>
+        {divider}
 
-      </React.Fragment>
+        <NepiIFConnectMotor
+          namespace={this.getConnectNamespace(this.state.motor4ConnectName)}
+          title={"Motor 4"}
+          show_selector={true}
+          show_data={false}
+          show_controls={false}
+          show_connect_header={true}
+          make_section={false}
+        />
+
+        {divider}
+
+        <NepiIFConnectNavPose
+          namespace={this.getConnectNamespace(this.state.navposeConnectName)}
+          title={"NavPose"}
+          show_selector={true}
+          show_data={false}
+          show_controls={false}
+          show_connect_header={true}
+          make_section={false}
+        />
+
+        {divider}
+
+        <NepiIFConnectData
+          namespace={this.getConnectNamespace(this.state.imageConnectName)}
+          title={"Image"}
+          show_selector={true}
+          show_data={false}
+          show_connect_header={true}
+          make_section={false}
+        />
+        <Label title={"Its stream feeds the viewer"}/>
+
+      </Section>
+    )
+  }
+
+  // The image viewer for the left column: a second Nepi_IF_ConnectData on the
+  // SAME image_connect namespace as the selector row, this one carrying only the
+  // data panel (show_selector={false} show_data={true}). Its renderData() reads
+  // the image topic off ConnectIFStatus.selected_topic and mounts
+  // Nepi_IF_ImageViewer on it, and it already handles the unselected case --
+  // renderData() returns an empty Columns/Column when selected_topic is null or
+  // 'None', so no viewer is mounted on a topic that does not exist. Sharing the
+  // namespace rather than adding a second connect IF keeps one selection driving
+  // both halves of the row: whatever the operator picks on the right is what
+  // streams on the left.
+  renderImageViewer() {
+    return (
+      <Columns>
+        <Column>
+          <NepiIFConnectData
+            namespace={this.getConnectNamespace(this.state.imageConnectName)}
+            title={"Image"}
+            show_selector={false}
+            show_data={true}
+            make_section={false}
+          />
+        </Column>
+      </Columns>
+    )
+  }
+
+  // A copy of the controls sandbox app's Controls box, bound to this app's own
+  // example ControlsIF rather than the sandbox app's. Same component, mounted the
+  // same way the sandbox page mounts it -- make_section={false} inside a Section of
+  // its own -- so it looks and behaves identically; the "Show Controls" toggle at
+  // the top of the box is Nepi_IF_Controls' own, not something this page adds. Only
+  // the Section title differs.
+  //
+  // The sandbox page also mounts NepiAppControlsSandbox-Settings below the box in
+  // develop/admin mode. That component is deliberately NOT copied: it lives in the
+  // sandbox app's rui/ directory, so importing it would make this app's RUI build
+  // depend on nepi_app_controls_sandbox being installed.
+  renderExampleControls() {
+    return (
+      <Section title={"Example Controls"}>
+
+        <NepiIFControls
+          namespace={this.getExampleControlsNamespace()}
+          make_section={false}
+        />
+
+      </Section>
     )
   }
 
@@ -263,6 +335,31 @@ class NepiAppAutoMove extends Component {
     )
   }
 
+  // Standard NEPI device-panel split: the image viewer in the left ~75%, a small
+  // gutter, and the selectors/config in the right ~23% column. Mirrors
+  // NepiDeviceIDX.js render().
+  renderBody() {
+    return (
+      <div style={{ display: 'flex' }}>
+
+        <div style={{ width: "75%" }}>
+          {this.renderImageViewer()}
+        </div>
+
+        <div style={{ width: '2%' }}>
+          {}
+        </div>
+
+        <div style={{ width: "23%" }}>
+          {this.renderControls()}
+          {this.renderConfig()}
+          {this.renderExampleControls()}
+        </div>
+
+      </div>
+    )
+  }
+
   render() {
     const make_section = (this.props.make_section !== undefined) ? this.props.make_section : true
 
@@ -270,16 +367,14 @@ class NepiAppAutoMove extends Component {
       return (
         <Columns>
           <Column>
-            {this.renderControls()}
-            {this.renderConfig()}
+            {this.renderBody()}
           </Column>
         </Columns>
       )
     } else {
       return (
         <Section>
-          {this.renderControls()}
-          {this.renderConfig()}
+          {this.renderBody()}
         </Section>
       )
     }

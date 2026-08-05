@@ -27,6 +27,7 @@ import Label from "./Label"
 
 import NepiIFConnectIDX from "./Nepi_IF_ConnectIDX"
 import NepiIFImageViewer from "./Nepi_IF_ImageViewer"
+import NepiIFControls from "./Nepi_IF_Controls"
 import NepiIFConfig from "./Nepi_IF_Config"
 
 import NepiAppStereoCamControls from "./NepiAppStereoCam-Controls"
@@ -72,6 +73,8 @@ class NepiAppStereoCam extends Component {
     this.updateStatusListener = this.updateStatusListener.bind(this)
     this.renderSelectors = this.renderSelectors.bind(this)
     this.renderImageViewers = this.renderImageViewers.bind(this)
+    this.getExampleControlsNamespace = this.getExampleControlsNamespace.bind(this)
+    this.renderExampleControls = this.renderExampleControls.bind(this)
   }
 
   getBaseNamespace() {
@@ -99,6 +102,19 @@ class NepiAppStereoCam extends Component {
       return appNamespace + "/" + connectName
     }
     return null
+  }
+
+  // Namespace of this app's example ControlsIF. Taken from the app status, which
+  // publishes it fully qualified, with the conventional <app>/example_controls path
+  // as the fallback for the window before the first status message arrives. Mirrors
+  // NepiAppControlsSandbox.js getControlsNamespace().
+  getExampleControlsNamespace() {
+    const status_msg = this.state.status_msg
+    if (status_msg != null && status_msg.example_controls_namespace) {
+      return status_msg.example_controls_namespace
+    }
+    const appNamespace = this.getAppNamespace()
+    return (appNamespace != null) ? appNamespace + "/example_controls" : null
   }
 
   statusListener(message) {
@@ -142,34 +158,45 @@ class NepiAppStereoCam extends Component {
     }
   }
 
-  // Two IDX connect selectors side by side (left camera / right camera).
+  // Two IDX connect selectors side by side (left camera / right camera), inside
+  // ONE bordered Section -- the two rows are a single panel of source selections,
+  // so the box goes around both rather than around each, and make_section={false}
+  // keeps each component from drawing a box of its own inside that panel.
+  //
+  // show_connect_header={true} titles each column: the component renders its title
+  // prop and its green "Connected" BooleanIndicator on one line ABOVE the Select,
+  // both driven by that connect namespace's ConnectIFStatus.
   renderSelectors() {
     const leftConnectNamespace = this.getConnectNamespace("left_cam_connect")
     const rightConnectNamespace = this.getConnectNamespace("right_cam_connect")
 
     return (
-      <Columns>
-        <Column>
-          <NepiIFConnectIDX
-            namespace={leftConnectNamespace}
-            title={"Left Camera"}
-            show_selector={true}
-            show_data={false}
-            show_controls={false}
-            make_section={false}
-          />
-        </Column>
-        <Column>
-          <NepiIFConnectIDX
-            namespace={rightConnectNamespace}
-            title={"Right Camera"}
-            show_selector={true}
-            show_data={false}
-            show_controls={false}
-            make_section={false}
-          />
-        </Column>
-      </Columns>
+      <Section title={"Connections"}>
+        <Columns>
+          <Column>
+            <NepiIFConnectIDX
+              namespace={leftConnectNamespace}
+              title={"Left Camera"}
+              show_selector={true}
+              show_data={false}
+              show_controls={false}
+              show_connect_header={true}
+              make_section={false}
+            />
+          </Column>
+          <Column>
+            <NepiIFConnectIDX
+              namespace={rightConnectNamespace}
+              title={"Right Camera"}
+              show_selector={true}
+              show_data={false}
+              show_controls={false}
+              show_connect_header={true}
+              make_section={false}
+            />
+          </Column>
+        </Columns>
+      </Section>
     )
   }
 
@@ -230,6 +257,31 @@ class NepiAppStereoCam extends Component {
     )
   }
 
+  // A copy of the controls sandbox app's Controls box, bound to this app's own
+  // example ControlsIF rather than the sandbox app's. Same component, mounted the
+  // same way the sandbox page mounts it -- make_section={false} inside a Section of
+  // its own -- so it looks and behaves identically; the "Show Controls" toggle at
+  // the top of the box is Nepi_IF_Controls' own, not something this page adds. Only
+  // the Section title differs. Unrelated to the stereo process settings rendered by
+  // NepiAppStereoCam-Controls above it, which are this app's own status arrays.
+  //
+  // The sandbox page also mounts NepiAppControlsSandbox-Settings below the box in
+  // develop/admin mode. That component is deliberately NOT copied: it lives in the
+  // sandbox app's rui/ directory, so importing it would make this app's RUI build
+  // depend on nepi_app_controls_sandbox being installed.
+  renderExampleControls() {
+    return (
+      <Section title={"Example Controls"}>
+
+        <NepiIFControls
+          namespace={this.getExampleControlsNamespace()}
+          make_section={false}
+        />
+
+      </Section>
+    )
+  }
+
   render() {
     const appNamespace = this.getAppNamespace()
     const make_section = (this.props.make_section !== undefined) ? this.props.make_section : true
@@ -263,6 +315,9 @@ class NepiAppStereoCam extends Component {
               appNamespace={appNamespace}
               status_msg={this.state.status_msg}
             />
+            {/* Bottom of the right-hand column, under everything this page
+                already puts there. */}
+            {this.renderExampleControls()}
           </div>
 
         </div>

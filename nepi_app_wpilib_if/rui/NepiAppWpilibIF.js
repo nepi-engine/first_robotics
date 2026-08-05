@@ -23,7 +23,6 @@ import { observer, inject } from "mobx-react"
 
 import Section from "./Section"
 import { Columns, Column } from "./Columns"
-import Label from "./Label"
 import Styles from "./Styles"
 
 import NepiIFConnectDetections from "./Nepi_IF_ConnectDetections"
@@ -32,6 +31,7 @@ import NepiIFConnectRBX from "./Nepi_IF_ConnectRBX"
 import NepiIFConnectMotor from "./Nepi_IF_ConnectMotor"
 import NepiIFConnectNavPose from "./Nepi_IF_ConnectNavPose"
 
+import NepiIFControls from "./Nepi_IF_Controls"
 import NepiIFConfig from "./Nepi_IF_Config"
 
 @inject("ros")
@@ -69,6 +69,8 @@ class NepiAppWpilibIF extends Component {
     this.statusListener = this.statusListener.bind(this)
     this.updateStatusListener = this.updateStatusListener.bind(this)
     this.renderControls = this.renderControls.bind(this)
+    this.getExampleControlsNamespace = this.getExampleControlsNamespace.bind(this)
+    this.renderExampleControls = this.renderExampleControls.bind(this)
     this.renderConfig = this.renderConfig.bind(this)
   }
 
@@ -97,6 +99,19 @@ class NepiAppWpilibIF extends Component {
       return appNamespace + "/" + connectName
     }
     return null
+  }
+
+  // Namespace of this app's example ControlsIF. Taken from the app status, which
+  // publishes it fully qualified, with the conventional <app>/example_controls path
+  // as the fallback for the window before the first status message arrives. Mirrors
+  // NepiAppControlsSandbox.js getControlsNamespace().
+  getExampleControlsNamespace() {
+    const status_msg = this.state.status_msg
+    if (status_msg != null && status_msg.example_controls_namespace) {
+      return status_msg.example_controls_namespace
+    }
+    const appNamespace = this.getAppNamespace()
+    return (appNamespace != null) ? appNamespace + "/example_controls" : null
   }
 
   statusListener(message) {
@@ -140,78 +155,105 @@ class NepiAppWpilibIF extends Component {
     }
   }
 
-  // One selector per connect IF, in node order. Each Nepi_IF_Connect* component
-  // renders its own selector row: the source/device Select in the left column
-  // and the green "Connected" BooleanIndicator in the right column, both driven
-  // by that connect namespace's ConnectIFStatus. make_section={false} keeps each
-  // component from drawing a bordered box of its own -- the rows share this one
-  // panel, separated by the standard RUI divider, with the bold Label carrying
-  // the name the per-component Section title used to.
+  // One selector per connect IF, in node order, all inside ONE bordered Section --
+  // the connect rows are a single panel of source selections, not five unrelated
+  // blocks, so the box goes around the whole set and each row is separated from
+  // the next by the standard RUI divider. make_section={false} keeps each
+  // component from drawing a bordered box of its own inside that panel.
+  //
+  // show_connect_header={true} is what titles each row: the component renders its
+  // title prop and its green "Connected" BooleanIndicator on one line ABOVE the
+  // Select, both driven by that connect namespace's ConnectIFStatus, so the page
+  // no longer renders a bold Label of its own.
   renderControls() {
     const divider = <div style={{ borderTop: "1px solid #ffffff", marginTop: Styles.vars.spacing.medium, marginBottom: Styles.vars.spacing.xs }}/>
 
     return (
-      <React.Fragment>
+      <Section title={"Connections"}>
 
-        <Label title={"Detections"} style={{fontWeight: 'bold'}} align={"left"} textAlign={"left"}/>
         <NepiIFConnectDetections
           namespace={this.getConnectNamespace("detections_connect")}
           title={"Detections"}
           show_selector={true}
           show_data={false}
           show_controls={false}
+          show_connect_header={true}
           make_section={false}
         />
 
         {divider}
 
-        <Label title={"Targets"} style={{fontWeight: 'bold'}} align={"left"} textAlign={"left"}/>
         <NepiIFConnectTargets
           namespace={this.getConnectNamespace("targets_connect")}
           title={"Targets"}
           show_selector={true}
           show_data={false}
           show_controls={false}
+          show_connect_header={true}
           make_section={false}
         />
 
         {divider}
 
-        <Label title={"RBX"} style={{fontWeight: 'bold'}} align={"left"} textAlign={"left"}/>
         <NepiIFConnectRBX
           namespace={this.getConnectNamespace("rbx_connect")}
           title={"RBX"}
           show_selector={true}
           show_data={false}
           show_controls={false}
+          show_connect_header={true}
           make_section={false}
         />
 
         {divider}
 
-        <Label title={"Motors"} style={{fontWeight: 'bold'}} align={"left"} textAlign={"left"}/>
         <NepiIFConnectMotor
           namespace={this.getConnectNamespace("motor_connect")}
           title={"Motors"}
           show_selector={true}
           show_data={false}
           show_controls={false}
+          show_connect_header={true}
           make_section={false}
         />
 
         {divider}
 
-        <Label title={"NavPose"} style={{fontWeight: 'bold'}} align={"left"} textAlign={"left"}/>
         <NepiIFConnectNavPose
           namespace={this.getConnectNamespace("navpose_connect")}
           title={"NavPose"}
           show_selector={true}
           show_data={false}
           show_controls={false}
+          show_connect_header={true}
           make_section={false}
         />
 
-      </React.Fragment>
+      </Section>
+    )
+  }
+
+  // A copy of the controls sandbox app's Controls box, bound to this app's own
+  // example ControlsIF rather than the sandbox app's. Same component, mounted the
+  // same way the sandbox page mounts it -- make_section={false} inside a Section of
+  // its own -- so it looks and behaves identically; the "Show Controls" toggle at
+  // the top of the box is Nepi_IF_Controls' own, not something this page adds. Only
+  // the Section title differs.
+  //
+  // The sandbox page also mounts NepiAppControlsSandbox-Settings below the box in
+  // develop/admin mode. That component is deliberately NOT copied: it lives in the
+  // sandbox app's rui/ directory, so importing it would make this app's RUI build
+  // depend on nepi_app_controls_sandbox being installed.
+  renderExampleControls() {
+    return (
+      <Section title={"Example Controls"}>
+
+        <NepiIFControls
+          namespace={this.getExampleControlsNamespace()}
+          make_section={false}
+        />
+
+      </Section>
     )
   }
 
@@ -245,6 +287,7 @@ class NepiAppWpilibIF extends Component {
         <div style={{ width: "23%" }}>
           {this.renderControls()}
           {this.renderConfig()}
+          {this.renderExampleControls()}
         </div>
 
       </div>
