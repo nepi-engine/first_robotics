@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import glob
 import os
+import time
 
 import numpy as np
 import cv2
@@ -50,50 +51,130 @@ DEFAULT_BOARD_ROWS = 6
 DEFAULT_SQUARE_MM = 25.0
 
 # Corner detection tuning.
+#
+# Detection is the step that fails in the field ("board not found in either
+# image"), so it is attempted several ways before giving up rather than once:
+#   1. findChessboardCornersSB -- OpenCV's newer detector. Much more tolerant of
+#      uneven lighting, background clutter and a board without a wide white
+#      margin than the classic one, and its corners come back already subpixel
+#      accurate. Guarded by hasattr: it needs OpenCV >= 4.0.
+#   2. the classic findChessboardCorners + cornerSubPix.
+#   3. either of those on a DOWNSCALED copy, with the corners scaled back up and
+#      re-refined against the full-resolution pixels. The classic detector in
+#      particular misses a board that is small within a high-resolution frame.
+#   4. either of those on a CLAHE-equalized copy, for a frame where part of the
+#      board is washed out or in shadow.
 _FIND_FLAGS = cv2.CALIB_CB_ADAPTIVE_THRESH | cv2.CALIB_CB_NORMALIZE_IMAGE
+# FILTER_QUADS helps against background clutter but can also throw away a valid
+# board, so it is a SECOND attempt rather than added to the flags above.
+_FIND_FLAG_SETS = (_FIND_FLAGS, _FIND_FLAGS | cv2.CALIB_CB_FILTER_QUADS)
 _SUBPIX_CRITERIA = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
+
+_HAS_SB = hasattr(cv2, "findChessboardCornersSB")
+# getattr defaults keep this working against a build missing the newer flags.
+_SB_FLAGS = (getattr(cv2, "CALIB_CB_NORMALIZE_IMAGE", 0) |
+             getattr(cv2, "CALIB_CB_EXHAUSTIVE", 0) |
+             getattr(cv2, "CALIB_CB_ACCURACY", 0))
+# The same detector WITHOUT the two expensive modes. EXHAUSTIVE and ACCURACY buy
+# detection rate and subpixel quality at a large multiple of the runtime, which is
+# what a real capture wants and what the size probe below cannot afford: the probe
+# runs one detection PER CANDIDATE BOARD SIZE and only needs a yes/no.
+_SB_FLAGS_FAST = getattr(cv2, "CALIB_CB_NORMALIZE_IMAGE", 0)
+# Width the downscaled retry works at.
+_DOWNSCALE_WIDTH = 640
+# Below this brightness spread a frame is flat (black / saturated / not a camera
+# image at all) and holds no corners for any board size.
+_FLAT_FRAME_STD = 5.0
+# Bounds + wall-clock budget for the "what board IS this?" probe that explains a
+# failed capture. The probe is only ever run on an operator button press.
+_PROBE_MIN_CORNERS = 3
+_PROBE_MAX_CORNERS = 12
+_PROBE_TIME_LIMIT_S = 5.0
+# The probe searches at its own (smaller) width. It is answering "roughly what
+# grid is in view", not measuring corners, and its cost is per candidate size, so
+# it is worth trading resolution for getting through the whole candidate list.
+_PROBE_WIDTH = 480
+# Filenames written next to the calibration when a capture fails to find the
+# board, so the frames the detector actually saw can be looked at. Fixed names:
+# these overwrite rather than accumulate.
+DEBUG_FRAME_NAMES = ("calib_debug_left.png", "calib_debug_right.png")
 
 # Fewer pairs than this and the solve is under-constrained / garbage.
 MIN_PAIRS = 5
 # Rectified rows must line up this well or block matching will produce mush.
 GOOD_EPIPOLAR_RMS_PX = 1.0
 
-# Where calibration files live on a NEPI device: the user config tier on the
-# storage mount, 'cals' subfolder. That is the standard NEPI camera-calibration
-# location -- system_mgr creates user_cfg/cals on boot, and the ZED driver backs
-# its factory cal files up to exactly this folder
-# (idx_zed_node.ZedCamNode.CAL_BACKUP_PATH), so a calibration written here
-# survives a software update along with the rest of the user config.
+# Where calibration files live on a NEPI device: EXACTLY the folder the ZED
+# driver keeps its camera calibration in (idx_zed_node.ZedCamNode.CAL_BACKUP_PATH
+# = /mnt/nepi_storage/user_cfg/cals), so every camera calibration on the box is in
+# one place and survives a software update along with the rest of the user config.
+# (The ZED driver mirrors this whole folder to/from /usr/local/zed/settings on
+# startup, so a stereo .npz sitting here also gets copied there. Harmless -- the
+# ZED SDK only reads its own SN*.conf -- and it comes back on the next boot.)
 USER_CFG_PATH = "/mnt/nepi_storage/user_cfg"
 CAL_PATH = USER_CFG_PATH + "/cals"
 CALIB_FILENAME = "stereo_calib.npz"
 
 
-def default_calib_folder():
-    """First writable calibration folder: env override, device cals, home.
+def _writable(folder, build_tree=False):
+    """True if folder is a writable directory, optionally creating it first."""
+    if not folder:
+        return False
+    if not os.path.isdir(folder):
+        if not build_tree:
+            return False
+        try:
+            os.makedirs(folder, exist_ok=True)
+        except OSError:
+            return False
+    return os.access(folder, os.W_OK)
 
-    The home fallback keeps this usable on a dev box, where the device storage
-    mount does not exist.
+
+def default_calib_folder():
+    """The ZED driver's cal folder on a device, created if it does not exist yet.
+
+    CAL_PATH is the target, not merely a candidate: the previous version only
+    ACCEPTED it when it (or its parent) already existed and was writable, so on a
+    device where user_cfg/cals had not been created yet the calibration silently
+    landed in the home fallback instead of alongside the ZED cal files. The 'cals'
+    leaf is now created when the user_cfg tier is there. The home fallbacks apply
+    only where the storage mount genuinely does not exist -- i.e. a dev box.
     """
-    candidates = [
-        os.environ.get("NEPI_STEREO_CALIB_DIR"),
-        CAL_PATH,
-        os.path.join(os.path.expanduser("~"), ".nepi", "cals"),
-    ]
-    for folder in candidates:
-        if not folder:
-            continue
-        # Only claim a folder we can actually create/write into.
-        if os.path.isdir(folder) and os.access(folder, os.W_OK):
-            return folder
-        parent = os.path.dirname(os.path.normpath(folder))
-        if os.path.isdir(parent) and os.access(parent, os.W_OK):
-            return folder
+    override = os.environ.get("NEPI_STEREO_CALIB_DIR")
+    if _writable(override, build_tree=True):
+        return override
+    # Create only the leaf: a missing user_cfg tier means this is not a device,
+    # and building the whole tree there would hide that rather than show it.
+    if os.path.isdir(USER_CFG_PATH) and _writable(CAL_PATH, build_tree=True):
+        return CAL_PATH
+    home_cals = os.path.join(os.path.expanduser("~"), ".nepi", "cals")
+    if _writable(home_cals, build_tree=True):
+        return home_cals
     return os.path.join(os.path.expanduser("~"), "cals")
 
 
 def default_calib_path():
     return os.path.join(default_calib_folder(), CALIB_FILENAME)
+
+
+def resolve_calib_path(path):
+    """Normalize a configured / operator-typed calibration path.
+
+    Empty -> the default. A BARE FILENAME -> that name inside the cal folder, so
+    'my_cal' typed into the RUI lands next to the ZED cal files rather than in
+    whatever the node's working directory happens to be. A missing .npz extension
+    is added, because np.savez appends it itself -- without this the node would
+    write 'my_cal.npz' and then look for 'my_cal'.
+    """
+    path = (path or "").strip()
+    if not path:
+        return default_calib_path()
+    path = os.path.expanduser(path)
+    if not path.endswith(".npz"):
+        path = path + ".npz"
+    if not os.path.dirname(path):
+        return os.path.join(default_calib_folder(), path)
+    return path
 
 
 # Shared helpers
@@ -134,16 +215,245 @@ def _canonical_order(corners):
     return corners
 
 
+def _align_corner_order(corners_l, corners_r, cols, min_cos=0.5):
+    """Make corner i the SAME physical corner in both images.
+
+    _canonical_order anchors each image independently by which end has the
+    smaller x+y, which is ambiguous for a board held near 45 degrees in frame:
+    the two images can end up anchored to OPPOSITE ends, pairing every corner
+    with the one across the board from it -- a calibration that is wrong without
+    looking wrong until the epipolar RMS comes back huge.
+
+    Comparing the direction of the board's first ROW (corner 0 -> corner cols-1)
+    settles it. Both cameras see the board from nearly the same side, so on a
+    good pair the two vectors point the same way. Anti-parallel means one image
+    is 180 degrees out, which reversing fixes. Perpendicular means the orderings
+    are transposed (only possible when cols == rows) or one detection is junk --
+    nothing safe to do with that. Note first->last would NOT work here: that
+    diagonal is the same for either ordering.
+
+    Returns (corners_r_aligned, ok).
+    """
+    def row_axis(corners):
+        points = corners.reshape(-1, 2)
+        return points[cols - 1] - points[0]
+
+    vec_l = row_axis(corners_l)
+    vec_r = row_axis(corners_r)
+    norms = float(np.linalg.norm(vec_l)) * float(np.linalg.norm(vec_r))
+    if norms <= 0.0:
+        return corners_r, False
+    cos = float(np.dot(vec_l, vec_r)) / norms
+    if cos >= min_cos:
+        return corners_r, True
+    if cos <= -min_cos:
+        return corners_r[::-1].copy(), True
+    return corners_r, False
+
+
+def _refine(gray, corners):
+    """Subpixel-refine corners against gray. Also normalizes dtype/layout.
+
+    cornerSubPix requires contiguous float32; corners scaled back up from a
+    downscaled detection are float64, which it rejects outright.
+    """
+    corners = np.ascontiguousarray(np.asarray(corners, dtype=np.float32))
+    return cv2.cornerSubPix(gray, corners, (11, 11), (-1, -1), _SUBPIX_CRITERIA)
+
+
+def _find_sb(gray, cols, rows, flags=_SB_FLAGS):
+    """findChessboardCornersSB, or None if unavailable / not found."""
+    if not _HAS_SB:
+        return None
+    try:
+        found, corners = cv2.findChessboardCornersSB(gray, (cols, rows), flags=flags)
+    except cv2.error:
+        # Some builds reject the newer flags; retry with none before giving up.
+        try:
+            found, corners = cv2.findChessboardCornersSB(gray, (cols, rows))
+        except cv2.error:
+            return None
+    if not found or corners is None:
+        return None
+    return np.asarray(corners, dtype=np.float32)
+
+
+def _find_classic(gray, cols, rows):
+    """findChessboardCorners + subpixel refine, or None if not found."""
+    for flags in _FIND_FLAG_SETS:
+        found, corners = cv2.findChessboardCorners(gray, (cols, rows), flags=flags)
+        if found and corners is not None:
+            return _refine(gray, corners)
+    return None
+
+
+def _find_either_detector(gray, cols, rows):
+    """Both detectors on one image. Returns (corners, method_name) or (None, None)."""
+    corners = _find_sb(gray, cols, rows)
+    if corners is not None:
+        return corners, "sb"
+    corners = _find_classic(gray, cols, rows)
+    if corners is not None:
+        return corners, "classic"
+    return None, None
+
+
+def _detect_board(gray, cols, rows):
+    """Escalating detection (see _FIND_FLAGS comment). (found, corners, method)."""
+    if gray is None:
+        return False, None, None
+
+    corners, method = _find_either_detector(gray, cols, rows)
+    if corners is not None:
+        return True, corners, method
+
+    # (label, image to search, scale relative to gray)
+    variants = []
+    if gray.shape[1] > _DOWNSCALE_WIDTH:
+        scale = float(_DOWNSCALE_WIDTH) / float(gray.shape[1])
+        variants.append(("downscaled",
+                         cv2.resize(gray, None, fx=scale, fy=scale,
+                                    interpolation=cv2.INTER_AREA),
+                         scale))
+    if gray.dtype == np.uint8:      # CLAHE is 8-bit single channel only
+        variants.append(("clahe",
+                         cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8)).apply(gray),
+                         1.0))
+
+    for label, image, scale in variants:
+        corners, method = _find_either_detector(image, cols, rows)
+        if corners is None:
+            continue
+        if scale != 1.0:
+            corners = corners / scale       # back into full-resolution coords
+        # Refine against the ORIGINAL pixels either way: a corner found on a
+        # downscaled or contrast-stretched copy is only approximately right, and
+        # calibration accuracy comes straight off these coordinates.
+        return True, _refine(gray, corners), label + "+" + method
+    return False, None, None
+
+
 def find_board(image, cols, rows):
     """Locate + refine chessboard corners. Returns (found, corners)."""
-    gray = _as_grayscale(image)
-    if gray is None:
-        return False, None
-    found, corners = cv2.findChessboardCorners(gray, (cols, rows), flags=_FIND_FLAGS)
+    found, corners, _ = _detect_board(_as_grayscale(image), cols, rows)
     if not found:
         return False, None
-    corners = cv2.cornerSubPix(gray, corners, (11, 11), (-1, -1), _SUBPIX_CRITERIA)
     return True, _canonical_order(corners)
+
+
+def detect_board_size(image, time_limit_s=_PROBE_TIME_LIMIT_S):
+    """Best-effort: what chessboard, if any, is ACTUALLY in this image?
+
+    Only used to explain a failed capture. A wrong board description in the RUI
+    is a far more common cause than a detector miss, and "a 7x5 board WAS found"
+    is an actionable message where "not found" is not. Largest board first (a
+    detector can match a sub-grid of a bigger board), on a downscaled copy, and
+    under a wall-clock budget so a Capture press cannot stall the node.
+
+    Returns (size, searched_fully): size is (cols, rows) with cols >= rows, or
+    None. searched_fully is False when the budget ran out first -- the caller must
+    not report "no board of any size" off a search that never finished.
+
+    COST is the whole design constraint here, and getting it wrong makes this
+    function useless rather than slow: a sweep that runs out of budget partway
+    reports nothing, and because the sweep goes largest-first the sizes it did get
+    through are the least likely ones. So the probe searches at _PROBE_WIDTH with
+    _SB_FLAGS_FAST -- deliberately NOT the flags a real capture uses -- and tries
+    the one-shot CALIB_CB_LARGER path first, which answers the whole question in a
+    single detection on builds that support it.
+    """
+    gray = _as_grayscale(image)
+    if gray is None:
+        return None, True
+    if gray.shape[1] > _PROBE_WIDTH:
+        scale = float(_PROBE_WIDTH) / float(gray.shape[1])
+        gray = cv2.resize(gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+
+    size = _probe_larger(gray)
+    if size is not None:
+        return size, True
+
+    # rows <= cols only: (c, r) and (r, c) describe the same physical board, and
+    # the detectors are rotation agnostic, so searching both is wasted time.
+    sizes = [(cols, rows)
+             for cols in range(_PROBE_MIN_CORNERS, _PROBE_MAX_CORNERS + 1)
+             for rows in range(_PROBE_MIN_CORNERS, cols + 1)]
+    # Largest first: a detector will happily match a SUB-GRID of a bigger board,
+    # so the first hit is only the right answer if nothing larger was possible.
+    sizes.sort(key=lambda size: -(size[0] * size[1]))
+
+    deadline = time.monotonic() + float(time_limit_s)
+    for cols, rows in sizes:
+        if time.monotonic() > deadline:
+            return None, False
+        # One detector per size, not both: this is a ~55-size sweep, and SB is the
+        # better of the two at finding an unknown board anyway.
+        corners = (_find_sb(gray, cols, rows, flags=_SB_FLAGS_FAST) if _HAS_SB
+                   else _find_classic(gray, cols, rows))
+        if corners is not None:
+            return (cols, rows), True
+    return None, True
+
+
+def _probe_larger(gray):
+    """The whole size question in ONE detection, or None if unsupported.
+
+    findChessboardCornersSB accepts CALIB_CB_LARGER, which lets it return a board
+    BIGGER than the patternSize asked for and reports the grid it actually landed
+    on through its meta output. Asking for the smallest board there is then reads
+    back the real size directly -- no sweep, and no sub-grid ambiguity, since the
+    returned pattern is the maximal one.
+
+    Not every build has the flag or the 4-value overload, and the flag is
+    documented as needing a marker board on some versions, so every failure mode
+    here just falls through to the sweep.
+    """
+    larger = getattr(cv2, "CALIB_CB_LARGER", 0)
+    if not _HAS_SB or not larger:
+        return None
+    try:
+        found, _, meta = cv2.findChessboardCornersSB(
+            gray, (_PROBE_MIN_CORNERS, _PROBE_MIN_CORNERS),
+            flags=_SB_FLAGS_FAST | larger)
+    except (cv2.error, ValueError, TypeError):
+        return None
+    if not found or meta is None:
+        return None
+    meta = np.asarray(meta)
+    if meta.ndim != 2:
+        return None
+    # A result the SAME size as the ask proves nothing: it is what a build that
+    # ignores CALIB_CB_LARGER returns, and it is equally what a genuine sub-grid
+    # match looks like. Only a strictly larger board is evidence the flag did what
+    # it says. Anything else falls through to the sweep, which handles the tiny
+    # boards on its own.
+    if max(meta.shape) <= _PROBE_MIN_CORNERS:
+        return None
+    # meta is one entry per detected corner, laid out as the grid, so its shape IS
+    # the board. Report cols >= rows to match the sweep's convention.
+    rows, cols = int(meta.shape[0]), int(meta.shape[1])
+    return (max(cols, rows), min(cols, rows))
+
+
+def save_debug_pair(left_image, right_image, folder=None):
+    """Write the L/R frames a capture failed on. Returns the folder, or None.
+
+    Without this a failed capture leaves NOTHING behind to look at: the frames are
+    live camera data that is overwritten milliseconds later, so "board not found"
+    can only ever be argued about in the abstract. The two filenames are fixed, so
+    repeated failures overwrite rather than fill the calibration folder.
+
+    Best-effort by definition -- this runs on the failure path, and a read-only
+    folder or an unencodable frame must not turn a bad capture into an exception.
+    """
+    try:
+        folder = folder or default_calib_folder()
+        for name, image in zip(DEBUG_FRAME_NAMES, (left_image, right_image)):
+            if not cv2.imwrite(os.path.join(folder, name), image):
+                return None
+        return folder
+    except (cv2.error, OSError):
+        return None
 
 
 def _epipolar_rms_px(imgpoints_l, imgpoints_r, KL, DL, KR, DR, R1, R2, P1, P2):
@@ -302,15 +612,23 @@ class StereoCalibrator:
             return False, (f"frame size {size} != captured {self.image_size}; "
                            "clear captures before changing resolution")
 
-        found_l, corners_l = find_board(left_image, self.cols, self.rows)
-        found_r, corners_r = find_board(right_image, self.cols, self.rows)
+        found_l, corners_l, method_l = _detect_board(_as_grayscale(left_image),
+                                                     self.cols, self.rows)
+        found_r, corners_r, method_r = _detect_board(_as_grayscale(right_image),
+                                                     self.cols, self.rows)
         if not (found_l and found_r):
-            if not found_l and not found_r:
-                where = "either image"
-            else:
-                where = "the right image" if found_l else "the left image"
-            return False, (f"{self.cols}x{self.rows} board not found in {where} "
-                           f"-- kept {self.count}")
+            return False, self._failure_message(found_l, found_r, left_image, right_image)
+
+        corners_l = _canonical_order(corners_l)
+        corners_r, aligned = _align_corner_order(corners_l,
+                                                 _canonical_order(corners_r),
+                                                 self.cols)
+        if not aligned:
+            # Corner i must be the same physical corner in both images or the
+            # solve is silently wrong. Refuse rather than poison the capture set.
+            return False, ("L/R corner order disagrees -- hold the board flatter "
+                           "and squarer to both cameras; "
+                           f"kept {self.count}")
 
         self._objpoints.append(board_object_points(self.cols, self.rows, self.square_mm))
         self._imgpoints_l.append(corners_l)
@@ -318,7 +636,67 @@ class StereoCalibrator:
         self.image_size = size
         remaining = MIN_PAIRS - self.count
         hint = f" (need {remaining} more)" if remaining > 0 else " (ready to solve)"
-        return True, f"captured pair {self.count}{hint}"
+        # Which detector path found it: a board only the fallbacks can see is
+        # marginal (too small in frame, or badly lit), which is worth knowing
+        # before the solve comes back with a poor epipolar RMS.
+        detail = "" if method_l == method_r == "sb" else f" [{method_l}/{method_r}]"
+        return True, f"captured pair {self.count}{hint}{detail}"
+
+    def _failure_message(self, found_l, found_r, left_image, right_image):
+        """Explain a failed capture rather than only reporting it.
+
+        The causes that actually produce 'not found' -- a wrong board description,
+        a board only one camera can see, and a frame with no usable image in it --
+        are indistinguishable from each other in the bare message, so each is
+        checked here and named.
+        """
+        if not found_l and not found_r:
+            where = "either image"
+        else:
+            where = "the right image" if found_l else "the left image"
+        height, width = left_image.shape[0:2]
+        parts = [f"{self.cols}x{self.rows} board not found in {where} "
+                 f"-- kept {self.count} (frames {width}x{height})"]
+
+        # A frame with no contrast holds no corners whatever the board is; say so
+        # instead of sending the operator off after board sizes.
+        flat = False
+        for name, image in (("left", left_image), ("right", right_image)):
+            std = float(np.std(_as_grayscale(image)))
+            if std < _FLAT_FRAME_STD:
+                flat = True
+                parts.append(f"{name} frame is blank (brightness spread {std:.1f}) "
+                             "-- check the camera selection and its exposure")
+        if flat:
+            return "; ".join(parts)
+
+        # Otherwise the board description is the usual culprit: name the board
+        # that IS in view, on whichever image failed.
+        probe_size, searched_fully = detect_board_size(
+            left_image if not found_l else right_image)
+        if probe_size is None and not searched_fully:
+            parts.append("could not identify the board within the search time -- "
+                         "check the Board Corner Columns/Rows against the board")
+        elif probe_size is None:
+            parts.append("no chessboard of any size found -- get the WHOLE board in "
+                         "both views, in focus, evenly lit and glare-free, with a "
+                         "plain white margin around it")
+        elif sorted(probe_size) != sorted((self.cols, self.rows)):
+            parts.append(f"a {probe_size[0]}x{probe_size[1]} INNER-CORNER board was "
+                         f"found instead -- set Board Corner Columns/Rows to "
+                         f"{probe_size[0]}/{probe_size[1]} (a board of NxM squares "
+                         "has N-1 x M-1 inner corners)")
+        else:
+            parts.append("the board was only detected marginally -- move it closer, "
+                         "fill more of both frames and improve the lighting")
+
+        # The frames themselves settle what no message can describe.
+        folder = save_debug_pair(left_image, right_image)
+        if folder is not None:
+            parts.append("the frames the detector saw were saved to " +
+                         os.path.join(folder, DEBUG_FRAME_NAMES[0]) + " / " +
+                         DEBUG_FRAME_NAMES[1])
+        return "; ".join(parts)
 
     #### solve
     def solve(self, out_path, alpha=0.0):
@@ -329,8 +707,16 @@ class StereoCalibrator:
         except (ValueError, cv2.error) as exc:
             return False, f"calibration failed: {str(exc).splitlines()[-1]}", None
         quality = "good" if info["good"] else "TOO HIGH -- recapture"
+        # The per-camera RMS values separate the two failures that a single
+        # stereo RMS cannot tell apart, and which need OPPOSITE fixes:
+        #   mono high too  -> the corners themselves are bad in one camera
+        #                     (misdetection, blur, a non-flat board)
+        #   mono low, stereo high -> each camera is self-consistent but the two
+        #                     disagree, i.e. the L/R frames are not the same
+        #                     instant, or corner i is not the same corner in both
         message = (f"solved {info['pairs_used']} pairs: "
-                   f"rms {info['rms_stereo']:.3f} px, "
+                   f"rms {info['rms_stereo']:.3f} px "
+                   f"(mono L {info['rms_left']:.3f} / R {info['rms_right']:.3f}), "
                    f"epipolar {info['epipolar_rms_px']:.3f} px ({quality}), "
                    f"f {info['focal_length_px']:.1f} px, "
                    f"baseline {info['baseline_mm']:.1f} mm")
