@@ -28,6 +28,7 @@ import Button, { ButtonMenu } from "./Button"
 import Styles from "./Styles"
 
 import { onChangeSwitchStateValue } from "./Utilities"
+import { downloadCalibrationTarget } from "./NepiAppStereoCam-CalibrationTarget"
 
 // Stereo calibration panel.
 //
@@ -70,6 +71,9 @@ class NepiAppStereoCamCalibration extends Component {
     this.onSolve = this.onSolve.bind(this)
     this.onClear = this.onClear.bind(this)
     this.onLoad = this.onLoad.bind(this)
+    this.onGetTargetLetter = this.onGetTargetLetter.bind(this)
+    this.onGetTargetA4 = this.onGetTargetA4.bind(this)
+    this.renderTargetDownload = this.renderTargetDownload.bind(this)
     this.renderBoardInputs = this.renderBoardInputs.bind(this)
     this.renderCalibration = this.renderCalibration.bind(this)
   }
@@ -191,6 +195,35 @@ class NepiAppStereoCamCalibration extends Component {
     this.sendTrigger("load_calib")
   }
 
+  // These two do NOT talk to the node. They drop the printable chessboard PDF
+  // into the browser's Downloads folder on whatever computer is viewing the
+  // RUI, the same way the image viewer snapshot button saves a frame.
+  onGetTargetLetter() {
+    downloadCalibrationTarget("letter")
+  }
+
+  onGetTargetA4() {
+    downloadCalibrationTarget("a4")
+  }
+
+  // The bundled sheets are 9x6 inner corners at 20 mm squares, so Board Corner
+  // Columns/Rows below already match, but Square Size must be set to 20 -- the
+  // node's factory square size is 25 mm (calibrate.DEFAULT_SQUARE_MM).
+  renderTargetDownload() {
+    return (
+      <React.Fragment>
+        <Label title={"Printable Target (9x6 corners, 20 mm)"} />
+        <div style={{ fontStyle: "italic" }}>
+          {"Print at Actual Size (no page scaling), check the 100 mm rule on the sheet, mount it flat and rigid, then set Square Size below to 20 mm."}
+        </div>
+        <ButtonMenu>
+          <Button onClick={this.onGetTargetLetter}>{"Download Letter PDF"}</Button>
+          <Button onClick={this.onGetTargetA4}>{"Download A4 PDF"}</Button>
+        </ButtonMenu>
+      </React.Fragment>
+    )
+  }
+
   renderBoardInputs() {
     // cols/rows are INNER corner counts: a 10x7-square board is 9x6 corners.
     const board = [
@@ -270,6 +303,10 @@ class NepiAppStereoCamCalibration extends Component {
               {epipolar_rms > 0.0 ? epipolar_rms.toFixed(3) : "---"}
             </div>
           </Label>
+
+          <div style={{ borderTop: "1px solid #777777", marginTop: Styles.vars.spacing.xs, marginBottom: Styles.vars.spacing.xs }} />
+
+          {this.renderTargetDownload()}
 
           <div style={{ borderTop: "1px solid #777777", marginTop: Styles.vars.spacing.xs, marginBottom: Styles.vars.spacing.xs }} />
 

@@ -11,12 +11,33 @@ string selected_process
 bool process_ready
 
 #####################
-# Selected process's tunable settings, flattened into parallel arrays so the RUI
-# can render one editable box per variable (mirrors PanTiltAutoAppStatus
-# auto_control_names / auto_control_values). Names and values are index-aligned;
-# edits are sent back per-name via set_process_control_value (UpdateFloat).
-string[] process_control_names
-float32[] process_control_values
+# Process Controls
+#####################
+# Per-control data is NOT carried here. It travels in the
+# nepi_interfaces/ControlsStatus message each ControlsIF publishes at
+# <each controls namespace>/status, exactly as in ControlsSandboxStatus.msg. What
+# this app adds over the sandbox is multiplicity: it owns one controls namespace
+# per process, because stereo_settings.PROCESSES_DICT holds one control set per
+# process and only one process is active at a time.
+#
+# Every namespace below is FULLY QUALIFIED. ControlsIF.get_namespace() returns a
+# relative namespace ('app_stereo_cam/sgbm_1', no leading slash), which resolves
+# where the IF itself uses it but not when a RUI component appends '/status' and
+# hands it to rosbridge -- see stereo_cam_app_node.py getControlsNamespace().
+
+# Controls namespace of the process named in selected_process above, or "None"
+# when there is no valid selection. The RUI mounts its single Nepi_IF_Controls
+# here and nowhere else, which is what shows the operator exactly one process's
+# controls: the inactive process's component is not mounted at all. Suppression
+# cannot be done with the per-control hidden flag -- see
+# stereo_cam_app_node.py setupProcessControlsIFs()
+string active_controls_namespace
+# Every process controls namespace this app owns, one per process in
+# stereo_settings.PROCESSES_DICT order. Published for discoverability; the RUI
+# binds to the field above, not to this list.
+string[] controls_namespaces
+# True only when every per-process ControlsIF has completed initialization
+bool controls_ready
 
 #####################
 # Left / Right IDX camera selectors
@@ -68,19 +89,14 @@ float32 result_max_depth_mm
 #####################
 # Example Controls
 #####################
-# Per-control data is NOT carried here. It travels in the
-# nepi_interfaces/ControlsStatus message the app's example ControlsIF publishes at
-# <example_controls_namespace>/status, exactly as in ControlsSandboxStatus.msg.
-# Nothing to do with the process_control_names / process_control_values arrays
-# above, which are this app's own flattened process settings.
-#
-# The namespace is FULLY QUALIFIED. ControlsIF.get_namespace() returns a relative
-# namespace ('app_stereo_cam/example_controls', no leading slash), which resolves
-# where the IF itself uses it but not when a RUI component appends '/status' and
-# hands it to rosbridge -- see stereo_cam_app_node.py getExampleControlsNamespace().
-
-# Namespace of the example control set copied from nepi_app_controls_sandbox,
-# where NepiAppStereoCam.js mounts its Example Controls box
+# Namespace of the example control set, a copy of nepi_app_controls_sandbox's
+# demonstration controls that belongs to no process and drives nothing in this app.
+# NepiAppStereoCam.js mounts its Example Controls box here, in ADDITION to the
+# single Nepi_IF_Controls NepiAppStereoCam-Controls.js mounts on
+# active_controls_namespace above -- this one is always mounted, since there is no
+# active/inactive question about it. Same fully-qualified form, and the same reason
+# for it -- see stereo_cam_app_node.py getControlsNamespace().
 string example_controls_namespace
-# True once that ControlsIF has completed initialization
+# True once that ControlsIF has completed initialization. Reported separately from
+# controls_ready above, which covers only the per-process sets.
 bool example_controls_ready

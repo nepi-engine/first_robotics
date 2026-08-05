@@ -26,7 +26,10 @@ idx_stereo_cam_node.py logic. It brings up:
     Nepi_IF_ConnectIDX component.
   * A "processes" dropdown (available_processes / selected_process +
     set_selected_process / reload_processes), sourced from stereo_settings
-    (create/update_processes_dict), following nepi_app_pan_tilt_auto.
+    PROCESSES_DICT, following nepi_app_pan_tilt_auto. Each process's tunable
+    values are a nepi_controls control set owned by its OWN ControlsIF, one per
+    process, keyed by process name -- see setupProcessControlsIFs(). The
+    selector itself is deliberately NOT a control; see the comment there.
   * A DepthMapIF that publishes the depth_map data product straight out of the
     depth loop: raw 32FC1 millimeter depth on <node>/depth_map, plus the
     colorized <node>/depth_map/depth_map_image the RUI viewer renders, plus the
@@ -148,8 +151,14 @@ FALLBACK_HEIGHT_DEG = 70.0
 
 # Controls name of the example control set: the <app>/example_controls namespace one
 # ControlsIF owns and the Nepi_IF_Controls box at the bottom of this app's RUI column
-# binds to. Unrelated to the stereo PROCESSES_DICT settings, which are this app's own
-# flattened name/value arrays rather than a ControlsIF. See setupExampleControlsIF().
+# binds to. It belongs to no process and drives nothing here -- see
+# setupExampleControlsIF().
+#
+# It is one instance among several. Every process in stereo_settings.PROCESSES_DICT
+# owns a ControlsIF of its own, named after the process, because only one process is
+# active at a time and the operator should be shown just that one's controls. The
+# example set is the exception: always mounted, since there is no active/inactive
+# question about it.
 EXAMPLE_CONTROLS_NAME = "example_controls"
 
 #########################################
@@ -167,15 +176,24 @@ class NepiStereoCamApp(object):
     right_cam_connect_if = None
     msg_if = None
 
-    # The one ControlsIF this app owns: the example control set copied from
-    # nepi_app_controls_sandbox. See setupExampleControlsIF().
+    # One ControlsIF per entry in stereo_settings.PROCESSES_DICT, keyed by process
+    # name. There is no app-level process ControlsIF -- see the selector comment on
+    # setupProcessControlsIFs().
+    process_controls_ifs = None
+
+    # The example control set copied from nepi_app_controls_sandbox. Not a process
+    # control set and not keyed by process. See setupExampleControlsIF().
     example_controls_if = None
 
     # Processes (nepi stab/auto "processes" pattern; see stereo_settings.py)
     available_processes = list(stereo_settings.PROCESSES_DICT.keys())
     selected_process = stereo_settings.DEFAULT_PROCESS
-    processes_dict = stereo_settings.create_processes_dict()
     process_ready = True
+
+    # Set once the first time a depth pass had to be skipped because a ControlsIF
+    # reported a None controls dict. See getControlsValues() for what puts an IF in
+    # that state; logged once rather than at the depth rate.
+    logged_controls_dict_none = False
 
     # Rectification + calibration (driven from the RUI; see calibrate.py)
     rectifier = None
@@ -227,7 +245,7 @@ class NepiStereoCamApp(object):
         # Initialize Class Variables
         self.available_processes = list(stereo_settings.PROCESSES_DICT.keys())
         self.selected_process = stereo_settings.DEFAULT_PROCESS
-        self.processes_dict = stereo_settings.create_processes_dict()
+        self.process_controls_ifs = dict()
         self.stereo_data_dict = stereo_settings.get_blank_data_dict()
         self.max_framerate = self.DEFAULT_MAX_FRAMERATE
 
@@ -266,10 +284,9 @@ class NepiStereoCamApp(object):
                 'namespace': self.node_namespace,
                 'factory_val': self.selected_process
             },
-            'processes_dict': {
-                'namespace': self.node_namespace,
-                'factory_val': self.processes_dict
-            },
+            # No 'processes_dict' param. Each process's control set is persisted by
+            # its own ControlsIF, under that IF's own '<process>_controls_dict'
+            # param in its own namespace.
             # Depth compute rate cap. Owned by this node (it used to ride in on
             # the IDX device interface's setMaxFramerate hook).
             'max_framerate': {
@@ -325,14 +342,10 @@ class NepiStereoCamApp(object):
                 'callback': self.reloadProcessesCb,
                 'callback_args': ()
             },
-            'set_process_control_value': {
-                'namespace': self.node_namespace,
-                'topic': 'set_process_control_value',
-                'msg': UpdateFloat,
-                'qsize': 10,
-                'callback': self.setProcessControlValueCb,
-                'callback_args': ()
-            },
+            # No 'set_process_control_value'. Every process setting is a
+            # nepi_controls control now, so an edit goes to the typed
+            # set_<type>_control_value topic of that process's own ControlsIF
+            # rather than arriving here as an UpdateFloat to be cast back.
             'set_max_framerate': {
                 'namespace': self.node_namespace,
                 'topic': 'set_max_framerate',
@@ -445,9 +458,11 @@ class NepiStereoCamApp(object):
         self.right_cam_connect_if.wait_for_connect_ready()
 
         ##############################
-        # Example controls, built after the app's NodeClassIF and before initCb so
-        # the first status publish can already report the controls namespace.
-        self.setupExampleControlsIF()
+        # Controls. Built after the app's NodeClassIF and before initCb, so the
+        # first status publish can already report every controls namespace -- and
+        # so initCb's loadCalibration() has ControlsIF instances to push the
+        # measured focal_length_px / baseline_mm into.
+        self.setupControlsIFs()
 
         ##############################
         self.initCb(do_updates=True)
@@ -468,20 +483,13 @@ class NepiStereoCamApp(object):
 
 
     ###################
-    ## Processes settings back-and-forth with the RUI
-
-    def getSettings(self):
-        # RUI read path: hand out the current nested processes settings.
-        return self.processes_dict
-
-    def settingUpdateFunction(self, incoming_processes_dict):
-        # RUI write path: sanitize incoming settings against known defaults.
-        # update_processes_dict drops unknown keys and preserves structure, so a
-        # malformed RUI payload can't inject bad settings.
-        self.processes_dict = stereo_settings.update_processes_dict(incoming_processes_dict)
-        if self.node_if is not None:
-            self.node_if.set_param('processes_dict', self.processes_dict)
-        return True, "stereo settings updated"
+    ## Process selector
+    #
+    # There is no settings read/write path here any more. Each process's tunable
+    # values live in that process's own ControlsIF, which owns the typed
+    # set_<type>_control_value topics the RUI publishes to, the bounds/options
+    # validation, and the param persistence. The node only reads a flat snapshot
+    # once per depth pass -- see getControlsValues().
 
     def setSelectedProcess(self, process_name):
         if process_name in stereo_settings.PROCESSES_DICT:
@@ -515,11 +523,27 @@ class NepiStereoCamApp(object):
         self.rectifier = rectifier
         if rectifier is None:
             return
-        for settings in self.processes_dict.values():
-            settings['focal_length_px'] = rectifier.focal_length_px
-            settings['baseline_mm'] = rectifier.baseline_mm
-        if self.node_if is not None:
-            self.node_if.set_param('processes_dict', self.processes_dict)
+        self.applyCalibGeometry()
+
+    # Write the measured focal_length_px / baseline_mm into every process's
+    # ControlsIF, so depth comes out in real mm rather than off the placeholder
+    # geometry the control defaults carry.
+    #
+    # ControlsIF.set_control_value() persists the change to that IF's own param, so
+    # there is no set_param call here -- and no 'processes_dict' param left to write
+    # it to. A no-op before setupProcessControlsIFs() has run: NodeClassIF fires
+    # initCb (which reloads the calibration) while it is still being constructed.
+    def applyCalibGeometry(self):
+        if self.rectifier is None or self.process_controls_ifs is None:
+            return
+        for process_name in self.process_controls_ifs.keys():
+            controls_if = self.process_controls_ifs[process_name]
+            if controls_if is None:
+                continue
+            controls_if.set_control_value('focal_length_px',
+                                          float(self.rectifier.focal_length_px))
+            controls_if.set_control_value('baseline_mm',
+                                          float(self.rectifier.baseline_mm))
 
     def loadCalibration(self, calib_file=None, quiet=False):
         """Load a saved .npz and start rectifying. Returns (ok, message)."""
@@ -759,15 +783,28 @@ class NepiStereoCamApp(object):
             return False
         left, right = self.rectifier.rectify(left, right)
 
-        # Run the selected stereo process (fills self.stereo_data_dict). A
-        # reload_processes between the check above and here would leave the two
-        # dicts briefly out of step, so read both defensively.
+        # Run the selected stereo process (fills self.stereo_data_dict). The
+        # process function is handed a flat {control_name: value} snapshot read
+        # off THIS process's ControlsIF, once per pass -- a control is read there
+        # by exactly the key it is authored under in stereo_settings. A
+        # reload_processes between the check above and here would leave the
+        # registry and the IF map briefly out of step, so read both defensively.
         process = stereo_settings.PROCESSES_DICT.get(self.selected_process, None)
-        settings = self.processes_dict.get(self.selected_process, None)
-        if process is None or settings is None:
+        controls_if = None
+        if self.process_controls_ifs is not None:
+            controls_if = self.process_controls_ifs.get(self.selected_process, None)
+        if process is None or controls_if is None:
+            return False
+        process_controls_dict = self.getControlsValues(controls_if)
+        if process_controls_dict is None:
+            if self.logged_controls_dict_none is False:
+                self.logged_controls_dict_none = True
+                self.msg_if.pub_warn("Depth pass skipped: controls for '" +
+                                     str(self.selected_process) +
+                                     "' read back as None -- see getControlsValues()")
             return False
         self.stereo_data_dict, _ = process['process_function'](
-            left, right, self.stereo_data_dict, settings)
+            left, right, self.stereo_data_dict, process_controls_dict)
 
         np_depth_map = self.stereo_data_dict['depth_map']   # (H,W) float32 mm
         # Match the ZED stereo convention: invalid pixels -> nan instead of 0.0.
@@ -779,9 +816,8 @@ class NepiStereoCamApp(object):
         # its meter measure up to mm. compute_depth_map already returns mm, so
         # only the bounds need converting here. Feeding meters instead would put
         # every pixel below min_range_m*1e3 and render a flat single color.
-        controls = settings.get('stereo_controls_dict', {})
-        min_range_m = float(controls.get('min_depth_mm', 0.0)) / 1000.0
-        max_range_m = float(controls.get('max_depth_mm', 1000.0)) / 1000.0
+        min_range_m = float(process_controls_dict.get('min_depth_mm', 0.0)) / 1000.0
+        max_range_m = float(process_controls_dict.get('max_depth_mm', 1000.0)) / 1000.0
         width_deg, height_deg = self.computeFovDeg(np_depth_map)
 
         # Publish the raw depth map (32FC1), the colorized depth_map_image and the
@@ -948,61 +984,6 @@ class NepiStereoCamApp(object):
             self.msg_if.pub_warn(message)
         self.publish_status()
 
-    def setProcessControlValueCb(self, msg):
-        # RUI edited one of the selected process's tunable settings. msg is an
-        # UpdateFloat (name + value). Route the value to the matching key -- either
-        # a top-level setting or one inside the nested stereo_controls_dict -- and
-        # cast it back to the original key's type so ints/bools stay ints/bools.
-        name = msg.name
-        value = msg.value
-        settings = self.processes_dict.get(self.selected_process, None)
-        if settings is None:
-            return
-        updated = False
-        if name in settings and name != 'stereo_controls_dict':
-            settings[name] = self.castLikeExisting(settings[name], value)
-            updated = True
-        elif name in settings.get('stereo_controls_dict', {}):
-            settings['stereo_controls_dict'][name] = self.castLikeExisting(
-                settings['stereo_controls_dict'][name], value)
-            updated = True
-        if updated:
-            # Sanitize (drops unknown keys, keeps structure) and persist.
-            self.processes_dict = stereo_settings.update_processes_dict(self.processes_dict)
-            if self.node_if is not None:
-                self.node_if.set_param('processes_dict', self.processes_dict)
-                self.node_if.save_config()
-            self.publish_status()
-
-    def castLikeExisting(self, existing, value):
-        # Cast an incoming float back to the type of the existing value. bool must
-        # be checked before int because bool is a subclass of int.
-        if isinstance(existing, bool):
-            return bool(round(value))
-        if isinstance(existing, int):
-            return int(round(value))
-        return float(value)
-
-    def flattenProcessControls(self):
-        # Flatten the selected process's settings into index-aligned (names,
-        # values) lists for the status message: top-level numeric settings first,
-        # then the nested stereo_controls_dict. Non-numeric keys are skipped.
-        names = []
-        values = []
-        settings = self.processes_dict.get(self.selected_process, {})
-        for key in settings.keys():
-            if key == 'stereo_controls_dict':
-                continue
-            val = settings[key]
-            if isinstance(val, (int, float, bool)):
-                names.append(key)
-                values.append(float(val))
-        for key, val in settings.get('stereo_controls_dict', {}).items():
-            if isinstance(val, (int, float, bool)):
-                names.append(key)
-                values.append(float(val))
-        return names, values
-
     ## RUI stereo calibration panel callbacks. Each one records the result in
     ## self.calib_message and republishes status, so the panel always shows what
     ## the last press actually did.
@@ -1053,25 +1034,39 @@ class NepiStereoCamApp(object):
         ok, message = self.loadCalibration(self.calib_file)
         self._finishCalibAction(ok, message)
 
+    # Reload the stereo_settings module so edits to the processes registry are
+    # picked up without restarting the node (pattern from pan_tilt_auto
+    # reloadAutosCb).
+    #
+    # A reload can ADD a process -- a new PROCESSES_DICT entry gets its own
+    # ControlsIF in setupProcessControlsIFs(). It cannot change or remove the
+    # controls of a process that already has one: releasing a ControlsIF means
+    # ControlsIF.unregister(), whose first line calls a self.unsubscribe_topic()
+    # that nepi_api/system_if.py never defines, so it raises AttributeError before
+    # releasing anything. Editing an existing process's control set still needs a
+    # node restart, and a process dropped from the module keeps its namespace until
+    # then -- it just stops being offered in available_processes.
     def reloadProcessesCb(self, msg):
-        # Reload the stereo_settings module so edits to the processes registry are
-        # picked up without restarting the node (pattern from pan_tilt_auto
-        # reloadAutosCb).
         self.process_ready = False
+        self.publish_status()
         nepi_sdk.sleep(1)
         try:
             importlib.reload(stereo_settings)
-            self.processes_dict = stereo_settings.update_processes_dict(self.processes_dict)
             self.available_processes = list(stereo_settings.PROCESSES_DICT.keys())
-            if self.selected_process not in self.available_processes:
-                self.selected_process = self.available_processes[0]
-            # A reload re-seeds settings from the module defaults, which would
-            # otherwise throw away the calibrated geometry.
-            self.applyRectifier(self.rectifier)
-            self.msg_if.pub_info("Stereo processes reloaded")
+            if len(self.available_processes) == 0:
+                self.msg_if.pub_warn("Reloaded stereo_settings registers no processes")
+            else:
+                if self.selected_process not in self.available_processes:
+                    self.selected_process = self.available_processes[0]
+                self.setupProcessControlsIFs()
+                # A newly added process starts from the module's control defaults,
+                # which carry placeholder geometry; re-push the calibrated values.
+                self.applyCalibGeometry()
+                self.msg_if.pub_info("Stereo processes reloaded: " + str(self.available_processes))
             self.process_ready = True
         except Exception as e:
             self.msg_if.pub_warn("Failed to reload stereo_settings module: " + str(e))
+            self.process_ready = True
         self.publish_status()
 
 
@@ -1080,11 +1075,16 @@ class NepiStereoCamApp(object):
 
     def initCb(self, do_updates=False):
         if self.node_if is not None:
-            self.selected_process = self.node_if.get_param('selected_process')
-            processes_dict = self.node_if.get_param('processes_dict')
-            self.processes_dict = stereo_settings.update_processes_dict(processes_dict)
-            if self.selected_process not in self.processes_dict.keys():
-                self.selected_process = list(self.processes_dict.keys())[0]
+            # The selector is this app's param, so a restart restores the process
+            # the operator last picked. A param naming a process the module no
+            # longer registers falls back to the module default rather than
+            # leaving the app pointed at nothing. Each process's control VALUES
+            # are restored by that process's own ControlsIF from its own param.
+            selected_process = self.node_if.get_param('selected_process')
+            if selected_process in self.available_processes:
+                self.selected_process = selected_process
+            else:
+                self.selected_process = stereo_settings.DEFAULT_PROCESS
             self.setMaxFramerate(self.node_if.get_param('max_framerate'))
             # Restore the calibration the operator saved from the RUI: the board
             # description plus the .npz path, which is reloaded if it still
@@ -1111,20 +1111,169 @@ class NepiStereoCamApp(object):
 
     def resetCb(self, do_updates=True):
         self.msg_if.pub_warn("Resetting")
-        if self.example_controls_if is not None:
-            self.example_controls_if.reset()
+        self.resetControlsIFs(factory=False)
         if do_updates:
             pass
         self.initCb(do_updates=do_updates)
 
     def factoryResetCb(self, do_updates=True):
         self.msg_if.pub_warn("Factory Resetting")
-        if self.example_controls_if is not None:
-            self.example_controls_if.factory_reset()
+        self.resetControlsIFs(factory=True)
         if do_updates:
             pass
         self.initCb(do_updates=do_updates)
 
+    # Route the app's reset paths into every ControlsIF it owns -- the per-process
+    # sets and the example set alike -- as the obstacles app does.
+    #
+    # Both routes fall through to ControlsIF.init(), which reloads each IF's
+    # controls from its own param.
+    def resetControlsIFs(self, factory=False):
+        controls_ifs = []
+        if self.process_controls_ifs is not None:
+            for process_name in self.process_controls_ifs.keys():
+                controls_ifs.append(self.process_controls_ifs[process_name])
+        if self.example_controls_if is not None:
+            controls_ifs.append(self.example_controls_if)
+        for controls_if in controls_ifs:
+            if controls_if is None:
+                continue
+            if factory == True:
+                controls_if.factory_reset()
+            else:
+                controls_if.reset()
+
+
+    ###################
+    ## Controls IF Setup
+    #
+    # node_if is left as None on every instance so each builds and owns its own
+    # NodeClassIF -- the current device-IF convention, and what the sandbox app
+    # does. Every registry and param key a ControlsIF creates is already prefixed
+    # from its own controls_name (system_if.py builds node_if_prefix that way), so
+    # several instances in one node cannot overwrite each other's entries or this
+    # app's own -- the collision the 2026-07 DECISION LOG entry warns about.
+
+    def setupControlsIFs(self):
+        self.setupProcessControlsIFs()
+        self.setupExampleControlsIF()
+
+    # One ControlsIF per process in stereo_settings.PROCESSES_DICT, named after that
+    # process. Called at startup and again on reload_processes, so it must be
+    # idempotent: a process already holding an IF keeps it, because releasing one is
+    # not possible (see reloadProcessesCb).
+    #
+    # ONE PER PROCESS, not one shared set. Each process authors its own control set
+    # -- bm_1 has no convert_to_grayscale and a different block_size option list --
+    # and only one process is active at a time, so the operator is shown just the
+    # active one. The alternative, a single union set with the inactive half hidden,
+    # cannot work: hiding a control at runtime goes through
+    # nepi_controls.set_control_hidden(), which does `hidden = str(hidden)` and so
+    # writes 'True'/'False' into a field nepi_interfaces/Control declares bool. That
+    # string breaks the ControlsStatus publish and never satisfies
+    # Nepi_IF_Controls.js's `control_msg.hidden === true` test either. A control's
+    # 'hidden' works only as authored in the init dict, which is a startup value.
+    # What the operator actually sees is the RUI mounting ONE Nepi_IF_Controls, on
+    # the active_controls_namespace this node publishes.
+    #
+    # The process SELECTOR is not among them and is deliberately not a control. It
+    # stays this app's own state on this app's own topics -- set_selected_process
+    # (String, the process NAME) and reload_processes (Empty) -- because which
+    # process runs outlives any one control set, a reload trigger is unreachable
+    # through Nepi_IF_Controls (it publishes UpdateString to a topic ControlsIF
+    # subscribes as UpdateTrigger), and a selector on a plain topic still works when
+    # a ControlsIF does not. Turning it into a Selection control was tried in the
+    # obstacles migration and dropped.
+    def setupProcessControlsIFs(self):
+        if self.process_controls_ifs is None:
+            self.process_controls_ifs = dict()
+        for process_name in self.available_processes:
+            if process_name in self.process_controls_ifs.keys():
+                continue
+            controls_if = ControlsIF(
+                        controls_name = process_name,
+                        controls_display_name = process_name,
+                        controls_description = 'Controls for stereo process ' + str(process_name),
+                        controls_init_dict = stereo_settings.PROCESSES_DICT[process_name]['default_controls_dict'],
+                        controls_updated_callback = self.makeProcessControlsUpdatedCb(process_name),
+                        show_controls = True,
+                        has_show_control = False,
+                        log_name = process_name,
+                        msg_if = self.msg_if)
+            controls_if.wait_for_controls_ready()
+            self.process_controls_ifs[process_name] = controls_if
+
+    # Per-process controls callback, bound to the process it belongs to.
+    #
+    # ControlsIF hands its updated-callback only a control name, with no indication
+    # of which instance it came from, and both process sets deliberately use the
+    # same natural key names (block_size is in both). So each process IF gets its
+    # own bound callback carrying the process name rather than one shared callback
+    # that would have to guess which set moved.
+    def makeProcessControlsUpdatedCb(self, process_name):
+        def updatedCb(control_name):
+            self.processControlsUpdatedCb(process_name, control_name)
+        return updatedCb
+
+    def processControlsUpdatedCb(self, process_name, control_name):
+        controls_if = None
+        if self.process_controls_ifs is not None:
+            controls_if = self.process_controls_ifs.get(process_name, None)
+        value = None
+        if controls_if is not None:
+            values = self.getControlsValues(controls_if)
+            if values is not None:
+                value = values.get(control_name, None)
+        self.msg_if.pub_info("Process '" + str(process_name) + "' control '" +
+                             str(control_name) + "' updated to: " + str(value))
+
+    # Flat {control_name: current_value} snapshot of one ControlsIF, or None when
+    # that IF has no controls dict to read. This is the ONLY read path the depth
+    # loop uses -- see updateDepthMap().
+    #
+    # The None case used to be routine: ControlsIF.init() read its persisted
+    # controls with get_param('controls_dict') while the param is registered under
+    # '/<controls_name>_controls_dict', and ParamsIF.get_param() returns None for a
+    # name it does not know -- so every config init, reset() and factory_reset()
+    # replaced that IF's controls dict with None. Fixed in nepi_api/system_if.py
+    # (prefixed key, plus a guard so a missing param cannot overwrite a live dict).
+    # The check stays because a None dict would make
+    # nepi_controls.get_control_value() raise rather than return a default, and the
+    # caller, not this helper, decides what a controls-less depth pass means.
+    def getControlsValues(self, controls_if):
+        if controls_if is None:
+            return None
+        controls_dict = controls_if.get_controls_dict()
+        if controls_dict is None:
+            return None
+        values = dict()
+        for control_name in controls_dict.keys():
+            values[control_name] = controls_if.get_control_value(control_name)
+        return values
+
+    # Fully-qualified namespace of one of this app's ControlsIF instances.
+    #
+    # Built from self.node_namespace rather than read off
+    # ControlsIF.get_namespace(). That method returns
+    # create_namespace(node_NAME, controls_name) -- 'app_stereo_cam/sgbm_1', with no
+    # leading slash. It resolves correctly where the IF itself uses it, since rospy
+    # resolves a relative name against the node's parent namespace, but this app
+    # publishes the value for the RUI, which appends '/status' and hands it to
+    # rosbridge -- where a name with no leading slash resolves at the global root
+    # instead of under /<prefix>/<device_id>.
+    def getControlsNamespace(self, controls_name):
+        return nepi_sdk.create_namespace(self.node_namespace, controls_name)
+
+    def getControlsReadyState(self):
+        if self.process_controls_ifs is None:
+            return False
+        for process_name in self.available_processes:
+            controls_if = self.process_controls_ifs.get(process_name, None)
+            if controls_if is None:
+                return False
+            if controls_if.get_controls_ready_state() is not True:
+                return False
+        return True
 
     ###################
     ## Example Controls
@@ -1133,16 +1282,17 @@ class NepiStereoCamApp(object):
     # the Example Controls box at the bottom of this app's RUI column. It drives
     # nothing here: the values are logged when they change and read by nothing else,
     # so the widgets, persistence and update callbacks behave exactly as they do on
-    # the sandbox page. Nothing to do with the stereo process settings, which this
-    # app publishes as flattened name/value arrays on its own status message.
+    # the sandbox page. Not a process control set, so it is kept out of
+    # process_controls_ifs: it must not be reachable through
+    # getControlsNamespace(selected_process) or counted in getControlsReadyState().
+    # It joins the per-process IFs only in resetControlsIFs().
     #
-    # node_if is left as None so the IF builds and owns its own NodeClassIF -- the
-    # current device-IF convention, and what the sandbox app does. Every registry and
-    # param key a ControlsIF creates is prefixed from its own controls_name
-    # (system_if.py builds node_if_prefix that way), so it cannot overwrite this
-    # app's own entries -- the collision the 2026-07 DECISION LOG entry warns about.
+    # Idempotent for the same reason setupProcessControlsIFs() is: setupControlsIFs()
+    # runs again on reload_processes, and releasing a ControlsIF is not possible.
 
     def setupExampleControlsIF(self):
+        if self.example_controls_if is not None:
+            return
         self.example_controls_if = ControlsIF(
                     controls_name = EXAMPLE_CONTROLS_NAME,
                     controls_display_name = 'Example Controls',
@@ -1213,17 +1363,11 @@ class NepiStereoCamApp(object):
             value = self.example_controls_if.get_control_value(control_name)
         self.msg_if.pub_info("Example control '" + str(control_name) + "' updated to: " + str(value))
 
-    # Fully-qualified namespace of the example ControlsIF.
-    #
-    # Built from self.node_namespace rather than read off ControlsIF.get_namespace().
-    # That method returns create_namespace(node_NAME, controls_name) --
-    # 'app_stereo_cam/example_controls', with no leading slash. It resolves correctly
-    # where the IF itself uses it, since rospy resolves a relative name against the
-    # node's parent namespace, but this app publishes the value for the RUI, which
-    # appends '/status' and hands it to rosbridge -- where a name with no leading
-    # slash resolves at the global root instead of under /<prefix>/<device_id>.
+    # Fully-qualified namespace of the example ControlsIF -- same construction, and
+    # the same reason for not using ControlsIF.get_namespace(), as every other
+    # controls namespace this app reports. See getControlsNamespace().
     def getExampleControlsNamespace(self):
-        return nepi_sdk.create_namespace(self.node_namespace, EXAMPLE_CONTROLS_NAME)
+        return self.getControlsNamespace(EXAMPLE_CONTROLS_NAME)
 
     def getExampleControlsReadyState(self):
         if self.example_controls_if is None:
@@ -1269,10 +1413,19 @@ class NepiStereoCamApp(object):
         status_msg.selected_process = self.selected_process
         status_msg.process_ready = self.process_ready
 
-        # Selected process's tunable settings, flattened for the RUI editable boxes
-        control_names, control_values = self.flattenProcessControls()
-        status_msg.process_control_names = control_names
-        status_msg.process_control_values = control_values
+        # Controls namespaces, all fully qualified -- see getControlsNamespace() for
+        # why they are not ControlsIF.get_namespace(). The RUI mounts exactly one
+        # Nepi_IF_Controls, on active_controls_namespace, which is how a node owning
+        # one controls namespace per process still shows the operator only the
+        # active process's controls.
+        status_msg.active_controls_namespace = 'None'
+        if self.selected_process in self.available_processes:
+            status_msg.active_controls_namespace = self.getControlsNamespace(self.selected_process)
+        controls_namespaces = []
+        for process_name in self.available_processes:
+            controls_namespaces.append(self.getControlsNamespace(process_name))
+        status_msg.controls_namespaces = controls_namespaces
+        status_msg.controls_ready = self.getControlsReadyState()
 
         # Left / right camera connect state + image topics
         left_ns, left_img, right_ns, right_img = self.computeImageTopics()
@@ -1332,6 +1485,12 @@ class NepiStereoCamApp(object):
 
     def cleanup_actions(self):
         self.msg_if.pub_info("CUSTOM_STEREO: Shutting down: Executing script cleanup actions")
+        # The ControlsIF instances are deliberately NOT unregistered here.
+        # ControlsIF.unregister() opens with a call to self.unsubscribe_topic(),
+        # which no method in nepi_api/system_if.py defines, so it raises
+        # AttributeError before it can release anything -- and it would raise inside
+        # the shutdown handler, ahead of the cleanup below. Their pubs/subs go down
+        # with the node.
         if self.depth_map_if is not None:
             self.depth_map_if.unregister()
         if self.left_cam_connect_if is not None:

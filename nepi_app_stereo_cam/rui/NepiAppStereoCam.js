@@ -43,8 +43,9 @@ import NepiAppStereoCamCalibration from "./NepiAppStereoCam-Calibration"
 //     each bound to its own connect namespace (<app>/left_cam_connect and
 //     <app>/right_cam_connect), matching the two ConnectIDXDeviceIF instances in
 //     the node (pattern from nepi_app_idx_connect).
-//   * A process-select dropdown + Reload button (NepiAppStereoCam-Controls,
-//     pattern from NepiAppPTAuto-Controls.js).
+//   * A process-select dropdown + Reload button, and the active process's
+//     controls as a Nepi_IF_Controls bound to the controls namespace the node
+//     reports as active (NepiAppStereoCam-Controls).
 //   * Two small image viewers side by side wired to the left/right selected
 //     camera image topics (status_msg.left_image_topic / right_image_topic).
 //   * One large image viewer wired to the colorized depth image topic
@@ -262,8 +263,12 @@ class NepiAppStereoCam extends Component {
   // same way the sandbox page mounts it -- make_section={false} inside a Section of
   // its own -- so it looks and behaves identically; the "Show Controls" toggle at
   // the top of the box is Nepi_IF_Controls' own, not something this page adds. Only
-  // the Section title differs. Unrelated to the stereo process settings rendered by
-  // NepiAppStereoCam-Controls above it, which are this app's own status arrays.
+  // the Section title differs.
+  //
+  // This is the page's SECOND Nepi_IF_Controls, and the one that is always mounted.
+  // NepiAppStereoCam-Controls mounts the other on the ACTIVE stereo process's
+  // controls namespace and only while there is one; this box belongs to no process,
+  // so it never unmounts.
   //
   // The sandbox page also mounts NepiAppControlsSandbox-Settings below the box in
   // develop/admin mode. That component is deliberately NOT copied: it lives in the

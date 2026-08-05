@@ -23,24 +23,37 @@ import Toggle from "react-toggle"
 
 import { Columns, Column } from "./Columns"
 import Label from "./Label"
-import Input from "./Input"
 import Select, { Option } from "./Select"
 import Button, { ButtonMenu } from "./Button"
 import Styles from "./Styles"
 
+import NepiIFControls from "./Nepi_IF_Controls"
+
 import { onChangeSwitchStateValue } from "./Utilities"
 
-// Stereo process selector + per-process settings editor.
+// Stereo process selector + the active process's controls.
 //
-// Mirrors the process block of NepiAppPTAuto-Controls.js:
 //   * a Select bound to the status message's available_processes /
 //     selected_process (published to set_selected_process),
 //   * a "Reload Processes" trigger (reload_processes),
-//   * a "Show Process Settings" toggle that reveals one editable box per
-//     tunable variable of the selected process. The node flattens the selected
-//     process's settings into status_msg.process_control_names /
-//     process_control_values (index-aligned); an edit sends an UpdateFloat to
-//     set_process_control_value.
+//   * a "Show Process Settings" toggle that reveals ONE Nepi_IF_Controls, bound to
+//     the controls namespace the node reports as active.
+//
+// Pre-migration this block rendered one plain <Input> per entry of the node's
+// flattened status_msg.process_control_names / process_control_values arrays and
+// sent every edit back as an UpdateFloat to set_process_control_value -- a text box
+// for a bool, a text box for a value with three legal choices, and a float on the
+// wire regardless. All of that is gone. Each process now owns a ControlsIF whose
+// nepi_controls control set carries type, bounds, options and display name, so
+// Nepi_IF_Controls renders the right widget per setting and publishes to the typed
+// set_<type>_control_value topic. Same arrangement as
+// NepiAppObstacles.renderProcessControls().
+//
+// The node owns one controls namespace PER PROCESS and only the active one is
+// mounted here; the inactive process's component is never mounted at all, which is
+// what actually suppresses it. Per-control 'hidden' cannot do that job --
+// nepi_controls.set_control_hidden() stringifies the bool, and Nepi_IF_Controls
+// reads each control's own hidden flag rather than ControlsStatus.hidden.
 //
 // The parent (NepiAppStereoCam.js) owns the status subscription and passes
 // the current status_msg + app namespace down as props.
@@ -52,46 +65,14 @@ class NepiAppStereoCamControls extends Component {
 
     this.state = {
       show_settings: false,
-      // Local copy of the editable control values, so typing is not clobbered by
-      // the next status tick. Synced from props whenever the node publishes a
-      // genuinely different set of values (JSON compare, like PT Auto).
-      control_names: [],
-      control_values: [],
     }
 
     this.onSelectProcess = this.onSelectProcess.bind(this)
     this.onReloadProcesses = this.onReloadProcesses.bind(this)
-    this.onUpdateControlValue = this.onUpdateControlValue.bind(this)
-    this.onKeySaveControlValue = this.onKeySaveControlValue.bind(this)
-    this.renderControlValue = this.renderControlValue.bind(this)
+    this.isTopic = this.isTopic.bind(this)
+    this.getActiveControlsNamespace = this.getActiveControlsNamespace.bind(this)
+    this.renderProcessControls = this.renderProcessControls.bind(this)
     this.renderControls = this.renderControls.bind(this)
-  }
-
-  // Sync the local editable values from the incoming status message, but only
-  // when they actually changed (so an in-progress edit is not overwritten).
-  syncControlsFromStatus() {
-    const status_msg = this.props.status_msg
-    if (status_msg == null) {
-      return
-    }
-    const names = status_msg.process_control_names || []
-    const values = status_msg.process_control_values || []
-    const changed =
-      JSON.stringify(names) !== JSON.stringify(this.state.control_names) ||
-      JSON.stringify(values) !== JSON.stringify(this.state.control_values)
-    if (changed) {
-      this.setState({ control_names: names, control_values: values })
-    }
-  }
-
-  componentDidMount() {
-    this.syncControlsFromStatus()
-  }
-
-  componentDidUpdate(prevProps) {
-    if (prevProps.status_msg !== this.props.status_msg) {
-      this.syncControlsFromStatus()
-    }
   }
 
   onSelectProcess(event) {
@@ -110,47 +91,58 @@ class NepiAppStereoCamControls extends Component {
     }
   }
 
-  // Track typing locally and flag the box as modified (red) until saved.
-  onUpdateControlValue(event, name, index) {
-    const control_values = this.state.control_values.slice()
-    control_values[index] = event.target.value
-    this.setState({ control_values: control_values })
-    const el = document.getElementById(name)
-    if (el) {
-      el.style.color = Styles.vars.colors.red
-    }
+  // True when a string off the status message names a real namespace. The node
+  // reports 'None' when there is no valid selection, and an un-set ROS string
+  // field arrives as ''.
+  isTopic(topic) {
+    return (topic != null && topic !== '' && topic !== 'None' && topic !== 'None Available')
   }
 
-  // On Enter, push the edited value to the node as an UpdateFloat(name, value).
-  onKeySaveControlValue(event, name, index) {
-    if (event.key !== "Enter") {
-      return
+  // Controls namespace of the ACTIVE stereo process, or null when there is none
+  // to mount.
+  //
+  // Falls back to <app>/<selected_process> if the namespace field is unset but the
+  // process name is known -- the node builds it exactly that way. Null when
+  // neither is usable, and renderProcessControls() then mounts nothing rather than
+  // a dead subscription.
+  getActiveControlsNamespace() {
+    const status_msg = this.props.status_msg
+    if (status_msg == null) {
+      return null
     }
-    const namespace = this.props.appNamespace
-    const parsed = parseFloat(event.target.value)
-    if (namespace != null && !Number.isNaN(parsed)) {
-      this.props.ros.sendUpdateFloatMsg(namespace + "/set_process_control_value", name, parsed)
-    } else {
-      // Bad input -- revert to the last published value.
-      this.setState({ control_values: (this.props.status_msg.process_control_values || []) })
+    if (this.isTopic(status_msg.active_controls_namespace)) {
+      return status_msg.active_controls_namespace
     }
-    const el = document.getElementById(name)
-    if (el) {
-      el.style.color = Styles.vars.colors.black
+    const appNamespace = this.props.appNamespace
+    if (appNamespace != null && this.isTopic(status_msg.selected_process)) {
+      return appNamespace + "/" + status_msg.selected_process
     }
+    return null
   }
 
-  renderControlValue(name, value, index) {
+  // One Nepi_IF_Controls on the namespace the node reports as active.
+  //
+  // key={namespace} makes a process switch REMOUNT the component rather than
+  // repoint it. Nepi_IF_Controls does resubscribe when its namespace prop changes,
+  // but it carries per-control edit state (editValues / pending) that belongs to
+  // the set it was showing; remounting drops that state with the component instead
+  // of letting one process's in-progress edit reconcile against the other's status.
+  //
+  // allways_show_controls suppresses the component's own "Show Controls" toggle:
+  // the "Show Process Settings" toggle above it is already this block's collapse
+  // control, and two nested toggles for the same thing is noise.
+  renderProcessControls() {
+    const namespace = this.getActiveControlsNamespace()
+    if (namespace == null) {
+      return null
+    }
     return (
-      <Label key={name} title={name}>
-        <Input
-          id={name}
-          style={{ width: "45%", float: "left" }}
-          value={value}
-          onChange={(event) => this.onUpdateControlValue(event, name, index)}
-          onKeyDown={(event) => this.onKeySaveControlValue(event, name, index)}
-        />
-      </Label>
+      <NepiIFControls
+        key={namespace}
+        namespace={namespace}
+        make_section={false}
+        allways_show_controls={true}
+      />
     )
   }
 
@@ -168,8 +160,6 @@ class NepiAppStereoCamControls extends Component {
     const process_ready = status_msg.process_ready
 
     const show_settings = this.state.show_settings
-    const control_names = this.state.control_names
-    const control_values = this.state.control_values
 
     return (
       <React.Fragment>
@@ -194,7 +184,7 @@ class NepiAppStereoCamControls extends Component {
 
         <div style={{ borderTop: "1px solid #777777", marginTop: Styles.vars.spacing.medium, marginBottom: Styles.vars.spacing.xs }} />
 
-        {/* Toggle reveals one editable box per tunable setting of the process. */}
+        {/* Toggle reveals the active process's controls. */}
         <Label title={"Show Process Settings"}>
           <Toggle
             checked={show_settings}
@@ -203,9 +193,7 @@ class NepiAppStereoCamControls extends Component {
         </Label>
 
         <div hidden={show_settings === false}>
-          {control_names.map((name, index) => (
-            this.renderControlValue(name, control_values[index], index)
-          ))}
+          {this.renderProcessControls()}
         </div>
 
         <div style={{ borderTop: "1px solid #ffffff", marginTop: Styles.vars.spacing.medium, marginBottom: Styles.vars.spacing.xs }} />
