@@ -2,4 +2,5 @@
 .claude/
 Claude.md
 
+#pycache
 __pycache__/
