@@ -707,8 +707,16 @@ class StereoCalibrator:
         except (ValueError, cv2.error) as exc:
             return False, f"calibration failed: {str(exc).splitlines()[-1]}", None
         quality = "good" if info["good"] else "TOO HIGH -- recapture"
+        # The per-camera RMS values separate the two failures that a single
+        # stereo RMS cannot tell apart, and which need OPPOSITE fixes:
+        #   mono high too  -> the corners themselves are bad in one camera
+        #                     (misdetection, blur, a non-flat board)
+        #   mono low, stereo high -> each camera is self-consistent but the two
+        #                     disagree, i.e. the L/R frames are not the same
+        #                     instant, or corner i is not the same corner in both
         message = (f"solved {info['pairs_used']} pairs: "
-                   f"rms {info['rms_stereo']:.3f} px, "
+                   f"rms {info['rms_stereo']:.3f} px "
+                   f"(mono L {info['rms_left']:.3f} / R {info['rms_right']:.3f}), "
                    f"epipolar {info['epipolar_rms_px']:.3f} px ({quality}), "
                    f"f {info['focal_length_px']:.1f} px, "
                    f"baseline {info['baseline_mm']:.1f} mm")

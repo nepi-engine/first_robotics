@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 #
-# Copyright (c) 2024 Numurus <https://www.numurus.com>.
+# Copyright (c) 2026 Numurus <https://www.numurus.com>.
 #
 # This file is part of nepi applications (nepi_apps) repo
 # (see https://https://github.com/nepi-engine/nepi_apps)
@@ -41,9 +41,10 @@ idx_stereo_cam_node.py logic. It brings up:
 
 THE PER-FRAME PATH: updaterCb keeps image subscriptions pointed at whichever
 two cameras the RUI selectors have chosen; the image callbacks decode each
-sensor_msgs/Image into a cv2 BGR frame; grabPair() hands back the nearest
-time-matched L/R pair. Depth AND calibration capture both read their frames
-through grabPair(), so both run off the same synchronized pair.
+sensor_msgs/Image into a cv2 BGR frame and buffers it. Depth reads grabPair()
+(newest left, nearest right -- latency matters); calibration capture reads
+grabCalibPair() (best-matched pair anywhere in the buffers, plus a measurement of
+whether the scene was moving -- accuracy matters and age is free).
 """
 
 import os
@@ -102,6 +103,23 @@ FRAME_SYNC_TOLERANCE_S = 0.1
 # Right-camera frames kept for pairing. Deep enough to absorb a second of
 # arrival jitter at the default cap without growing without bound.
 FRAME_BUFFER_LEN = 10
+# Calibration holds the L/R pair to a much tighter standard than depth does.
+# Depth tolerates 100 ms because a stale pixel is a local error in one frame;
+# calibration does not, because the corner positions in that pair become
+# PERMANENT constraints in the solve. A board being tilted by hand moves several
+# pixels in 100 ms, and that motion enters stereoCalibrate as an apparent
+# disagreement between the two cameras -- inflating the stereo RMS and the
+# epipolar error while each camera on its own still looks fine.
+CALIB_SYNC_WARN_S = 0.02
+# Scene motion (mean abs 8-bit frame-to-frame difference) above which a
+# calibration capture is REFUSED rather than warned about. This is the check that
+# does not depend on the cameras being synchronized, or on their timestamps being
+# real -- if nothing moved between consecutive frames of either camera, the L/R
+# pair is simultaneous for calibration purposes however far apart it is stamped.
+# Set well above sensor noise (~1) so a still scene is never rejected; a board
+# being repositioned by hand sits far above it. Raise it if a noisy sensor or
+# auto-exposure hunting makes a genuinely stationary board fail.
+CALIB_MOTION_MAX = 3.0 #make sure to put in mm
 
 # IDX data product subtopics.
 #
@@ -166,11 +184,14 @@ class NepiStereoCamApp(object):
     # stale-and-wrong rather than merely stale. DepthMapIF publishes its own
     # rate / publishing status at <node>/depth_map/status.
 
-    # Per-frame camera wiring. left_frame is the newest left frame; the right
-    # side keeps a short history so grabPair() can pick the nearest time match
-    # rather than whatever happened to arrive last.
+    # Per-frame camera wiring. BOTH sides keep a short history. Depth wants the
+    # newest left frame and the right frame nearest it in time (latency matters).
+    # Calibration wants the best-matched pair anywhere in the two buffers and does
+    # not care how old it is, because a capture is used once, offline, and its
+    # corner positions become permanent constraints in the solve -- see
+    # grabPair() and grabCalibPair().
     frame_lock = None
-    left_frame = None
+    left_frames = None
     right_frames = None
     left_sub = None
     right_sub = None
@@ -203,7 +224,7 @@ class NepiStereoCamApp(object):
         # The image callbacks run on ROS subscriber threads while grabPair() runs
         # on the depth timer thread, so the frame stores are lock-guarded.
         self.frame_lock = threading.Lock()
-        self.left_frame = None
+        self.left_frames = deque(maxlen=FRAME_BUFFER_LEN)
         self.right_frames = deque(maxlen=FRAME_BUFFER_LEN)
 
         # ---- Calibration / rectification ----
@@ -529,15 +550,39 @@ class NepiStereoCamApp(object):
         return ok, message
 
     def captureCalibFrame(self):
-        """Grab the live L/R pair and look for the board in both."""
-        ok, left, right, _ = self.grabPair()
+        """Grab the best-synchronized L/R pair and look for the board in both."""
+        ok, left, right, report = self.grabCalibPair()
         if not ok:
-            return False, ('no synchronized camera frames -- select both cameras '
-                           'and check they are publishing')
+            return False, report
+
+        # Refuse a moving scene outright rather than capturing it with a warning.
+        # A mid-motion pair is not a marginal capture, it is a WRONG one: the two
+        # cameras saw the board in different places, and the solve cannot tell
+        # that apart from the cameras being further apart than they really are.
+        # It looks like an ordinary success and quietly ruins the result, so the
+        # only safe treatment is to not keep it.
+        if report['motion'] > CALIB_MOTION_MAX:
+            return False, ('scene is moving (%.1f, limit %.1f) -- let the board '
+                           'come to rest, then hold it still for a second before '
+                           'capturing; kept %d'
+                           % (report['motion'], CALIB_MOTION_MAX,
+                              self.calibrator.count))
+
         # Raw (unrectified) frames on purpose: calibration is what PRODUCES the
         # rectification, so feeding it rectified frames would bake the current
         # calibration into the new one.
-        return self.calibrator.capture(left, right)
+        ok, message = self.calibrator.capture(left, right)
+        if ok:
+            message += ' [L/R %.0f ms, motion %.1f]' % (report['dt_s'] * 1000.0,
+                                                        report['motion'])
+            if not report['stamped']:
+                # Say this rather than let a reassuring millisecond figure stand
+                # in for a measurement the cameras never actually provided.
+                message += (' (no header timestamps -- L/R gap is arrival time, '
+                            'not capture time)')
+            elif report['dt_s'] > CALIB_SYNC_WARN_S:
+                message += ' (gap over %.0f ms)' % (CALIB_SYNC_WARN_S * 1000.0)
+        return ok, message
 
     def solveCalibration(self):
         """Solve from the captured views, save, and start rectifying."""
@@ -570,17 +615,73 @@ class NepiStereoCamApp(object):
         anything that moved in between.
         """
         with self.frame_lock:
-            left = self.left_frame
+            lefts = list(self.left_frames)
             rights = list(self.right_frames)
-        if left is None or len(rights) == 0:
+        if len(lefts) == 0 or len(rights) == 0:
             return False, None, None, None
 
+        left = lefts[-1]
         best = min(rights, key=lambda right: abs(left['ts'] - right['ts']))
         best_dt = abs(left['ts'] - best['ts'])
         self.last_pair_dt_s = best_dt
         if best_dt > FRAME_SYNC_TOLERANCE_S:
             return False, None, None, None
         return True, left['img'], best['img'], left['ts']
+
+    def grabCalibPair(self):
+        """Pick the best-synchronized L/R pair available, and say how good it is.
+
+        Returns (ok, left_bgr, right_bgr, report_dict_or_reason).
+
+        Different job from grabPair(), so a different rule. Depth needs the NEWEST
+        pair and tolerates a loose match, because latency is the point and one
+        stale pixel is a local error. A calibration capture is used once, offline,
+        and the corner positions in it become permanent constraints on the solve
+        -- so age is free and mismatch is not. This searches BOTH buffers for the
+        globally closest pair instead of anchoring on the newest left frame, which
+        alone typically halves the gap: the right frame from the same instant as
+        the newest left frame has often not arrived yet.
+
+        The report also carries a direct measurement of whether the scene was
+        MOVING, which is what actually matters. Two free-running USB cameras are
+        not synchronized at all -- there is up to a frame period of real skew no
+        matter what the timestamps say -- so a small time difference does not make
+        a pair simultaneous. A motionless scene does, whatever the difference.
+        """
+        with self.frame_lock:
+            lefts = list(self.left_frames)
+            rights = list(self.right_frames)
+        if len(lefts) == 0 or len(rights) == 0:
+            return False, None, None, ('no camera frames -- select both cameras '
+                                       'and check they are publishing')
+
+        left, right = min(((l, r) for l in lefts for r in rights),
+                          key=lambda pair: abs(pair[0]['ts'] - pair[1]['ts']))
+        dt_s = abs(left['ts'] - right['ts'])
+        self.last_pair_dt_s = dt_s
+        return True, left['img'], right['img'], {
+            'dt_s': dt_s,
+            # Only meaningful when BOTH sides carry real capture stamps.
+            'stamped': bool(left.get('stamped') and right.get('stamped')),
+            'motion': max(self.frameMotion(lefts), self.frameMotion(rights)),
+        }
+
+    def frameMotion(self, frames):
+        """Mean abs 8-bit difference between the two newest frames of one camera.
+
+        A stand-in for "is the scene holding still", and the check that does the
+        real work here: it needs no timestamps and no camera synchronization, so
+        it stays valid exactly where the time difference stops being trustworthy.
+        Sensor noise alone lands around 1; a board being moved by hand is well
+        clear of it. Returns 0.0 when there is nothing to compare against, which
+        cannot raise a false alarm.
+        """
+        if len(frames) < 2:
+            return 0.0
+        newest, previous = frames[-1]['img'], frames[-2]['img']
+        if newest.shape != previous.shape:
+            return 0.0
+        return float(np.mean(cv2.absdiff(newest, previous)))
 
     def updateDepthMap(self):
         # Compute a depth map and publish it through DepthMapIF. Returns True if
@@ -591,7 +692,7 @@ class NepiStereoCamApp(object):
         # a raw depth_map subscriber, a colorized depth_map_image subscriber (the
         # RUI viewer), or an enabled save / snapshot. The camera image
         # subscriptions stay up regardless -- the calibration panel reads its
-        # frames through the same grabPair() path and must keep working with
+        # frames through the grabCalibPair() path and must keep working with
         # depth paused.
         if self.depth_map_if is None or self.depth_map_if.needs_data_check() is False:
             return False
@@ -617,7 +718,7 @@ class NepiStereoCamApp(object):
         # calibration there is nothing to rectify with, and block matching raw
         # frames against placeholder geometry yields numbers that look like depth
         # but are not -- same call as the resolution-mismatch refusal below. The
-        # calibration panel is unaffected: it reads grabPair() directly, so the
+        # calibration panel is unaffected: it reads grabCalibPair() directly, so the
         # capture/solve flow still works with depth held off. calib_message is
         # deliberately left alone here so this does not stomp on the panel's
         # per-press feedback.
@@ -718,7 +819,7 @@ class NepiStereoCamApp(object):
     def subscribeLeft(self, topic):
         self.left_sub = self.unsubscribeImage(self.left_sub)
         with self.frame_lock:
-            self.left_frame = None
+            self.left_frames.clear()
         self.left_img_topic = topic
         if topic not in (None, 'None', ''):
             # qsize 1: on a depth map that takes longer than a frame period,
@@ -752,14 +853,23 @@ class NepiStereoCamApp(object):
         if frame is None:
             return
         with self.frame_lock:
-            self.left_frame = {'img': frame, 'ts': self.frameTimestamp(msg)}
+            self.left_frames.append(self.frameRecord(msg, frame))
 
     def rightImageCb(self, msg):
         frame = self.rosImgToCv2(msg)
         if frame is None:
             return
         with self.frame_lock:
-            self.right_frames.append({'img': frame, 'ts': self.frameTimestamp(msg)})
+            self.right_frames.append(self.frameRecord(msg, frame))
+
+    def frameRecord(self, msg, frame):
+        # 'stamped' travels with the frame because it decides whether a measured
+        # L/R time difference means anything at all: a driver that leaves the
+        # header stamp at zero leaves frameTimestamp() reporting ARRIVAL time,
+        # which folds transport and scheduling jitter into the number and can
+        # read as well-synchronized when the exposures were not.
+        timestamp, stamped = self.frameTimestamp(msg)
+        return {'img': frame, 'ts': timestamp, 'stamped': stamped}
 
     def rosImgToCv2(self, msg):
         # bgr8 rather than passthrough: compute_depth_map and the chessboard
@@ -776,10 +886,12 @@ class NepiStereoCamApp(object):
         # Capture time is what pairing needs. Some publishers leave the header
         # stamp at zero, in which case arrival time is the only ordering
         # available -- worse, but still monotonic and shared by both cameras.
+        # Returns (timestamp, from_header) so callers can say how much the
+        # resulting time difference is actually worth.
         timestamp = nepi_sdk.sec_from_msg_stamp(msg.header.stamp)
         if timestamp <= 0.0:
-            timestamp = nepi_utils.get_time()
-        return timestamp
+            return nepi_utils.get_time(), False
+        return timestamp, True
 
 
     ###################
