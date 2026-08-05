@@ -1,0 +1,16 @@
+APP_DICT:
+  display_name: Controls Sandbox
+  description: Demonstrates every nepi_controls / ControlsIF control type
+  pkg_name: nepi_app_controls_sandbox
+  group_name: AUTOMATION
+  config_file: controls_sandbox_app_params.yaml
+  app_file: controls_sandbox_app_node.py
+  node_name: app_controls_sandbox
+  license_type: 3-clause BSD
+  license_link: https://opensource.org/licenses/BSD-3-Clause
+RUI_DICT:
+  rui_files:
+  - NepiAppControlsSandbox.js
+  - NepiAppControlsSandbox-Settings.js
+  rui_main_file: NepiAppControlsSandbox.js
+  rui_main_class: NepiAppControlsSandbox
