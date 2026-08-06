@@ -41,6 +41,13 @@ idx_stereo_cam_node.py logic. It brings up:
     load_calib topics), backed by calibrate.StereoCalibrator. Solving writes
     the .npz, loads it into a Rectifier, and pushes the measured
     focal_length_px / baseline_mm into every process so depth is true mm.
+  * An "Advanced Controls" panel (RUI NepiAppStereoCam-Advanced.js): the depth
+    rate cap on this node's own set_max_framerate topic, plus an
+    advanced_controls ControlsIF holding the pipeline tunables that used to be
+    edit-the-source module constants (frame pairing, buffer depth, depth loop
+    rate, frame time source, calibration capture gates). See
+    setupAdvancedControlsIF() for why those live in a ControlsIF and the
+    framerate does not.
 
 THE PER-FRAME PATH: updaterCb keeps image subscriptions pointed at whichever
 two cameras the RUI selectors have chosen; the image callbacks decode each
@@ -97,15 +104,24 @@ UPDATE_RATE_HZ = 1.0
 # updateDepthMap; this only has to tick faster than that so the throttle -- not
 # the timer -- is what sets the rate. The timer is re-armed after each pass, so
 # a compute slower than the tick just runs back-to-back rather than piling up.
+#
+# FACTORY DEFAULT of the 'depth_loop_rate_hz' advanced control -- the live value
+# is self.depth_loop_rate_hz, read at each re-arm in depthCb. Same for every
+# constant below that names an advanced control: the constant is what the
+# control resets to, not what the code reads.
 DEPTH_RATE_HZ = 30.0
 
 # Left and right are independent IDX devices, so their frames never arrive in
 # lockstep. A pair further apart in capture time than this is not the same
 # instant, and block matching it would put confidently wrong depth on anything
 # moving. 100 ms is about one frame period at the default framerate cap.
+# Factory default of the 'frame_sync_tolerance_ms' advanced control; live value
+# is self.frame_sync_tolerance_s.
 FRAME_SYNC_TOLERANCE_S = 0.1
-# Right-camera frames kept for pairing. Deep enough to absorb a second of
+# Frames kept per camera for pairing. Deep enough to absorb a second of
 # arrival jitter at the default cap without growing without bound.
+# Factory default of the 'frame_buffer_len' advanced control; live value is
+# self.frame_buffer_len, and changing it rebuilds both deques.
 FRAME_BUFFER_LEN = 10
 # Calibration holds the L/R pair to a much tighter standard than depth does.
 # Depth tolerates 100 ms because a stale pixel is a local error in one frame;
@@ -113,8 +129,13 @@ FRAME_BUFFER_LEN = 10
 # PERMANENT constraints in the solve. A board being tilted by hand moves several
 # pixels in 100 ms, and that motion enters stereoCalibrate as an apparent
 # disagreement between the two cameras -- inflating the stereo RMS and the
-# epipolar error while each camera on its own still looks fine.
-CALIB_SYNC_WARN_S = 0.02
+# epipolar error while each camera on its own still looks fine. A pair over this
+# gap is REFUSED, not warned about, for the same reason a moving scene is: it
+# reads as an ordinary success and silently poisons the solve.
+# Only enforced when both frames carry real header stamps -- see captureCalibFrame.
+# Factory default of the 'calib_sync_max_ms' advanced control; live value is
+# self.calib_sync_max_s.
+CALIB_SYNC_MAX_S = 0.02
 # Scene motion (mean abs 8-bit frame-to-frame difference) above which a
 # calibration capture is REFUSED rather than warned about. This is the check that
 # does not depend on the cameras being synchronized, or on their timestamps being
@@ -122,8 +143,11 @@ CALIB_SYNC_WARN_S = 0.02
 # pair is simultaneous for calibration purposes however far apart it is stamped.
 # Set well above sensor noise (~1) so a still scene is never rejected; a board
 # being repositioned by hand sits far above it. Raise it if a noisy sensor or
-# auto-exposure hunting makes a genuinely stationary board fail.
-CALIB_MOTION_MAX = 3.0 #make sure to put in mm
+# auto-exposure hunting makes a genuinely stationary board fail -- which is now
+# done from the Advanced Controls panel rather than by editing this line.
+# Factory default of the 'calib_motion_max' advanced control; live value is
+# self.calib_motion_max.
+CALIB_MOTION_MAX = 3.0
 
 # IDX data product subtopics.
 #
@@ -161,6 +185,41 @@ FALLBACK_HEIGHT_DEG = 70.0
 # question about it.
 EXAMPLE_CONTROLS_NAME = "example_controls"
 
+# Controls name of the advanced control set: the <app>/advanced_controls namespace
+# the Nepi_IF_Controls inside the RUI "Advanced Controls" panel binds to. Like the
+# example set it belongs to no process and is always mounted -- but unlike it, every
+# control in it drives something. See setupAdvancedControlsIF().
+ADVANCED_CONTROLS_NAME = "advanced_controls"
+
+# Accept range for the depth rate cap on set_max_framerate.
+#
+# Not a nepi_controls control and so not bounds-checked by a ControlsIF -- it is
+# this node's own Float32 topic (see the PARAMS_DICT / SUBS_DICT entries), so
+# setMaxFramerate() enforces this range itself and publishes it in status so the
+# RUI can state it.
+#
+# The floor matches the depth_loop_rate_hz floor so the two ranges line up. It is
+# not lower because a sub-1 Hz cap is not a rate anyone wants, it is "off" -- and
+# off is expressed by unsubscribing from the depth product instead (updateDepthMap
+# skips entirely when nothing wants the data). The ceiling is the highest
+# depth_loop_rate_hz an operator can dial in -- above that the timer, not this
+# throttle, is what limits the rate, so a larger number here would be a promise the
+# loop cannot keep.
+#
+# Both are whole numbers on purpose: they travel to the RUI as float32 status
+# fields, and a value with no exact float32 form (0.1 arrives as
+# 0.10000000149011612) lands in the panel's range label verbatim.
+MIN_MAX_FRAMERATE = 1.0
+MAX_MAX_FRAMERATE = 60.0
+
+# Frame timestamp sources offered by the 'frame_time_source' advanced control.
+# 'Header Stamp' uses the driver's capture stamp when it is non-zero and falls back
+# to arrival time when it is not; 'Arrival Time' ignores the header outright. See
+# frameTimestamp() for when the second one is the right answer.
+FRAME_TIME_SOURCE_HEADER = 'Header Stamp'
+FRAME_TIME_SOURCE_ARRIVAL = 'Arrival Time'
+FRAME_TIME_SOURCE_OPTIONS = [FRAME_TIME_SOURCE_HEADER, FRAME_TIME_SOURCE_ARRIVAL]
+
 #########################################
 # Node Class
 #########################################
@@ -184,6 +243,27 @@ class NepiStereoCamApp(object):
     # The example control set copied from nepi_app_controls_sandbox. Not a process
     # control set and not keyed by process. See setupExampleControlsIF().
     example_controls_if = None
+
+    # The advanced control set behind the RUI "Advanced Controls" panel. Also not a
+    # process control set. See setupAdvancedControlsIF().
+    advanced_controls_if = None
+
+    # Live values of the advanced controls, cached out of advanced_controls_if by
+    # applyAdvancedControls() whenever one changes.
+    #
+    # Cached rather than read through the IF at each use because these sit on the
+    # hottest paths in the node: frame_time_source is read once per arriving image
+    # on both camera subscriber threads, and frame_sync_tolerance_s once per depth
+    # pass. A dict walk per frame to fetch a value that changes when an operator
+    # types is the wrong trade. They start at the module constants so every path
+    # behaves exactly as it did before the panel existed, including during the
+    # window before setupAdvancedControlsIF() has run.
+    frame_sync_tolerance_s = FRAME_SYNC_TOLERANCE_S
+    frame_buffer_len = FRAME_BUFFER_LEN
+    depth_loop_rate_hz = DEPTH_RATE_HZ
+    use_header_stamps = True
+    calib_sync_max_s = CALIB_SYNC_MAX_S
+    calib_motion_max = CALIB_MOTION_MAX
 
     # Processes (nepi stab/auto "processes" pattern; see stereo_settings.py)
     available_processes = list(stereo_settings.PROCESSES_DICT.keys())
@@ -253,8 +333,11 @@ class NepiStereoCamApp(object):
         # The image callbacks run on ROS subscriber threads while grabPair() runs
         # on the depth timer thread, so the frame stores are lock-guarded.
         self.frame_lock = threading.Lock()
-        self.left_frames = deque(maxlen=FRAME_BUFFER_LEN)
-        self.right_frames = deque(maxlen=FRAME_BUFFER_LEN)
+        # maxlen from the cached advanced value, which is the module constant until
+        # setupAdvancedControlsIF() runs. applyAdvancedControls() rebuilds both
+        # deques if the operator changes it later.
+        self.left_frames = deque(maxlen=self.frame_buffer_len)
+        self.right_frames = deque(maxlen=self.frame_buffer_len)
 
         # ---- Calibration / rectification ----
         # Calibration is driven from the RUI "Stereo Calibration" panel (see the
@@ -471,8 +554,9 @@ class NepiStereoCamApp(object):
         nepi_sdk.start_timer_process(float(1) / UPDATE_RATE_HZ, self.updaterCb, oneshot=True)
         # Depth runs on its own timer: the slow updaterCb is for discovery and
         # re-wiring, and running depth off it would cap the output at 1 Hz no
-        # matter what max_framerate says.
-        nepi_sdk.start_timer_process(float(1) / DEPTH_RATE_HZ, self.depthCb, oneshot=True)
+        # matter what max_framerate says. Every re-arm reads the live loop rate --
+        # only this first arm is fixed, and initCb has already run by here.
+        nepi_sdk.start_timer_process(float(1) / self.depth_loop_rate_hz, self.depthCb, oneshot=True)
         nepi_sdk.start_timer_process(float(1) / STATUS_PUBLISH_RATE_HZ, self.statusPublishCb)
 
         time.sleep(1)
@@ -500,13 +584,31 @@ class NepiStereoCamApp(object):
     def setMaxFramerate(self, max_framerate):
         # Cap on the depth compute rate (enforced in updateDepthMap). Returns
         # (success, err_str).
-        if max_framerate is None or max_framerate <= 0.0:
-            return False, "max framerate must be > 0, got " + str(max_framerate)
-        self.max_framerate = float(max_framerate)
+        #
+        # REJECTED, not clamped, when out of range -- same call nepi_controls makes
+        # for an out-of-bounds control value, and for the same reason: an operator
+        # who types 200 wants 200, and silently running at 60 while the box reads
+        # 200 is worse than a refusal they can see. The RUI re-syncs the box from
+        # status after every send, so a refused value visibly snaps back.
+        try:
+            max_framerate = float(max_framerate)
+        except (TypeError, ValueError):
+            return False, "max framerate must be a number, got " + str(max_framerate)
+        if max_framerate < MIN_MAX_FRAMERATE or max_framerate > MAX_MAX_FRAMERATE:
+            return False, ("max framerate must be within [%.1f, %.1f] Hz, got %s"
+                           % (MIN_MAX_FRAMERATE, MAX_MAX_FRAMERATE, str(max_framerate)))
+        self.max_framerate = max_framerate
         return True, ""
 
     def getFramerate(self):
         return self.max_framerate
+
+    # Rate depth can actually reach: the cap and the compute loop tick are two
+    # separate limits and the lower one wins. Published in status so the Advanced
+    # Controls panel can say so rather than let a 60 Hz cap on a 10 Hz loop read as
+    # a promise of 60 Hz.
+    def getEffectiveFramerate(self):
+        return min(float(self.max_framerate), float(self.depth_loop_rate_hz))
 
 
     ###################
@@ -601,11 +703,29 @@ class NepiStereoCamApp(object):
         # that apart from the cameras being further apart than they really are.
         # It looks like an ordinary success and quietly ruins the result, so the
         # only safe treatment is to not keep it.
-        if report['motion'] > CALIB_MOTION_MAX:
+        if report['motion'] > self.calib_motion_max:
             return False, ('scene is moving (%.1f, limit %.1f) -- let the board '
                            'come to rest, then hold it still for a second before '
                            'capturing; kept %d'
-                           % (report['motion'], CALIB_MOTION_MAX,
+                           % (report['motion'], self.calib_motion_max,
+                              self.calibrator.count))
+
+        # Same reasoning as the motion check, on the other measurement. Refused
+        # rather than warned about because a captured pair is never revisited:
+        # once its corners are in the solve, nothing downstream can tell them
+        # apart from good ones.
+        #
+        # Gated on 'stamped' deliberately. Without header stamps dt_s is the gap
+        # between ARRIVAL times, which for two free-running USB cameras routinely
+        # exceeds 20 ms on pairs that were in fact captured together -- enforcing
+        # it there would refuse every capture and make calibration impossible on
+        # exactly the cameras that need it most. Unstamped setups are covered by
+        # the motion check above, which needs no timestamps to be meaningful.
+        if report['stamped'] and report['dt_s'] > self.calib_sync_max_s:
+            return False, ('L/R capture gap %.0f ms (limit %.0f ms) -- the two '
+                           'cameras did not see the same instant; hold the board '
+                           'still and capture again; kept %d'
+                           % (report['dt_s'] * 1000.0, self.calib_sync_max_s * 1000.0,
                               self.calibrator.count))
 
         # Raw (unrectified) frames on purpose: calibration is what PRODUCES the
@@ -617,11 +737,11 @@ class NepiStereoCamApp(object):
                                                         report['motion'])
             if not report['stamped']:
                 # Say this rather than let a reassuring millisecond figure stand
-                # in for a measurement the cameras never actually provided.
+                # in for a measurement the cameras never actually provided. Also
+                # the only case that reaches here with a gap over the limit --
+                # a stamped pair that far apart was refused above.
                 message += (' (no header timestamps -- L/R gap is arrival time, '
                             'not capture time)')
-            elif report['dt_s'] > CALIB_SYNC_WARN_S:
-                message += ' (gap over %.0f ms)' % (CALIB_SYNC_WARN_S * 1000.0)
         return ok, message
 
     def solveCalibration(self):
@@ -650,7 +770,7 @@ class NepiStereoCamApp(object):
         The two cameras are independent IDX devices, so their frames do not
         arrive in lockstep: the newest left frame is matched against a short
         history of right frames and the nearest one wins. A pair further apart
-        than FRAME_SYNC_TOLERANCE_S is refused rather than returned -- matching
+        than the Frame Sync Tolerance advanced control is refused -- matching
         a stale frame against a fresh one yields confidently wrong depth on
         anything that moved in between.
         """
@@ -664,7 +784,7 @@ class NepiStereoCamApp(object):
         best = min(rights, key=lambda right: abs(left['ts'] - right['ts']))
         best_dt = abs(left['ts'] - best['ts'])
         self.last_pair_dt_s = best_dt
-        if best_dt > FRAME_SYNC_TOLERANCE_S:
+        if best_dt > self.frame_sync_tolerance_s:
             return False, None, None, None
         return True, left['img'], best['img'], left['ts']
 
@@ -940,6 +1060,16 @@ class NepiStereoCamApp(object):
         # available -- worse, but still monotonic and shared by both cameras.
         # Returns (timestamp, from_header) so callers can say how much the
         # resulting time difference is actually worth.
+        #
+        # The 'Arrival Time' advanced setting forces the fallback path. A zero
+        # stamp already falls back on its own, so this is for the case zero cannot
+        # cover: a driver that stamps every frame with a clock that is WRONG rather
+        # than absent -- stuck, or running against a different time base than the
+        # other camera. That reads as a valid stamp and puts a constant multi-second
+        # gap between the two cameras, so every pair fails the sync tolerance and
+        # depth stops entirely. Arrival time is the honest measurement there.
+        if self.use_header_stamps is False:
+            return nepi_utils.get_time(), False
         timestamp = nepi_sdk.sec_from_msg_stamp(msg.header.stamp)
         if timestamp <= 0.0:
             return nepi_utils.get_time(), False
@@ -956,7 +1086,12 @@ class NepiStereoCamApp(object):
             self.updateDepthMap()
         except Exception as e:
             self.msg_if.pub_warn("Depth update failed: " + str(e), throttle_s=5.0)
-        nepi_sdk.start_timer_process(float(1) / DEPTH_RATE_HZ, self.depthCb, oneshot=True)
+        # Re-armed from the live loop rate, so a change from the Advanced Controls
+        # panel takes effect on the next tick with no restart. Read once into a
+        # local so a concurrent edit cannot leave this arming off a half-written
+        # value.
+        loop_rate_hz = self.depth_loop_rate_hz
+        nepi_sdk.start_timer_process(float(1) / loop_rate_hz, self.depthCb, oneshot=True)
 
     def updaterCb(self, timer):
         # Keep the per-frame image subscriptions pointed at whichever cameras the
@@ -1085,7 +1220,16 @@ class NepiStereoCamApp(object):
                 self.selected_process = selected_process
             else:
                 self.selected_process = stereo_settings.DEFAULT_PROCESS
-            self.setMaxFramerate(self.node_if.get_param('max_framerate'))
+            # A stored value outside the accept range (a config written before the
+            # range existed, or hand-edited) is refused like any other, which would
+            # leave whatever the last runtime value happened to be. Fall back to the
+            # factory rate explicitly so a bad param cannot carry a stale rate
+            # forward silently.
+            ok, message = self.setMaxFramerate(self.node_if.get_param('max_framerate'))
+            if not ok:
+                self.msg_if.pub_warn(message + " -- using " +
+                                     str(self.DEFAULT_MAX_FRAMERATE) + " Hz")
+                self.max_framerate = self.DEFAULT_MAX_FRAMERATE
             # Restore the calibration the operator saved from the RUI: the board
             # description plus the .npz path, which is reloaded if it still
             # exists (quiet -- a device with no calibration yet is normal).
@@ -1105,6 +1249,13 @@ class NepiStereoCamApp(object):
                 rows=self.node_if.get_param('calib_board_rows'),
                 square_mm=self.node_if.get_param('calib_square_mm'))
             self.loadCalibration(self.calib_file, quiet=True)
+        # Re-read the advanced control values into their cached copies. Covers the
+        # reset / factory reset paths, which restore the ControlsIF and then come
+        # through here -- ControlsIF.reset() does not fire the updated callback, so
+        # without this the node would keep running on the pre-reset values while the
+        # RUI showed the restored ones. A no-op before setupAdvancedControlsIF() has
+        # run (NodeClassIF fires initCb while it is still being constructed).
+        self.applyAdvancedControls()
         if do_updates:
             pass
         self.publish_status()
@@ -1133,6 +1284,8 @@ class NepiStereoCamApp(object):
         if self.process_controls_ifs is not None:
             for process_name in self.process_controls_ifs.keys():
                 controls_ifs.append(self.process_controls_ifs[process_name])
+        if self.advanced_controls_if is not None:
+            controls_ifs.append(self.advanced_controls_if)
         if self.example_controls_if is not None:
             controls_ifs.append(self.example_controls_if)
         for controls_if in controls_ifs:
@@ -1156,6 +1309,7 @@ class NepiStereoCamApp(object):
 
     def setupControlsIFs(self):
         self.setupProcessControlsIFs()
+        self.setupAdvancedControlsIF()
         self.setupExampleControlsIF()
 
     # One ControlsIF per process in stereo_settings.PROCESSES_DICT, named after that
@@ -1274,6 +1428,184 @@ class NepiStereoCamApp(object):
             if controls_if.get_controls_ready_state() is not True:
                 return False
         return True
+
+    ###################
+    ## Advanced Controls
+    #
+    # The pipeline tunables behind the RUI "Advanced Controls" panel. Every one of
+    # them was a module constant at the top of this file until now -- changing one
+    # meant editing the source, redeploying and restarting the node, which is a poor
+    # fit for values whose right setting depends on the two cameras actually bolted
+    # to the robot (how well they synchronize, how fast they publish, how noisy
+    # their sensors are).
+    #
+    # A ControlsIF rather than one topic per value, because that is what the pattern
+    # buys: type + bounds validation in the node, param persistence, and a RUI that
+    # renders the right widget with no per-control JS. The panel mounts one
+    # Nepi_IF_Controls on this namespace, the same way the process controls are
+    # mounted -- but this set is always present, since it belongs to no process.
+    #
+    # max_framerate is deliberately NOT in here. It predates this panel as this
+    # node's own param + Float32 topic, it is reported in the app status message the
+    # RUI is already subscribed to, and moving it would leave two writable sources
+    # of truth for one value (or break every existing caller of set_max_framerate).
+    # The panel renders it as a plain input above the controls box instead.
+    #
+    # Idempotent for the same reason the other setups are: setupControlsIFs() runs
+    # again on reload_processes, and releasing a ControlsIF is not possible (see
+    # reloadProcessesCb).
+
+    def setupAdvancedControlsIF(self):
+        if self.advanced_controls_if is not None:
+            return
+        self.advanced_controls_if = ControlsIF(
+                    controls_name = ADVANCED_CONTROLS_NAME,
+                    controls_display_name = 'Advanced Controls',
+                    controls_description = 'Stereo pipeline tuning: frame pairing, depth loop rate, calibration capture gates',
+                    controls_init_dict = self.createAdvancedControlsInitDict(),
+                    controls_updated_callback = self.advancedControlsUpdatedCb,
+                    show_controls = True,
+                    has_show_control = False,
+                    log_name = ADVANCED_CONTROLS_NAME,
+                    msg_if = self.msg_if)
+        self.advanced_controls_if.wait_for_controls_ready()
+        # Adopt whatever the IF restored from its param before anything reads the
+        # cached copies.
+        self.applyAdvancedControls()
+
+    # Insertion order sets the RUI display order: frame pairing first (what stops
+    # depth from coming out at all), then loop rate, then the calibration gates.
+    #
+    # Times are in MILLISECONDS here while the code works in seconds. The
+    # conversion is done in applyAdvancedControls() rather than exposing 0.02 s
+    # boxes, because every message this app already prints about pair timing is in
+    # ms ('L/R capture gap 34 ms') and a control the operator cannot compare against
+    # the number they were just shown is a control they will set wrong.
+    #
+    # Bounds are ENFORCED by nepi_controls.set_control_value, which rejects an
+    # out-of-range value outright (logs a warning, leaves the control as it was)
+    # rather than clamping it. The RUI box then re-syncs to the unchanged value on
+    # the next status publish, so a refused edit visibly snaps back.
+    def createAdvancedControlsInitDict(self):
+        controls_init_dict = {
+
+            'frame_sync_tolerance_ms': {
+                'type': 'Float', 'default': FRAME_SYNC_TOLERANCE_S * 1000.0,
+                'bounds': [1.0, 500.0], 'round_value': 1,
+                'display_name': 'Frame Sync Tolerance (ms) [1-500]',
+                'description': 'Largest L/R capture-time gap depth will still match. Too tight and no pair ever qualifies, so no depth comes out; too loose and anything moving gets confidently wrong depth. Start near one frame period of the slower camera.',
+                'hidden': False},
+
+            'frame_buffer_len': {
+                'type': 'Int', 'default': FRAME_BUFFER_LEN, 'bounds': [2, 60],
+                'display_name': 'Frame Buffer Length [2-60]',
+                'description': 'Frames kept per camera to pair from. Raise when the two cameras arrive unevenly and pairs are being missed; costs memory (one decoded frame each) and nothing else.',
+                'hidden': False},
+
+            'depth_loop_rate_hz': {
+                'type': 'Float', 'default': DEPTH_RATE_HZ, 'bounds': [1.0, 60.0],
+                'round_value': 1,
+                'display_name': 'Depth Loop Rate (Hz) [1-60]',
+                'description': 'How often the depth loop wakes up to check for work. Keep it above Max Framerate so the framerate cap, not this tick, sets the output rate. Lowering it below Max Framerate silently becomes the real limit.',
+                'hidden': False},
+
+            'frame_time_source': {
+                'type': 'Selection', 'default': FRAME_TIME_SOURCE_HEADER,
+                'options': FRAME_TIME_SOURCE_OPTIONS,
+                'display_name': 'Frame Time Source',
+                'description': 'Which clock frames are paired on. Header Stamp is the capture time and is right unless a driver publishes a wrong one -- if depth stops with both cameras clearly publishing, switch to Arrival Time. Doing so also disables the calibration L/R gap check, which arrival time cannot support.',
+                'hidden': False},
+
+            'calib_sync_max_ms': {
+                'type': 'Float', 'default': CALIB_SYNC_MAX_S * 1000.0,
+                'bounds': [1.0, 200.0], 'round_value': 1,
+                'display_name': 'Calib Sync Max (ms) [1-200]',
+                'description': 'Largest L/R gap a calibration capture is accepted at -- much tighter than the depth tolerance, because a captured pair becomes a permanent constraint in the solve. Only applied when both frames carry real header stamps.',
+                'hidden': False},
+
+            'calib_motion_max': {
+                'type': 'Float', 'default': CALIB_MOTION_MAX, 'bounds': [0.1, 50.0],
+                'round_value': 1,
+                'display_name': 'Calib Motion Max [0.1-50]',
+                'description': 'How much the scene may move (mean 8-bit frame difference) during a calibration capture. Sensor noise alone sits near 1; a board moving by hand is far above it. Raise it only if a genuinely still board keeps being refused.',
+                'hidden': False},
+
+            }
+        return controls_init_dict
+
+    def advancedControlsUpdatedCb(self, control_name):
+        # Called by ControlsIF after an edit is validated and applied, so the value
+        # read back here is the one that survived the bounds check.
+        self.applyAdvancedControls()
+        value = None
+        if self.advanced_controls_if is not None:
+            value = self.advanced_controls_if.get_control_value(control_name)
+        self.msg_if.pub_info("Advanced control '" + str(control_name) +
+                             "' updated to: " + str(value))
+
+    # Copy the advanced control values into the plain attributes the runtime paths
+    # read. Called after the IF is built, from initCb (which covers reset and
+    # factory reset), and on every edit.
+    #
+    # Every assignment is guarded: a control dropped at create_controls_dict() time
+    # -- the failure mode a malformed init dict entry produces, silently -- would
+    # otherwise put None on a hot path and take the depth loop down. A missing
+    # control leaves the previous value standing instead.
+    def applyAdvancedControls(self):
+        values = self.getControlsValues(self.advanced_controls_if)
+        if values is None:
+            return
+
+        sync_ms = values.get('frame_sync_tolerance_ms', None)
+        if sync_ms is not None:
+            self.frame_sync_tolerance_s = float(sync_ms) / 1000.0
+
+        loop_rate_hz = values.get('depth_loop_rate_hz', None)
+        if loop_rate_hz is not None and float(loop_rate_hz) > 0.0:
+            self.depth_loop_rate_hz = float(loop_rate_hz)
+
+        time_source = values.get('frame_time_source', None)
+        if time_source is not None:
+            self.use_header_stamps = (str(time_source) != FRAME_TIME_SOURCE_ARRIVAL)
+
+        calib_sync_ms = values.get('calib_sync_max_ms', None)
+        if calib_sync_ms is not None:
+            self.calib_sync_max_s = float(calib_sync_ms) / 1000.0
+
+        motion_max = values.get('calib_motion_max', None)
+        if motion_max is not None:
+            self.calib_motion_max = float(motion_max)
+
+        buffer_len = values.get('frame_buffer_len', None)
+        if buffer_len is not None:
+            self.setFrameBufferLen(int(buffer_len))
+
+    # A deque's maxlen is fixed at construction, so a change means new deques.
+    #
+    # Rebuilt from the existing contents rather than cleared: this runs on an
+    # operator edit while depth is live, and dropping every buffered frame would
+    # stall pairing for a beat for no reason. deque(iterable, maxlen=n) keeps the
+    # LAST n items, which is the right end to keep. Under the lock because the image
+    # callbacks append from two subscriber threads.
+    def setFrameBufferLen(self, buffer_len):
+        if buffer_len < 2 or buffer_len == self.frame_buffer_len:
+            return
+        self.frame_buffer_len = buffer_len
+        with self.frame_lock:
+            self.left_frames = deque(self.left_frames, maxlen=buffer_len)
+            self.right_frames = deque(self.right_frames, maxlen=buffer_len)
+
+    # Fully-qualified namespace of the advanced ControlsIF -- same construction, and
+    # the same reason for not using ControlsIF.get_namespace(), as every other
+    # controls namespace this app reports. See getControlsNamespace().
+    def getAdvancedControlsNamespace(self):
+        return self.getControlsNamespace(ADVANCED_CONTROLS_NAME)
+
+    def getAdvancedControlsReadyState(self):
+        if self.advanced_controls_if is None:
+            return False
+        return self.advanced_controls_if.get_controls_ready_state()
+
 
     ###################
     ## Example Controls
@@ -1464,6 +1796,18 @@ class NepiStereoCamApp(object):
 
         # Framerate + depth summary
         status_msg.max_framerate = self.max_framerate
+        # The accept range setMaxFramerate() enforces, published rather than
+        # hard-coded in the RUI so the panel states the limit the node actually
+        # applies. The effective rate is the lower of the cap and the loop tick --
+        # both are reported so the panel can show why a cap is not being reached.
+        status_msg.max_framerate_min = float(MIN_MAX_FRAMERATE)
+        status_msg.max_framerate_max = float(MAX_MAX_FRAMERATE)
+        status_msg.effective_framerate = self.getEffectiveFramerate()
+        status_msg.depth_loop_rate_hz = float(self.depth_loop_rate_hz)
+        # Measured L/R gap of the last pair considered, in ms -- the number the
+        # Frame Sync Tolerance advanced control is set against. Reported in the same
+        # unit the control is authored in.
+        status_msg.last_pair_dt_ms = float(self.last_pair_dt_s) * 1000.0
         status_msg.valid_ratio = float(self.stereo_data_dict.get('valid_ratio', 0.0))
         status_msg.result_min_depth_mm = float(self.stereo_data_dict.get('result_min_depth_mm', 0.0))
         status_msg.result_max_depth_mm = float(self.stereo_data_dict.get('result_max_depth_mm', 0.0))
@@ -1474,6 +1818,12 @@ class NepiStereoCamApp(object):
         # NodeClassIF is still being constructed, ahead of setupExampleControlsIF().
         status_msg.example_controls_namespace = self.getExampleControlsNamespace()
         status_msg.example_controls_ready = self.getExampleControlsReadyState()
+
+        # Advanced controls namespace, same fully-qualified form and same reason --
+        # see getControlsNamespace(). The RUI's Advanced Controls panel mounts its
+        # Nepi_IF_Controls here.
+        status_msg.advanced_controls_namespace = self.getAdvancedControlsNamespace()
+        status_msg.advanced_controls_ready = self.getAdvancedControlsReadyState()
 
         if self.node_if is not None:
             self.node_if.publish_pub('status_pub', status_msg)
