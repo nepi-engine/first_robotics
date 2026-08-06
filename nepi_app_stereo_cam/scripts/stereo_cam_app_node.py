@@ -113,8 +113,11 @@ FRAME_BUFFER_LEN = 10
 # PERMANENT constraints in the solve. A board being tilted by hand moves several
 # pixels in 100 ms, and that motion enters stereoCalibrate as an apparent
 # disagreement between the two cameras -- inflating the stereo RMS and the
-# epipolar error while each camera on its own still looks fine.
-CALIB_SYNC_WARN_S = 0.02
+# epipolar error while each camera on its own still looks fine. A pair over this
+# gap is REFUSED, not warned about, for the same reason a moving scene is: it
+# reads as an ordinary success and silently poisons the solve.
+# Only enforced when both frames carry real header stamps -- see captureCalibFrame.
+CALIB_SYNC_MAX_S = 0.02
 # Scene motion (mean abs 8-bit frame-to-frame difference) above which a
 # calibration capture is REFUSED rather than warned about. This is the check that
 # does not depend on the cameras being synchronized, or on their timestamps being
@@ -608,6 +611,24 @@ class NepiStereoCamApp(object):
                            % (report['motion'], CALIB_MOTION_MAX,
                               self.calibrator.count))
 
+        # Same reasoning as the motion check, on the other measurement. Refused
+        # rather than warned about because a captured pair is never revisited:
+        # once its corners are in the solve, nothing downstream can tell them
+        # apart from good ones.
+        #
+        # Gated on 'stamped' deliberately. Without header stamps dt_s is the gap
+        # between ARRIVAL times, which for two free-running USB cameras routinely
+        # exceeds 20 ms on pairs that were in fact captured together -- enforcing
+        # it there would refuse every capture and make calibration impossible on
+        # exactly the cameras that need it most. Unstamped setups are covered by
+        # the motion check above, which needs no timestamps to be meaningful.
+        if report['stamped'] and report['dt_s'] > CALIB_SYNC_MAX_S:
+            return False, ('L/R capture gap %.0f ms (limit %.0f ms) -- the two '
+                           'cameras did not see the same instant; hold the board '
+                           'still and capture again; kept %d'
+                           % (report['dt_s'] * 1000.0, CALIB_SYNC_MAX_S * 1000.0,
+                              self.calibrator.count))
+
         # Raw (unrectified) frames on purpose: calibration is what PRODUCES the
         # rectification, so feeding it rectified frames would bake the current
         # calibration into the new one.
@@ -617,11 +638,11 @@ class NepiStereoCamApp(object):
                                                         report['motion'])
             if not report['stamped']:
                 # Say this rather than let a reassuring millisecond figure stand
-                # in for a measurement the cameras never actually provided.
+                # in for a measurement the cameras never actually provided. Also
+                # the only case that reaches here with a gap over the limit --
+                # a stamped pair that far apart was refused above.
                 message += (' (no header timestamps -- L/R gap is arrival time, '
                             'not capture time)')
-            elif report['dt_s'] > CALIB_SYNC_WARN_S:
-                message += ' (gap over %.0f ms)' % (CALIB_SYNC_WARN_S * 1000.0)
         return ok, message
 
     def solveCalibration(self):
