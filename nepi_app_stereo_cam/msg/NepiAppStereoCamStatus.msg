@@ -81,6 +81,19 @@ string depth_map_topic
 string depth_map_image_topic
 # Max depth framerate (Hz); settable via set_max_framerate
 float32 max_framerate
+# Accept range set_max_framerate enforces. Published so the RUI Advanced Controls
+# panel states the limit the node actually applies instead of a copy of it. A value
+# outside this range is REJECTED, not clamped -- see setMaxFramerate()
+float32 max_framerate_min
+float32 max_framerate_max
+# Rate depth can actually reach: min(max_framerate, depth_loop_rate_hz). The cap and
+# the compute loop tick are separate limits and the lower one wins
+float32 effective_framerate
+# Depth compute loop tick (Hz), the 'depth_loop_rate_hz' advanced control
+float32 depth_loop_rate_hz
+# Measured L/R capture-time gap of the last pair considered, in milliseconds. The
+# number the 'frame_sync_tolerance_ms' advanced control is set against
+float32 last_pair_dt_ms
 # Depth summary from the last processed frame
 float32 valid_ratio
 float32 result_min_depth_mm
@@ -100,3 +113,20 @@ string example_controls_namespace
 # True once that ControlsIF has completed initialization. Reported separately from
 # controls_ready above, which covers only the per-process sets.
 bool example_controls_ready
+
+#####################
+# Advanced Controls
+#####################
+# Namespace of the advanced control set: the stereo pipeline tunables (frame
+# pairing, depth loop rate, frame time source, calibration capture gates) that used
+# to be module constants in stereo_cam_app_node.py. Belongs to no process, so like
+# the example set it is always mounted -- NepiAppStereoCam-Advanced.js mounts its
+# Nepi_IF_Controls here. Same fully-qualified form, and the same reason for it --
+# see stereo_cam_app_node.py getControlsNamespace().
+#
+# The depth framerate cap is NOT one of these controls. It stays on this app's own
+# set_max_framerate topic and in the max_framerate field above -- see
+# setupAdvancedControlsIF() for why.
+string advanced_controls_namespace
+# True once that ControlsIF has completed initialization
+bool advanced_controls_ready

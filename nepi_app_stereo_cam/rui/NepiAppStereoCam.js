@@ -32,6 +32,7 @@ import NepiIFConfig from "./Nepi_IF_Config"
 
 import NepiAppStereoCamControls from "./NepiAppStereoCam-Controls"
 import NepiAppStereoCamCalibration from "./NepiAppStereoCam-Calibration"
+import NepiAppStereoCamAdvanced from "./NepiAppStereoCam-Advanced"
 
 @inject("ros")
 @observer
@@ -317,6 +318,14 @@ class NepiAppStereoCam extends Component {
                 Lives under the process controls in the same column: it is
                 setup you do once, not a per-frame control. */}
             <NepiAppStereoCamCalibration
+              appNamespace={appNamespace}
+              status_msg={this.state.status_msg}
+            />
+            {/* Depth framerate cap + the pipeline tunables that used to be
+                module constants in the node. Under calibration because it is
+                the block an operator reaches for least: the defaults are
+                right until the specific cameras on the robot say otherwise. */}
+            <NepiAppStereoCamAdvanced
               appNamespace={appNamespace}
               status_msg={this.state.status_msg}
             />
