@@ -86,14 +86,28 @@ float32 max_framerate
 # outside this range is REJECTED, not clamped -- see setMaxFramerate()
 float32 max_framerate_min
 float32 max_framerate_max
-# Rate depth can actually reach: min(max_framerate, depth_loop_rate_hz). The cap and
-# the compute loop tick are separate limits and the lower one wins
+# Rate depth can actually reach at the current cap. NOT always the cap: the throttle
+# can only fire when the depth loop wakes, so the achieved rate is the fastest
+# subharmonic of depth_loop_rate_hz that still clears it (a 20 Hz cap on the 30 Hz
+# loop runs at 15). A ceiling, not a measurement -- see getEffectiveFramerate()
 float32 effective_framerate
-# Depth compute loop tick (Hz), the 'depth_loop_rate_hz' advanced control
+# Depth compute loop tick (Hz). FIXED at the node's DEPTH_RATE_HZ and not operator
+# settable -- published only so the RUI can explain a rate above that would be
+# unreachable and why a cap between ticks does not land where it was set
 float32 depth_loop_rate_hz
 # Measured L/R capture-time gap of the last pair considered, in milliseconds. The
 # number the 'frame_sync_tolerance_ms' advanced control is set against
 float32 last_pair_dt_ms
+# Why the depth loop last did or did not produce a map, in the operator's terms, and
+# what to do about it. Shown verbatim in the RUI Advanced Controls panel.
+#
+# The three numbers below CANNOT carry this: they come from stereo_data_dict, which
+# is only replaced by a pass that got as far as running the stereo process, so every
+# way the loop can stop earlier (nothing subscribed, a camera not publishing, no L/R
+# pair inside the sync tolerance, no calibration loaded, a resolution change) leaves
+# the blank dict's 0.0 standing -- indistinguishable from a pass that ran and matched
+# nothing, and needing a completely different fix. See setDepthState()
+string depth_message
 # Depth summary from the last processed frame
 float32 valid_ratio
 float32 result_min_depth_mm
@@ -118,8 +132,8 @@ bool example_controls_ready
 # Advanced Controls
 #####################
 # Namespace of the advanced control set: the stereo pipeline tunables (frame
-# pairing, depth loop rate, frame time source, calibration capture gates) that used
-# to be module constants in stereo_cam_app_node.py. Belongs to no process, so like
+# pairing, frame time source, calibration capture gates) that used to be module
+# constants in stereo_cam_app_node.py. Belongs to no process, so like
 # the example set it is always mounted -- NepiAppStereoCam-Advanced.js mounts its
 # Nepi_IF_Controls here. Same fully-qualified form, and the same reason for it --
 # see stereo_cam_app_node.py getControlsNamespace().
