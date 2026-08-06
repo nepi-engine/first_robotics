@@ -44,10 +44,10 @@ idx_stereo_cam_node.py logic. It brings up:
   * An "Advanced Controls" panel (RUI NepiAppStereoCam-Advanced.js): the depth
     rate cap on this node's own set_max_framerate topic, plus an
     advanced_controls ControlsIF holding the pipeline tunables that used to be
-    edit-the-source module constants (frame pairing, buffer depth, depth loop
-    rate, frame time source, calibration capture gates). See
-    setupAdvancedControlsIF() for why those live in a ControlsIF and the
-    framerate does not.
+    edit-the-source module constants (frame pairing, buffer depth, frame time
+    source, calibration capture gates). See setupAdvancedControlsIF() for why
+    those live in a ControlsIF, the framerate does not, and the depth loop tick
+    is not exposed at all.
 
 THE PER-FRAME PATH: updaterCb keeps image subscriptions pointed at whichever
 two cameras the RUI selectors have chosen; the image callbacks decode each
@@ -60,6 +60,7 @@ whether the scene was moving -- accuracy matters and age is free).
 import os
 import time
 import copy
+import math
 import importlib
 import threading
 from collections import deque
@@ -105,10 +106,14 @@ UPDATE_RATE_HZ = 1.0
 # the timer -- is what sets the rate. The timer is re-armed after each pass, so
 # a compute slower than the tick just runs back-to-back rather than piling up.
 #
-# FACTORY DEFAULT of the 'depth_loop_rate_hz' advanced control -- the live value
-# is self.depth_loop_rate_hz, read at each re-arm in depthCb. Same for every
-# constant below that names an advanced control: the constant is what the
-# control resets to, not what the code reads.
+# DELIBERATELY NOT AN ADVANCED CONTROL, unlike the tunables below. It is plumbing,
+# not a setting: what an operator wants to change is the output rate, and that is
+# max_framerate. Exposing the tick as well gave two rate boxes where the second one
+# only ever made the first one not work -- the throttle can only fire at a tick, so
+# a tick slower than the cap silently becomes the real limit. Fixing it here and
+# capping max_framerate at it (MAX_MAX_FRAMERATE) removes that failure mode
+# entirely. Raising it is a source edit, which is the right weight for a change
+# that trades CPU for a headroom nobody has asked for.
 DEPTH_RATE_HZ = 30.0
 
 # Left and right are independent IDX devices, so their frames never arrive in
@@ -198,19 +203,21 @@ ADVANCED_CONTROLS_NAME = "advanced_controls"
 # setMaxFramerate() enforces this range itself and publishes it in status so the
 # RUI can state it.
 #
-# The floor matches the depth_loop_rate_hz floor so the two ranges line up. It is
-# not lower because a sub-1 Hz cap is not a rate anyone wants, it is "off" -- and
-# off is expressed by unsubscribing from the depth product instead (updateDepthMap
-# skips entirely when nothing wants the data). The ceiling is the highest
-# depth_loop_rate_hz an operator can dial in -- above that the timer, not this
-# throttle, is what limits the rate, so a larger number here would be a promise the
-# loop cannot keep.
+# The floor is not lower because a sub-1 Hz cap is not a rate anyone wants, it is
+# "off" -- and off is expressed by unsubscribing from the depth product instead
+# (updateDepthMap skips entirely when nothing wants the data).
+#
+# The ceiling IS the depth loop tick, not an independent number. The throttle can
+# only fire when the loop wakes up, so a cap above DEPTH_RATE_HZ cannot be reached
+# no matter what it says -- offering one would put a rate in the box that the node
+# has no way to deliver. Tied to the constant rather than written as 30.0 so the two
+# cannot drift apart if the loop rate is ever changed.
 #
 # Both are whole numbers on purpose: they travel to the RUI as float32 status
 # fields, and a value with no exact float32 form (0.1 arrives as
 # 0.10000000149011612) lands in the panel's range label verbatim.
 MIN_MAX_FRAMERATE = 1.0
-MAX_MAX_FRAMERATE = 60.0
+MAX_MAX_FRAMERATE = DEPTH_RATE_HZ
 
 # Frame timestamp sources offered by the 'frame_time_source' advanced control.
 # 'Header Stamp' uses the driver's capture stamp when it is non-zero and falls back
@@ -260,7 +267,6 @@ class NepiStereoCamApp(object):
     # window before setupAdvancedControlsIF() has run.
     frame_sync_tolerance_s = FRAME_SYNC_TOLERANCE_S
     frame_buffer_len = FRAME_BUFFER_LEN
-    depth_loop_rate_hz = DEPTH_RATE_HZ
     use_header_stamps = True
     calib_sync_max_s = CALIB_SYNC_MAX_S
     calib_motion_max = CALIB_MOTION_MAX
@@ -286,6 +292,16 @@ class NepiStereoCamApp(object):
     max_framerate = DEFAULT_MAX_FRAMERATE
     dm_data_last_time = None
     stereo_data_dict = stereo_settings.get_blank_data_dict()
+
+    # Why the depth loop last did or did not produce a map, in the operator's terms.
+    # Maintained by setDepthState() and published in status.
+    #
+    # It exists because valid_ratio cannot carry that information: stereo_data_dict
+    # is only replaced by a pass that actually reached the process function, so a
+    # loop stopping at any of the earlier gates leaves the BLANK dict's 0.0 standing
+    # -- identical, in the RUI, to a pass that ran and matched nothing. The starting
+    # value says the loop has not reported yet rather than implying either.
+    depth_message = 'starting up'
 
     # NOTE: no cached depth map. Each pass publishes the array it just computed
     # and lets go of it -- the colorizer inside DepthMapIF overwrites the array
@@ -554,9 +570,8 @@ class NepiStereoCamApp(object):
         nepi_sdk.start_timer_process(float(1) / UPDATE_RATE_HZ, self.updaterCb, oneshot=True)
         # Depth runs on its own timer: the slow updaterCb is for discovery and
         # re-wiring, and running depth off it would cap the output at 1 Hz no
-        # matter what max_framerate says. Every re-arm reads the live loop rate --
-        # only this first arm is fixed, and initCb has already run by here.
-        nepi_sdk.start_timer_process(float(1) / self.depth_loop_rate_hz, self.depthCb, oneshot=True)
+        # matter what max_framerate says.
+        nepi_sdk.start_timer_process(float(1) / DEPTH_RATE_HZ, self.depthCb, oneshot=True)
         nepi_sdk.start_timer_process(float(1) / STATUS_PUBLISH_RATE_HZ, self.statusPublishCb)
 
         time.sleep(1)
@@ -603,12 +618,27 @@ class NepiStereoCamApp(object):
     def getFramerate(self):
         return self.max_framerate
 
-    # Rate depth can actually reach: the cap and the compute loop tick are two
-    # separate limits and the lower one wins. Published in status so the Advanced
-    # Controls panel can say so rather than let a 60 Hz cap on a 10 Hz loop read as
-    # a promise of 60 Hz.
+    # Rate depth can actually reach at the current cap. Published in status so the
+    # Advanced Controls panel can show it, because it is not always the cap.
+    #
+    # The cap is a throttle tested at the top of updateDepthMap(), so it can only
+    # take effect when the depth loop wakes -- which means the achieved rate is a
+    # SUBHARMONIC of DEPTH_RATE_HZ, the fastest one whose period still clears
+    # 1/cap. A 20 Hz cap on the 30 Hz loop runs at 15 Hz, not 20: one tick is 33 ms
+    # and two are 67 ms, and the 50 ms the cap asks for falls between them.
+    #
+    # A CEILING, not a measurement: the throttle is timed from the end of the last
+    # publish, so a block-matching pass slower than the tick pushes the real rate
+    # below this. The measured output rate is published by DepthMapIF at
+    # <node>/depth_map/status.
     def getEffectiveFramerate(self):
-        return min(float(self.max_framerate), float(self.depth_loop_rate_hz))
+        max_framerate = float(self.max_framerate)
+        if max_framerate <= 0.0:
+            return 0.0
+        # ceil() of the ticks per allowed frame; 1 when the cap is the loop rate
+        # itself, which correctly gives the loop rate back.
+        ticks_per_frame = math.ceil(DEPTH_RATE_HZ / max_framerate)
+        return DEPTH_RATE_HZ / float(ticks_per_frame)
 
 
     ###################
@@ -753,6 +783,17 @@ class NepiStereoCamApp(object):
         if not loaded:
             return False, message + ' | ' + load_message
         self.calib_epipolar_rms_px = float(info['epipolar_rms_px'])
+        # The solve is where the measurable range is DECIDED -- focal length and
+        # baseline come out of it, and together with Num Disparities they fix the
+        # nearest distance depth can reach. Reported here, in the line the operator
+        # is already reading, because otherwise the first sign that the rig cannot
+        # see the scene in front of it is an empty depth map with no error in it.
+        controls_if = None
+        if self.process_controls_ifs is not None:
+            controls_if = self.process_controls_ifs.get(self.selected_process, None)
+        process_controls_dict = self.getControlsValues(controls_if)
+        if process_controls_dict is not None:
+            message += self.describeDepthWindow(process_controls_dict)
         if self.node_if is not None:
             self.node_if.set_param('calib_file', self.calib_file)
             self.node_if.save_config()
@@ -765,7 +806,7 @@ class NepiStereoCamApp(object):
     ## Frame acquisition + depth map (developer's idx_custom_stereo_node logic)
 
     def grabPair(self):
-        """Return (ok, left_bgr, right_bgr, timestamp) for the closest time match.
+        """Return (ok, left_bgr, right_bgr, timestamp, reason) for the closest match.
 
         The two cameras are independent IDX devices, so their frames do not
         arrive in lockstep: the newest left frame is matched against a short
@@ -773,20 +814,38 @@ class NepiStereoCamApp(object):
         than the Frame Sync Tolerance advanced control is refused -- matching
         a stale frame against a fresh one yields confidently wrong depth on
         anything that moved in between.
+
+        reason is '' on success and names the specific failure otherwise. Its two
+        failures are indistinguishable downstream and need opposite fixes: a camera
+        that is not delivering frames at all is a selection or driver problem, while
+        a pair that arrived but too far apart is the sync tolerance being set below
+        what these two cameras actually achieve -- and the second one silently stops
+        depth on a rig where both viewers are plainly live.
         """
         with self.frame_lock:
             lefts = list(self.left_frames)
             rights = list(self.right_frames)
         if len(lefts) == 0 or len(rights) == 0:
-            return False, None, None, None
+            if len(lefts) == 0 and len(rights) == 0:
+                missing = 'neither camera is'
+            else:
+                missing = 'the LEFT camera is' if len(lefts) == 0 else 'the RIGHT camera is'
+            return False, None, None, None, (
+                'stopped -- ' + missing + ' delivering frames. Check the camera '
+                'selection above and that its image viewer is live.')
 
         left = lefts[-1]
         best = min(rights, key=lambda right: abs(left['ts'] - right['ts']))
         best_dt = abs(left['ts'] - best['ts'])
         self.last_pair_dt_s = best_dt
         if best_dt > self.frame_sync_tolerance_s:
-            return False, None, None, None
-        return True, left['img'], best['img'], left['ts']
+            return False, None, None, None, (
+                'stopped -- best L/R pair is %.0f ms apart, over the %.0f ms Frame '
+                'Sync Tolerance, so no pair qualifies. Raise the tolerance, or set '
+                'Frame Time Source to Arrival Time if a driver is publishing a bad '
+                'header stamp.'
+                % (best_dt * 1000.0, self.frame_sync_tolerance_s * 1000.0))
+        return True, left['img'], best['img'], left['ts'], ''
 
     def grabCalibPair(self):
         """Pick the best-synchronized L/R pair available, and say how good it is.
@@ -843,6 +902,27 @@ class NepiStereoCamApp(object):
             return 0.0
         return float(np.mean(cv2.absdiff(newest, previous)))
 
+    # Record why depth did or did not come out, and return False so a skip reads as
+    # one line at the call site.
+    #
+    # EVERY early return in updateDepthMap goes through here. A depth pass has eight
+    # separate ways to stop before it computes anything, and the operator sees the
+    # same thing for all eight and for a pass that ran and matched nothing: an empty
+    # viewer and 0% valid pixels. Those need opposite fixes -- a camera that is not
+    # publishing, a sync tolerance set below the real pair gap and a scene with no
+    # texture have nothing in common -- so the reason is carried in status rather
+    # than left to be deduced from a number that cannot distinguish them.
+    #
+    # Logged only when it CHANGES: this runs at the depth loop rate, and a steady
+    # state that is already in the status message does not need repeating to the log
+    # every tick.
+    def setDepthState(self, message, warn=False):
+        if message != self.depth_message:
+            self.depth_message = message
+            if warn:
+                self.msg_if.pub_warn("Depth: " + message)
+        return False
+
     def updateDepthMap(self):
         # Compute a depth map and publish it through DepthMapIF. Returns True if
         # a new depth map was published.
@@ -855,13 +935,17 @@ class NepiStereoCamApp(object):
         # frames through the grabCalibPair() path and must keep working with
         # depth paused.
         if self.depth_map_if is None or self.depth_map_if.needs_data_check() is False:
-            return False
+            return self.setDepthState(
+                'idle -- nothing is subscribed to the depth map, so block matching '
+                'is skipped. Open the Depth Map viewer or enable depth saving.')
 
         # A reload swaps the process registry out from under us.
         if self.process_ready is False:
-            return False
+            return self.setDepthState('paused -- reloading stereo processes')
 
-        # framerate throttle
+        # framerate throttle. NOT a state change: this is the loop working exactly
+        # as configured, several times for every frame it produces, so it leaves the
+        # reported state alone rather than overwriting it with 'throttled'.
         last_time = self.dm_data_last_time
         current_time = nepi_utils.get_time()
         if last_time is not None:
@@ -870,9 +954,9 @@ class NepiStereoCamApp(object):
                 return False
 
         # Grab a synchronized L/R pair from the two selected cameras.
-        ok, left, right, timestamp = self.grabPair()
+        ok, left, right, timestamp, pair_reason = self.grabPair()
         if not ok:
-            return False
+            return self.setDepthState(pair_reason, warn=True)
 
         # Rectify (compute_depth_map assumes rectified input). With no
         # calibration there is nothing to rectify with, and block matching raw
@@ -883,10 +967,10 @@ class NepiStereoCamApp(object):
         # deliberately left alone here so this does not stomp on the panel's
         # per-press feedback.
         if self.rectifier is None:
-            self.msg_if.pub_warn(
-                "No calibration loaded -- depth needs rectified frames",
-                throttle_s=10.0)
-            return False
+            return self.setDepthState(
+                'stopped -- no calibration loaded, and depth needs rectified '
+                'frames. Capture board views and press Solve + Save, or press '
+                'Load Saved.', warn=True)
 
         if not self.rectifier.matches(left):
             # Camera resolution changed since calibration -- the maps no
@@ -900,7 +984,7 @@ class NepiStereoCamApp(object):
             if message != self.calib_message:
                 self.msg_if.pub_warn(message)
                 self.calib_message = message
-            return False
+            return self.setDepthState('stopped -- ' + message)
         left, right = self.rectifier.rectify(left, right)
 
         # Run the selected stereo process (fills self.stereo_data_dict). The
@@ -914,7 +998,10 @@ class NepiStereoCamApp(object):
         if self.process_controls_ifs is not None:
             controls_if = self.process_controls_ifs.get(self.selected_process, None)
         if process is None or controls_if is None:
-            return False
+            return self.setDepthState(
+                "stopped -- no stereo process named '" + str(self.selected_process) +
+                "' is registered; pick another from the Stereo Process menu",
+                warn=True)
         process_controls_dict = self.getControlsValues(controls_if)
         if process_controls_dict is None:
             if self.logged_controls_dict_none is False:
@@ -922,9 +1009,34 @@ class NepiStereoCamApp(object):
                 self.msg_if.pub_warn("Depth pass skipped: controls for '" +
                                      str(self.selected_process) +
                                      "' read back as None -- see getControlsValues()")
-            return False
+            return self.setDepthState(
+                "stopped -- the controls for '" + str(self.selected_process) +
+                "' read back as None; restart the app node")
         self.stereo_data_dict, _ = process['process_function'](
             left, right, self.stereo_data_dict, process_controls_dict)
+
+        # A pass that ran and matched NOTHING is the one failure the depth viewer
+        # cannot show: the colorized image is still produced and still published, as
+        # a single flat out-of-range color, so a pipeline measuring nothing looks
+        # exactly like one pointed at a blank wall. Distinguished from every skip
+        # above precisely because it looks identical from outside and needs a
+        # completely different fix.
+        valid_ratio = float(self.stereo_data_dict.get('valid_ratio', 0.0))
+        if valid_ratio <= 0.0:
+            # The measurable window leads, because it is the cause that can be
+            # checked against the scene with a tape measure rather than judged.
+            self.setDepthState(
+                'running, but NO pixel matched -- block matching ran on rectified '
+                'frames and rejected every pixel.' +
+                self.describeDepthWindow(process_controls_dict) +
+                ' If the scene is nearer than that, raise Num Disparities. '
+                'Otherwise: the scene may have no texture to match, or the '
+                'rectification may be poor (check Epipolar RMS -- it wants to be '
+                'under 1 px, off at least 10 captured views).', warn=True)
+        else:
+            self.setDepthState('running -- %.1f%% of pixels have depth.' %
+                               (valid_ratio * 100.0) +
+                               self.describeDepthWindow(process_controls_dict))
 
         np_depth_map = self.stereo_data_dict['depth_map']   # (H,W) float32 mm
         # Match the ZED stereo convention: invalid pixels -> nan instead of 0.0.
@@ -959,6 +1071,59 @@ class NepiStereoCamApp(object):
 
         self.dm_data_last_time = nepi_utils.get_time()
         return True
+
+    def computeDepthWindow(self, process_controls_dict):
+        """Distances this configuration CAN measure, in mm: (near, far) or None.
+
+        The single most useful number the app never showed. Disparity search is a
+        window, not a range of distances, and the distance it lands on depends on the
+        calibrated geometry:
+
+            depth_mm = focal_length_px * baseline_mm / disparity_px
+
+        so the largest disparity searched sets the NEAREST measurable distance. On a
+        long-baseline or narrow-FOV rig that limit is far enough out to sit past
+        everything in the room -- a 1377 px focal length and a 118 mm baseline at the
+        default 128 disparities cannot see closer than 1.27 m -- and every pixel of a
+        closer scene comes back unmatched. That reads as a completely empty depth map
+        with no error anywhere, and no reading in the RUI to explain it, because
+        nothing in the pipeline is failing: it is measuring exactly the band it was
+        configured to measure, and the scene is not in it.
+
+        Min/Max Depth then clip the band further, so both are applied here -- the
+        window reported is what an operator can actually get a value from.
+
+        Returns None before there is a calibration to derive it from.
+        """
+        if self.rectifier is None or self.rectifier.focal_length_px <= 0.0:
+            return None
+        fb = float(self.rectifier.focal_length_px) * float(self.rectifier.baseline_mm)
+        min_disparity = int(process_controls_dict.get('min_disparity', 0))
+        num_disparities = int(process_controls_dict.get('num_disparities', 128))
+        # SGBM/BM search minDisparity .. minDisparity + numDisparities - 1, and
+        # stereo_library keeps only strictly positive disparities, so the usable ends
+        # of the search are these two.
+        largest = max(1, min_disparity + num_disparities - 1)
+        smallest = max(1, min_disparity)
+        near_mm = max(fb / float(largest),
+                      float(process_controls_dict.get('min_depth_mm', 0.0)))
+        far_mm = min(fb / float(smallest),
+                     float(process_controls_dict.get('max_depth_mm', 0.0)))
+        return near_mm, far_mm
+
+    def describeDepthWindow(self, process_controls_dict):
+        """computeDepthWindow() as a sentence, or '' when there is nothing to say.
+
+        Stated flatly, with no advice attached: it is a fact about the configuration
+        that is worth reading while tuning, not only when something has gone wrong.
+        The caller adds what to do about it when the window is the problem.
+        """
+        window = self.computeDepthWindow(process_controls_dict)
+        if window is None:
+            return ''
+        near_mm, far_mm = window
+        return (' Measurable range at this calibration and Num Disparities: '
+                '%.2f m to %.2f m.' % (near_mm / 1000.0, far_mm / 1000.0))
 
     def computeFovDeg(self, np_depth_map):
         # Field of view the depth map covers, reported alongside it so viewers can
@@ -1086,12 +1251,7 @@ class NepiStereoCamApp(object):
             self.updateDepthMap()
         except Exception as e:
             self.msg_if.pub_warn("Depth update failed: " + str(e), throttle_s=5.0)
-        # Re-armed from the live loop rate, so a change from the Advanced Controls
-        # panel takes effect on the next tick with no restart. Read once into a
-        # local so a concurrent edit cannot leave this arming off a half-written
-        # value.
-        loop_rate_hz = self.depth_loop_rate_hz
-        nepi_sdk.start_timer_process(float(1) / loop_rate_hz, self.depthCb, oneshot=True)
+        nepi_sdk.start_timer_process(float(1) / DEPTH_RATE_HZ, self.depthCb, oneshot=True)
 
     def updaterCb(self, timer):
         # Keep the per-frame image subscriptions pointed at whichever cameras the
@@ -1131,15 +1291,26 @@ class NepiStereoCamApp(object):
             self.msg_if.pub_warn(message)
         self.publish_status()
 
-    def setCalibBoardValueCb(self, msg):
-        ok, message = self.setCalibBoardValue(msg.name, msg.value)
+    # Every panel press runs through here so that ALL of them, including the ones
+    # that fail in a way nothing anticipated, end in a message the operator can read.
+    #
+    # An exception raised inside a ROS subscriber callback goes to the log and
+    # nowhere else: calib_message keeps its previous contents, status is never
+    # republished, and the panel reads as a button that did nothing at all. That is
+    # the single most misleading state this panel can be in -- the whole reason each
+    # of these actions returns a message instead of just acting -- so a press is
+    # never allowed to end without one.
+    def _runCalibAction(self, action):
+        try:
+            ok, message = action()
+        except Exception as e:
+            ok, message = False, 'calibration action failed: ' + str(e)
         self._finishCalibAction(ok, message)
 
-    def setCalibFileCb(self, msg):
-        calib_file = msg.data.strip()
+    def setCalibFile(self, calib_file):
+        calib_file = calib_file.strip()
         if not calib_file:
-            self._finishCalibAction(False, 'calibration file path cannot be empty')
-            return
+            return False, 'calibration file path cannot be empty'
         # Adds a missing .npz and puts a bare filename in the device cal folder
         # (next to the ZED cal files) rather than the node's working directory.
         self.calib_file = calibrate.resolve_calib_path(calib_file)
@@ -1151,23 +1322,25 @@ class NepiStereoCamApp(object):
         ok, message = self.loadCalibration(self.calib_file, quiet=True)
         if not ok:
             message = 'calibration file set to ' + self.calib_file + ' (not present yet)'
-        self._finishCalibAction(True, message)
+        return True, message
+
+    def setCalibBoardValueCb(self, msg):
+        self._runCalibAction(lambda: self.setCalibBoardValue(msg.name, msg.value))
+
+    def setCalibFileCb(self, msg):
+        self._runCalibAction(lambda: self.setCalibFile(msg.data))
 
     def captureCalibFrameCb(self, msg):
-        ok, message = self.captureCalibFrame()
-        self._finishCalibAction(ok, message)
+        self._runCalibAction(self.captureCalibFrame)
 
     def solveCalibCb(self, msg):
-        ok, message = self.solveCalibration()
-        self._finishCalibAction(ok, message)
+        self._runCalibAction(self.solveCalibration)
 
     def clearCalibCb(self, msg):
-        ok, message = self.calibrator.clear()
-        self._finishCalibAction(ok, message)
+        self._runCalibAction(self.calibrator.clear)
 
     def loadCalibCb(self, msg):
-        ok, message = self.loadCalibration(self.calib_file)
-        self._finishCalibAction(ok, message)
+        self._runCalibAction(lambda: self.loadCalibration(self.calib_file))
 
     # Reload the stereo_settings module so edits to the processes registry are
     # picked up without restarting the node (pattern from pan_tilt_auto
@@ -1451,6 +1624,11 @@ class NepiStereoCamApp(object):
     # of truth for one value (or break every existing caller of set_max_framerate).
     # The panel renders it as a plain input above the controls box instead.
     #
+    # The depth loop tick (DEPTH_RATE_HZ) is not exposed anywhere. It was briefly a
+    # control here and was removed: the only thing an operator wants from a rate box
+    # is the OUTPUT rate, which max_framerate already is, and a second rate box
+    # could only ever make the first one not work -- see the constant's comment.
+    #
     # Idempotent for the same reason the other setups are: setupControlsIFs() runs
     # again on reload_processes, and releasing a ControlsIF is not possible (see
     # reloadProcessesCb).
@@ -1461,7 +1639,7 @@ class NepiStereoCamApp(object):
         self.advanced_controls_if = ControlsIF(
                     controls_name = ADVANCED_CONTROLS_NAME,
                     controls_display_name = 'Advanced Controls',
-                    controls_description = 'Stereo pipeline tuning: frame pairing, depth loop rate, calibration capture gates',
+                    controls_description = 'Stereo pipeline tuning: frame pairing, frame time source, calibration capture gates',
                     controls_init_dict = self.createAdvancedControlsInitDict(),
                     controls_updated_callback = self.advancedControlsUpdatedCb,
                     show_controls = True,
@@ -1474,7 +1652,7 @@ class NepiStereoCamApp(object):
         self.applyAdvancedControls()
 
     # Insertion order sets the RUI display order: frame pairing first (what stops
-    # depth from coming out at all), then loop rate, then the calibration gates.
+    # depth from coming out at all), then the calibration capture gates.
     #
     # Times are in MILLISECONDS here while the code works in seconds. The
     # conversion is done in applyAdvancedControls() rather than exposing 0.02 s
@@ -1500,13 +1678,6 @@ class NepiStereoCamApp(object):
                 'type': 'Int', 'default': FRAME_BUFFER_LEN, 'bounds': [2, 60],
                 'display_name': 'Frame Buffer Length [2-60]',
                 'description': 'Frames kept per camera to pair from. Raise when the two cameras arrive unevenly and pairs are being missed; costs memory (one decoded frame each) and nothing else.',
-                'hidden': False},
-
-            'depth_loop_rate_hz': {
-                'type': 'Float', 'default': DEPTH_RATE_HZ, 'bounds': [1.0, 60.0],
-                'round_value': 1,
-                'display_name': 'Depth Loop Rate (Hz) [1-60]',
-                'description': 'How often the depth loop wakes up to check for work. Keep it above Max Framerate so the framerate cap, not this tick, sets the output rate. Lowering it below Max Framerate silently becomes the real limit.',
                 'hidden': False},
 
             'frame_time_source': {
@@ -1559,10 +1730,6 @@ class NepiStereoCamApp(object):
         sync_ms = values.get('frame_sync_tolerance_ms', None)
         if sync_ms is not None:
             self.frame_sync_tolerance_s = float(sync_ms) / 1000.0
-
-        loop_rate_hz = values.get('depth_loop_rate_hz', None)
-        if loop_rate_hz is not None and float(loop_rate_hz) > 0.0:
-            self.depth_loop_rate_hz = float(loop_rate_hz)
 
         time_source = values.get('frame_time_source', None)
         if time_source is not None:
@@ -1803,11 +1970,13 @@ class NepiStereoCamApp(object):
         status_msg.max_framerate_min = float(MIN_MAX_FRAMERATE)
         status_msg.max_framerate_max = float(MAX_MAX_FRAMERATE)
         status_msg.effective_framerate = self.getEffectiveFramerate()
-        status_msg.depth_loop_rate_hz = float(self.depth_loop_rate_hz)
+        status_msg.depth_loop_rate_hz = float(DEPTH_RATE_HZ)
         # Measured L/R gap of the last pair considered, in ms -- the number the
         # Frame Sync Tolerance advanced control is set against. Reported in the same
         # unit the control is authored in.
         status_msg.last_pair_dt_ms = float(self.last_pair_dt_s) * 1000.0
+        # What the three numbers below cannot say on their own -- see setDepthState().
+        status_msg.depth_message = str(self.depth_message)
         status_msg.valid_ratio = float(self.stereo_data_dict.get('valid_ratio', 0.0))
         status_msg.result_min_depth_mm = float(self.stereo_data_dict.get('result_min_depth_mm', 0.0))
         status_msg.result_max_depth_mm = float(self.stereo_data_dict.get('result_max_depth_mm', 0.0))

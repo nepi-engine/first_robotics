@@ -52,9 +52,11 @@ import { onChangeSwitchStateValue } from "./Utilities"
 //     persistence and the widget choice per control. Adding an advanced setting is
 //     a stereo_cam_app_node.py createAdvancedControlsInitDict() entry and no JS.
 //
-// Read-only rows above the box (effective rate, last L/R pair gap) are there to be
-// set AGAINST: Frame Sync Tolerance is meaningless without knowing what the gap
-// actually measures, and a Max Framerate above the loop rate silently does nothing.
+// Read-only rows above the box are there to be set AGAINST, or to explain an output
+// the viewers cannot: Frame Sync Tolerance is meaningless without knowing what the
+// L/R gap actually measures, a Max Framerate that does not divide into the depth
+// loop tick quietly runs slower than it says, and a depth image with 0% valid
+// pixels looks exactly like a depth image of a blank scene (see renderDepthOutput).
 //
 // The parent (NepiAppStereoCam.js) owns the status subscription and passes the
 // current status_msg + app namespace down as props.
@@ -76,6 +78,7 @@ class NepiAppStereoCamAdvanced extends Component {
     this.onUpdateMaxFramerate = this.onUpdateMaxFramerate.bind(this)
     this.onKeySaveMaxFramerate = this.onKeySaveMaxFramerate.bind(this)
     this.renderFramerate = this.renderFramerate.bind(this)
+    this.renderDepthOutput = this.renderDepthOutput.bind(this)
     this.renderAdvanced = this.renderAdvanced.bind(this)
   }
 
@@ -162,15 +165,20 @@ class NepiAppStereoCamAdvanced extends Component {
     const fr_min = (status_msg != null && status_msg.max_framerate_min > 0)
       ? status_msg.max_framerate_min : 1.0
     const fr_max = (status_msg != null && status_msg.max_framerate_max > 0)
-      ? status_msg.max_framerate_max : 60.0
+      ? status_msg.max_framerate_max : 30.0
     const effective = (status_msg != null) ? status_msg.effective_framerate : undefined
     const loop_rate = (status_msg != null) ? status_msg.depth_loop_rate_hz : undefined
     const pair_dt = (status_msg != null) ? status_msg.last_pair_dt_ms : undefined
 
-    // The cap is not the output rate when the loop ticks slower than it. Flag that
-    // rather than let the operator read a cap they are not getting.
-    const capped_by_loop = (effective !== undefined && loop_rate !== undefined &&
-                            loop_rate < status_msg.max_framerate)
+    // The cap is not the output rate when it falls between two wake-ups of the
+    // depth loop: the throttle is only tested at a tick, so the rate drops to the
+    // nearest tick division below the cap (20 Hz on the 30 Hz loop runs at 15).
+    // Flagged rather than left for the operator to notice the two numbers
+    // disagree. The loop tick is fixed and the cap cannot exceed it, so this is the
+    // only way the two can differ. The 0.05 Hz margin keeps float32 round-trip
+    // noise from flagging a rate that does match.
+    const rate_shortfall = (effective !== undefined && loop_rate !== undefined &&
+                            effective < (status_msg.max_framerate - 0.05))
 
     return (
       <React.Fragment>
@@ -186,14 +194,16 @@ class NepiAppStereoCamAdvanced extends Component {
         </Label>
 
         <Label title={"Effective Rate (Hz)"}>
-          <div style={{ color: capped_by_loop ? Styles.vars.colors.red : Styles.vars.colors.black }}>
+          <div style={{ color: rate_shortfall ? Styles.vars.colors.red : Styles.vars.colors.black }}>
             {(effective !== undefined) ? effective.toFixed(1) : "---"}
           </div>
         </Label>
 
-        {capped_by_loop ? (
+        {rate_shortfall ? (
           <div style={{ fontStyle: "italic" }}>
-            {"Depth Loop Rate (" + loop_rate.toFixed(1) + " Hz) is below Max Framerate, so it is what limits the output rate."}
+            {"Max Framerate does not divide evenly into the " + loop_rate.toFixed(0) +
+             " Hz depth loop, so the rate drops to the nearest division below it. " +
+             "Whole divisions of " + loop_rate.toFixed(0) + " hit exactly."}
           </div>
         ) : null}
 
@@ -202,6 +212,59 @@ class NepiAppStereoCamAdvanced extends Component {
             pair qualifies and no depth comes out. */}
         <Label title={"Last L/R Pair Gap (ms)"}>
           <div>{(pair_dt !== undefined) ? pair_dt.toFixed(1) : "---"}</div>
+        </Label>
+
+      </React.Fragment>
+    )
+  }
+
+  // What the depth viewer alone cannot tell you: whether the loop is running at all,
+  // and whether the last pass MEASURED anything.
+  //
+  // Depth State is the row that matters, and it is the node's own account rather
+  // than anything worked out here. The three numbers below it cannot stand in for
+  // it: they come from the node's stereo_data_dict, which is only replaced by a pass
+  // that got as far as running the stereo process. Every earlier way the loop can
+  // stop -- a camera not publishing, no L/R pair inside the sync tolerance, no
+  // calibration loaded -- leaves the blank dict's 0.0 in place, which reads on
+  // screen as "ran and matched nothing" when nothing ran. Both states also LOOK the
+  // same in the viewer, since a pass that matches no pixel still publishes a
+  // colorized image and that image is a single flat color. So the state line is
+  // shown first, the percentage second, and the guidance comes from the node, which
+  // is the only thing that knows which case this is.
+  renderDepthOutput() {
+    const status_msg = this.props.status_msg
+    const depth_message = (status_msg != null) ? status_msg.depth_message : undefined
+    const valid_ratio = (status_msg != null) ? status_msg.valid_ratio : undefined
+    const min_mm = (status_msg != null) ? status_msg.result_min_depth_mm : undefined
+    const max_mm = (status_msg != null) ? status_msg.result_max_depth_mm : undefined
+    const measured = (valid_ratio !== undefined && valid_ratio > 0.0)
+
+    return (
+      <React.Fragment>
+
+        {/* Empty on a device still running a status message built before this
+            field existed, which is the one case with nothing to report. */}
+        {(depth_message !== undefined && depth_message !== "") ? (
+          <React.Fragment>
+            <Label title={"Depth State"} />
+            <div style={{ wordWrap: "break-word",
+                          color: measured ? Styles.vars.colors.black : Styles.vars.colors.red }}>
+              {depth_message}
+            </div>
+          </React.Fragment>
+        ) : null}
+
+        <Label title={"Valid Depth Pixels (%)"}>
+          <div style={{ color: measured ? Styles.vars.colors.black : Styles.vars.colors.red }}>
+            {measured ? (valid_ratio * 100.0).toFixed(1) : "---"}
+          </div>
+        </Label>
+
+        <Label title={"Measured Depth Range (mm)"}>
+          <div>
+            {measured ? (min_mm.toFixed(0) + " - " + max_mm.toFixed(0)) : "---"}
+          </div>
         </Label>
 
       </React.Fragment>
@@ -227,6 +290,10 @@ class NepiAppStereoCamAdvanced extends Component {
         <div hidden={show_advanced === false}>
 
           {this.renderFramerate()}
+
+          <div style={{ borderTop: "1px solid #777777", marginTop: Styles.vars.spacing.xs, marginBottom: Styles.vars.spacing.xs }} />
+
+          {this.renderDepthOutput()}
 
           <div style={{ borderTop: "1px solid #777777", marginTop: Styles.vars.spacing.xs, marginBottom: Styles.vars.spacing.xs }} />
 
