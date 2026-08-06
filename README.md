@@ -75,7 +75,7 @@ Then run:
 
 This copies your app's code to the NEPI build location and pushes the updated scripts to the running NEPI system, so your changes take effect right away.
 
-**NOTE:** Every app has its own `deploy_app.sh` (nepi_app_auto_move, nepi_app_obstacles, nepi_app_stereo_cam, nepi_app_wpilib_if) — you must run it from inside that app's own folder.
+**NOTE:** Every app has its own `deploy_app.sh` (nepi_app_auto_move, nepi_app_obstacles, nepi_app_stereo_cam, nepi_app_wpilib_if, nepi_app_controls_sandbox) — you must run it from inside that app's own folder.
 
 ### Deploying the entire repo
 
@@ -93,7 +93,7 @@ Then run:
 ./deploy_repo_complete.sh
 ```
 
-This deploys the NEPI engine overrides, all of the apps (nepi_app_auto_move, nepi_app_obstacles, nepi_app_stereo_cam, nepi_app_wpilib_if), and the test data to the NEPI system in one go.
+This deploys the NEPI engine overrides, all of the apps (nepi_app_auto_move, nepi_app_obstacles, nepi_app_stereo_cam, nepi_app_wpilib_if, nepi_app_controls_sandbox), and the test data to the NEPI system in one go.
 
 **NOTE:** Deploying the whole repo takes longer than deploying a single app, since it syncs everything.
 

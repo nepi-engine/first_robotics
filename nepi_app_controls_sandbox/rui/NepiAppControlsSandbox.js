@@ -12,8 +12,8 @@ import { observer, inject } from "mobx-react"
 import Section from "./Section"
 import { Columns, Column } from "./Columns"
 
-import Nepi_IF_Controls from "./Nepi_IF_Controls"
-import Nepi_IF_Data from "./Nepi_IF_Data"
+import NepiAppControlsSandboxControls from "./NepiAppControlsSandbox-Controls"
+import NepiAppControlsSandboxData from "./NepiAppControlsSandbox-Data"
 import NepiAppControlsSandboxSettings from "./NepiAppControlsSandbox-Settings"
 
 
@@ -148,7 +148,7 @@ class NepiAppControlsSandbox extends Component {
 
                 <Section title={"CONTROLS SANDBOX"}>
 
-                  <Nepi_IF_Controls
+                  <NepiAppControlsSandboxControls
                     key={controlsNamespace}
                     namespace={controlsNamespace}
                     make_section={false}
@@ -158,7 +158,7 @@ class NepiAppControlsSandbox extends Component {
 
                 <Section title={"DATA SANDBOX"}>
 
-                  <Nepi_IF_Data
+                  <NepiAppControlsSandboxData
                     key={dataNamespace}
                     namespace={dataNamespace}
                     make_section={false}
