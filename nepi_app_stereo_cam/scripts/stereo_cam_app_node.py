@@ -126,7 +126,7 @@ CALIB_SYNC_MAX_S = 0.02
 # Set well above sensor noise (~1) so a still scene is never rejected; a board
 # being repositioned by hand sits far above it. Raise it if a noisy sensor or
 # auto-exposure hunting makes a genuinely stationary board fail.
-CALIB_MOTION_MAX = 3.0 #make sure to put in mm
+CALIB_MOTION_MAX = 3.0
 
 # IDX data product subtopics.
 #
