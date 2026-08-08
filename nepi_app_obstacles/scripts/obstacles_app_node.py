@@ -48,9 +48,11 @@ STATUS_PUBLISH_RATE_HZ = 1.0
 # match their class defaults; the two image IFs are bare ConnectBaseImageIF
 # subclasses whose inherited default is the generic 'data_connect'
 # (connect_data_if.CONNECT_NAME), which says nothing about what they carry, so
-# they are named explicitly. The two image names belong to node-driven IFs with
-# no selector of their own -- the RUI viewers read their topics off this app's
-# status message, not off these connect namespaces.
+# they are named explicitly. Four of the five belong to node-driven IFs with no
+# selector of their own -- the RUI reads their topics off this app's status
+# message, not off these connect namespaces. It still subscribes to the targets
+# and NavPose connect status for the Connected indicator on each read-only row,
+# which is why those two names remain load-bearing on the RUI side.
 DEPTH_MAP_CONNECT_NAME = "depth_map_connect"
 COLOR_IMAGE_CONNECT_NAME = "color_image_connect"
 TARGETS_CONNECT_NAME = "targets_connect"
@@ -64,6 +66,23 @@ NAVPOSE_CONNECT_NAME = "navpose_connect"
 # getDepthMapImageTopic() -- see the comment there for why the depth map's own
 # DepthMapStatus.image_topic is not taken at face value.
 DEPTH_MAP_IMAGE_SUBTOPIC = 'depth_map_image'
+
+# Subtopic the AI detector publishes its targets product on, one level under the
+# IMAGE it was run against: AiDetectorIF builds its targeting namespace as
+# create_namespace(self.namespace, 'targets') (node_if_ai_detector.py), and a
+# detector's namespace is the image source it runs on -- so a detector run on
+# <base>/color_image publishes targets at <base>/color_image/targets, with its
+# TargetingStatus at <base>/color_image/targets/status. That is what
+# getTargetsTopic() joins to, and its absence is exactly the "AI detection has
+# not been run on this depth map's color image" case.
+#
+# Unlike the two image subtopics above, this one is NOT a fallback for a status
+# field: nothing on the wire names a targets topic. ImageStatus has no such field
+# (its targets/num_targets are overlay markers, not a topic), and
+# ProcessStatus.sources_pub_namespaces is declared in the message but is never
+# written by anything in nepi_engine. The join is the only derivation available,
+# so it is checked against the connect IF's discovered topics before it is used.
+TARGETS_SUBTOPIC = 'targets'
 
 # Subtopic the targets overlay image is published on. The detector image pub node
 # (nepi_ai_detector_img_pub_node.py) creates one ColorImageIF per image source for
@@ -782,9 +801,20 @@ class NepiObstaclesApp(object):
                                      str(self.selected_process) +
                                      "' read back as None -- see getControlsValues()")
             return
+        # A cached data dict is handed to the process only while the derivation
+        # still names the source it came from. Targets and NavPose are no longer
+        # operator selections, and ConnectNodeIF's auto-select points an IF whose
+        # derived topic is 'None' at an unrelated source within a second (see
+        # applyDerivedTargetsSelection). Without this gate a depth map with no
+        # targets source of its own would quietly feed process_2 some other
+        # camera's detections -- which is the same wrong-source failure the RUI
+        # gate prevents visually, one layer down.
+        source_topics = self.getSourceTopics()
+        targets_dict = self.targets_dict if source_topics['targets_topic'] != 'None' else None
+        navpose_dict = self.navpose_dict if source_topics['navpose_topic'] != 'None' else None
         self.process_data_dict['depth_map_dict'] = self.depth_map_dict
-        self.process_data_dict['targets_dict'] = self.targets_dict
-        self.process_data_dict['navpose_dict'] = self.navpose_dict
+        self.process_data_dict['targets_dict'] = targets_dict
+        self.process_data_dict['navpose_dict'] = navpose_dict
         self.process_data_dict, _ = process['process_function'](
                         self.process_data_dict, process_controls_dict)
 
@@ -798,20 +828,25 @@ class NepiObstaclesApp(object):
         # matching producer topics; each connect_name is passed explicitly to keep
         # the RUI binding greppable from here.
         #
-        # One rule governs the whole set: the operator selects a SOURCE, and every
-        # IMAGE that belongs to that source is derived node-side. Depth map,
-        # targets and NavPose are the sources and get selectors
-        # (show_selector=True). The two images do not: each source's own status
-        # message already names the image that belongs to it -- DepthMapStatus
-        # names the depth map image at <depth_map>/depth_map_image and the sibling
-        # color image in image_topic, and TargetingStatus names the detections
-        # image whose sibling is the targets image -- so an image selector could
-        # only offer the operator a way to disagree with the source they just
-        # picked. Both image IFs are therefore built with show_selector=False and
-        # their selections driven from this node by
-        # applyDerivedColorImageSelection() and
-        # applyDerivedTargetsImageSelection(). The connections are kept so the RUI
-        # can still show whether each derived image is actually connected.
+        # ONE rule governs the whole set: the operator selects a DEPTH MAP, and
+        # everything that belongs to that depth map is derived node-side. Only the
+        # depth map IF gets a selector (show_selector=True). The other four do not,
+        # because each is already named by the status message of something the
+        # operator has picked -- DepthMapStatus names the depth map image at
+        # <depth_map>/depth_map_image, the sibling color image in image_topic and
+        # the NavPose in navpose_topic; the AI detector publishes its targets
+        # product inside that color image's namespace; and TargetingStatus names the
+        # detections image whose sibling is the targets image. A selector on any of
+        # them could only offer the operator a way to disagree with the depth map
+        # they just picked, and a targets source watching a different camera than
+        # the depth map is not a configuration worth being able to express.
+        #
+        # The four are therefore built with show_selector=False and their selections
+        # driven from this node by applyDerivedColorImageSelection(),
+        # applyDerivedTargetsSelection(), applyDerivedTargetsImageSelection() and
+        # applyDerivedNavPoseSelection(). The connections themselves are what make
+        # the derivation real: each IF still subscribes, still feeds its dataCB, and
+        # still reports whether it is connected.
         self.depth_map_if = ConnectDepthMapIF(
                         connect_name = DEPTH_MAP_CONNECT_NAME,
                         show_selector = True,
@@ -830,7 +865,7 @@ class NepiObstaclesApp(object):
 
         self.targets_if = ConnectTargetsIF(
                         connect_name = TARGETS_CONNECT_NAME,
-                        show_selector = True,
+                        show_selector = False,
                         show_controls = False,
                         show_data = False,
                         dataCB = self.targetsConnectCb,
@@ -846,7 +881,7 @@ class NepiObstaclesApp(object):
 
         self.navpose_if = ConnectNavPoseIF(
                         connect_name = NAVPOSE_CONNECT_NAME,
-                        show_selector = True,
+                        show_selector = False,
                         show_controls = False,
                         show_data = False,
                         dataCB = self.navposeConnectCb,
@@ -879,7 +914,13 @@ class NepiObstaclesApp(object):
             self.got_first_depth_map = True
             self.msg_if.pub_info("Depth map first-connection data dict: " + str(self.depth_map_dict))
             self.msg_if.pub_info("Depth map first-connection status message: " + str(self.depth_map_status))
+        # Everything else this app connects to hangs off the depth map, so a depth
+        # map callback re-asserts the whole derived chain rather than waiting out a
+        # status timer period. Same order as publish_status().
         self.applyDerivedColorImageSelection()
+        self.applyDerivedTargetsSelection()
+        self.applyDerivedTargetsImageSelection()
+        self.applyDerivedNavPoseSelection()
         self.publishStatusIfSourcesChanged()
 
     def colorImageConnectCb(self, data_dict):
@@ -1027,7 +1068,115 @@ class NepiObstaclesApp(object):
         if derived_topic != self.color_image_if.get_selected_topic():
             self.color_image_if.set_selected_topic(derived_topic)
 
-    # Targets image topic belonging to the SELECTED targets source, or 'None'.
+    # Targets topic belonging to the SELECTED depth map, or 'None'.
+    #
+    # The operator no longer selects a targets source -- there is one source
+    # selector on this app's RUI page and it picks the depth map. A targets source
+    # is a property of the image the detector ran on, and the image in question is
+    # the color image that belongs to the selected depth map, so offering a second
+    # selector could only offer a way to point the app at a detector watching a
+    # different camera than the depth map it is fusing with.
+    #
+    # Every guard the derivation needs is already inside getColorImageTopic(): the
+    # live-status read, the ownership check against the current selection, and the
+    # sibling-vs-own-image test on DepthMapStatus.image_topic. A color image of
+    # 'None' therefore makes this 'None' too, which is what makes a depth map
+    # change clear this value before it can re-derive.
+    #
+    # The join itself is namespace derivation, not a status field read -- see
+    # TARGETS_SUBTOPIC for why there is no field to read. Because it is
+    # constructed rather than reported, it is checked against the targets connect
+    # IF's discovered topics before it is returned, the same final guard
+    # getTargetsImageTopic() applies to its own construction. That check is what
+    # detects the not-available case the RUI renders: a depth map whose color image
+    # has had no AI detection run on it has no <color_image>/targets topic at all,
+    # so nothing is discovered and this reports 'None'.
+    def getTargetsTopic(self):
+        color_image_topic = self.getColorImageTopic()
+        if color_image_topic == 'None':
+            return 'None'
+        if self.targets_if is None:
+            return 'None'
+        targets_topic = nepi_sdk.create_namespace(color_image_topic, TARGETS_SUBTOPIC)
+        if targets_topic not in self.targets_if.get_available_topics():
+            return 'None'
+        return targets_topic
+
+    # NavPose topic belonging to the SELECTED depth map, or 'None'.
+    #
+    # Derived rather than selected for the same reason as the targets source above,
+    # and read from a status FIELD rather than constructed: DepthMapStatus carries
+    # navpose_topic, and DepthMapIF fills it from the NavPose IF it was built with
+    # (data_if.py, the navpose block) -- for nepi_app_file_pub_depthmap that is the
+    # one NavPoseIF shared by all three of its data interfaces, whose namespace is
+    # <node>/navpose. So the field names the real topic and there is nothing to
+    # concatenate.
+    #
+    # Same guards in the same order as getDepthMapImageTopic(): 'None' when the IF
+    # is not built or nothing is selected, the status read LIVE off the connect IF
+    # rather than from the cached self.depth_map_status, and a status whose
+    # depth_map_topic is not the selected topic discarded outright, because
+    # ConnectDepthMapIF resubscribes on its own 1 Hz tick and until it does
+    # get_status_msg() still returns the PREVIOUS depth map's status.
+    #
+    # The field is finally checked against the NavPose connect IF's discovered
+    # topics. A depth map producer that reports a navpose_topic nothing publishes --
+    # or reports its own namespace, which is what DepthMapIF falls back to when no
+    # NavPose IF is handed in -- yields 'None' rather than a name the app then fails
+    # to connect to.
+    def getNavPoseTopic(self):
+        if self.depth_map_if is None:
+            return 'None'
+        selected_topic = self.depth_map_if.get_selected_topic()
+        if selected_topic is None or selected_topic == '' or selected_topic == 'None':
+            return 'None'
+        status_msg = self.depth_map_if.get_status_msg()
+        if status_msg is None:
+            return 'None'
+        if status_msg.depth_map_topic != selected_topic:
+            return 'None'
+        navpose_topic = status_msg.navpose_topic
+        if navpose_topic is None or navpose_topic == '' or navpose_topic == 'None':
+            return 'None'
+        if self.navpose_if is None:
+            return 'None'
+        if navpose_topic not in self.navpose_if.get_available_topics():
+            return 'None'
+        return navpose_topic
+
+    # Point the targets and NavPose connect IFs at their derived topics.
+    #
+    # Same re-assert-every-cycle reasoning as applyDerivedColorImageSelection(), and
+    # the same reason the app status reports the DERIVATION rather than
+    # get_selected_topic(): ConnectNodeIF._updaterCb auto-selects
+    # available_topics[0] whenever the current selection is 'None' -- and it does so
+    # unconditionally, ignoring the auto_select_enabled flag both classes hardcode
+    # True. A derived 'None' is therefore overwritten within a second by whatever
+    # unrelated detector or NavPose source happens to be first in the discovered
+    # list, and the IF then reports itself connected to it. Nothing can stop that
+    # from the app side, so nothing downstream trusts the IF's own selection: the
+    # status message carries the derivation, the RUI displays only the derivation,
+    # and updateProcess() hands a process no data from a source the derivation does
+    # not name.
+    #
+    # The selections are still driven through set_selected_topic() rather than
+    # bypassed, because that is what actually connects the IF -- it is the same
+    # topic the operator's selector used to publish, arrived at without them.
+    def applyDerivedTargetsSelection(self):
+        if self.targets_if is None:
+            return
+        derived_topic = self.getTargetsTopic()
+        if derived_topic != self.targets_if.get_selected_topic():
+            self.targets_if.set_selected_topic(derived_topic)
+
+    def applyDerivedNavPoseSelection(self):
+        if self.navpose_if is None:
+            return
+        derived_topic = self.getNavPoseTopic()
+        if derived_topic != self.navpose_if.get_selected_topic():
+            self.navpose_if.set_selected_topic(derived_topic)
+
+    # Targets image topic belonging to the DERIVED targets source, or 'None'.
     #
     # The structural twin of getColorImageTopic(): same guards in the same order,
     # derived off the live ConnectTargetsIF status rather than the cached
@@ -1036,9 +1185,18 @@ class NepiObstaclesApp(object):
     # reporting the previous detector's image after a switch or a deselect.
     # process_status.namespace is the ownership check here: AiDetectorIF overrides
     # it with its own <node>/targets namespace before handing the message to
-    # TargetsIF.publish_status(), which is exactly the topic ConnectTargetsIF
-    # selects, so a status whose namespace is not the selected topic belongs to a
-    # detector the operator has already switched away from.
+    # TargetsIF.publish_status(), which is exactly the topic this app derives, so a
+    # status whose namespace is not that topic belongs to a detector this app is not
+    # pointed at.
+    #
+    # That ownership check is anchored on getTargetsTopic() -- the DERIVATION -- and
+    # NOT on self.targets_if.get_selected_topic(). The distinction is what keeps a
+    # foreign detector's overlay out of the bottom viewer: when the selected depth
+    # map has no targets source of its own, the IF's own selection is whatever
+    # ConnectNodeIF's auto-select landed on (see applyDerivedTargetsSelection), and
+    # anchoring here would accept that detector's status and name its targets image.
+    # Anchored on the derivation, a targets source of 'None' returns 'None' at the
+    # first guard and the viewer stays unmounted.
     #
     # Beyond the shared guards, the detector only publishes overlay images while
     # its imaging path is running, so has_imaging, imaging_enabled and a non-empty
@@ -1067,7 +1225,7 @@ class NepiObstaclesApp(object):
     def getTargetsImageTopic(self):
         if self.targets_if is None:
             return 'None'
-        selected_topic = self.targets_if.get_selected_topic()
+        selected_topic = self.getTargetsTopic()
         if selected_topic is None or selected_topic == '' or selected_topic == 'None':
             return 'None'
         status_msg = self.targets_if.get_status_msg()
@@ -1116,27 +1274,30 @@ class NepiObstaclesApp(object):
         if derived_topic != self.targets_image_if.get_selected_topic():
             self.targets_image_if.set_selected_topic(derived_topic)
 
-    # Source topics this app reports, keyed by status message field name. A
-    # connect IF that is not built yet reports 'None', which is also what
-    # get_selected_topic() returns for an unselected source. The image fields are
-    # derivations, never get_selected_topic() -- see
-    # applyDerivedColorImageSelection() for why the IF's own selection is not the
-    # answer.
+    # Source topics this app reports, keyed by status message field name.
+    #
+    # ONE of them is an operator selection: depth_map_topic, read off the depth map
+    # connect IF. Every other field is a DERIVATION from it, never
+    # get_selected_topic() -- see applyDerivedColorImageSelection() and
+    # applyDerivedTargetsSelection() for why a connect IF's own selection is not the
+    # answer for anything this app drives itself.
+    #
+    # Reading them all in one place is also what gives the RUI a consistent set: a
+    # status message never carries one depth map's targets beside another depth
+    # map's NavPose, because every derivation here re-runs against whatever is
+    # selected at this instant and each one's ownership guard returns 'None' the
+    # moment that selection changes.
     def getSourceTopics(self):
         source_topics = {
             'depth_map_topic': 'None',
             'depth_map_image_topic': self.getDepthMapImageTopic(),
             'image_topic': self.getColorImageTopic(),
-            'targets_topic': 'None',
+            'targets_topic': self.getTargetsTopic(),
             'targets_image_topic': self.getTargetsImageTopic(),
-            'navpose_topic': 'None'
+            'navpose_topic': self.getNavPoseTopic()
         }
         if self.depth_map_if is not None:
             source_topics['depth_map_topic'] = self.depth_map_if.get_selected_topic()
-        if self.targets_if is not None:
-            source_topics['targets_topic'] = self.targets_if.get_selected_topic()
-        if self.navpose_if is not None:
-            source_topics['navpose_topic'] = self.navpose_if.get_selected_topic()
         return source_topics
 
     def publishStatusIfSourcesChanged(self):
@@ -1144,11 +1305,17 @@ class NepiObstaclesApp(object):
             self.publish_status()
 
     def publish_status(self):
-        # Re-assert the node-driven image selections before reading the source
-        # topics, so the connect IFs track the current derivation even when no
-        # source callback has fired -- see applyDerivedColorImageSelection().
+        # Re-assert every node-driven selection before reading the source topics,
+        # so the connect IFs track the current derivation even when no source
+        # callback has fired -- see applyDerivedColorImageSelection().
+        #
+        # Order matters: the targets source is derived from the color image, and the
+        # targets image from the targets source, so they are asserted in that order
+        # and NavPose, which depends on neither, last.
         self.applyDerivedColorImageSelection()
+        self.applyDerivedTargetsSelection()
         self.applyDerivedTargetsImageSelection()
+        self.applyDerivedNavPoseSelection()
         status_msg = NepiAppObstaclesStatus()
         status_msg.enabled = self.enabled
         status_msg.options = self.options
