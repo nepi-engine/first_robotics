@@ -32,6 +32,7 @@ import Styles from "./Styles"
 
 import NepiIFConnectData from "./Nepi_IF_ConnectData"
 import NepiIFImageViewer from "./Nepi_IF_ImageViewer"
+import NepiIFNavPose from "./Nepi_IF_NavPose"
 import NepiIFControls from "./Nepi_IF_Controls"
 import NepiIFConfig from "./Nepi_IF_Config"
 
@@ -58,8 +59,10 @@ import NepiIFConfig from "./Nepi_IF_Config"
 // derived from it node-side and rendered read-only here. The chain is spelled out
 // in obstacles_app_node.py; in short, the selected depth map's DepthMapStatus
 // names its sibling color image (image_topic) and its NavPose (navpose_topic), the
-// targets source is the AI detector's targets topic inside that color image's
-// namespace, and each image is named by the status of the source it belongs to.
+// targets source is whichever discovered AI detector reports that color image
+// among the images it is running on (a detector publishes targets under its OWN
+// node namespace, never under the image's -- getTargetsTopic() searches rather
+// than joins), and each image is named by the status of the source it belongs to.
 // A selector on any of those could only offer the operator a way to disagree with
 // the depth map they just picked, and a targets source belonging to a different
 // camera than the depth map is not a configuration worth being able to express.
@@ -139,6 +142,7 @@ class NepiAppObstacles extends Component {
     this.isTopic = this.isTopic.bind(this)
     this.renderImageViewer = this.renderImageViewer.bind(this)
     this.renderImageViewers = this.renderImageViewers.bind(this)
+    this.renderNavPoseViewer = this.renderNavPoseViewer.bind(this)
     this.renderConfig = this.renderConfig.bind(this)
   }
 
@@ -733,6 +737,57 @@ class NepiAppObstacles extends Component {
     )
   }
 
+  // The NavPose of the selected depth map, displayed directly below the image
+  // viewers.
+  //
+  // Nepi_IF_NavPose is the RUI's reusable NavPose display -- the same component
+  // Nepi_IF_ImageViewer, NepiDeviceNPX and NepiSystemNavPose mount, given a
+  // namespace and left read-only. It subscribes to <ns>/status as a
+  // NavPoseStatus and to <ns> itself as a NavPose, so the namespace it wants is
+  // the navpose topic this app already derives; nothing is rendered here that
+  // the component does not already render everywhere else.
+  //
+  // Mounted through the same getDerivedTopic() / isTopic() gate as the three
+  // image viewers, and for the same reason: an unavailable source must leave the
+  // viewer UNMOUNTED rather than mounted on a dead namespace. When there is no
+  // topic the page renders the same read-only message the NavPose Source row
+  // already uses, so the two say the same thing. key={topic} remounts on a change
+  // between two live topics rather than repointing the subscriptions underneath a
+  // component still holding the previous source's values.
+  //
+  // There is deliberately no selector here. The NavPose stays derived from the
+  // selected depth map -- see the header comment and NepiAppObstaclesStatus.msg.
+  renderNavPoseViewer() {
+    const navpose_topic = this.getDerivedTopic('navpose_topic')
+
+    if (this.isTopic(navpose_topic) === false) {
+      return (
+        <Columns>
+          <Column>
+            <Label title={"NavPose (from selected Depth Map)"} />
+            <Label title={"No NavPose source for the selected Depth Map"} />
+          </Column>
+        </Columns>
+      )
+    }
+
+    return (
+      <Columns>
+        <Column>
+          <Label title={"NavPose (from selected Depth Map)"} />
+          <NepiIFNavPose
+            key={navpose_topic}
+            navposeNamespace={navpose_topic}
+            title={"NavPose Data"}
+            show_line={false}
+            read_only={true}
+            make_section={false}
+          />
+        </Column>
+      </Columns>
+    )
+  }
+
   // A copy of the controls sandbox app's Controls box, bound to this app's example
   // ControlsIF. Same component, mounted the same way the sandbox page mounts it --
   // make_section={false} inside a Section of its own -- so it looks and behaves
@@ -781,6 +836,7 @@ class NepiAppObstacles extends Component {
 
         <div style={{ width: "75%" }}>
           {this.renderImageViewers()}
+          {this.renderNavPoseViewer()}
         </div>
 
         <div style={{ width: '2%' }}>

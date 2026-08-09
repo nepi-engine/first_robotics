@@ -50,6 +50,18 @@ string targets_topic
 # depth map names no NavPose, or the named topic is not among the discovered
 # NavPose sources -- see obstacles_app_node.py getNavPoseTopic()
 string navpose_topic
+# True only while the app's own NavPose connect IF is subscribed to the topic
+# named above AND that subscription is reporting connected. Named-but-silent is
+# the case this field exists to express: navpose_topic can name a real topic that
+# is advertised and never published -- which is exactly what
+# nepi_app_file_pub_depthmap did before it gained a NavPose source -- and a name
+# alone tells an operator nothing about whether data is arriving. The IF's own
+# connected flag is not the answer by itself either, for the reason given on
+# applyDerivedNavPoseSelection(): ConnectNodeIF auto-selects an unrelated source
+# when the derivation is "None" and then reports itself connected to that one, so
+# the selection is checked against the derivation first -- see
+# obstacles_app_node.py getNavPoseConnected()
+bool navpose_connected
 
 #################
 # Derived Image Topics
