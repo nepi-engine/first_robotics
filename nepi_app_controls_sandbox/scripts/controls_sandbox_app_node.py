@@ -31,6 +31,19 @@ from nepi_api.node_if import NodeClassIF
 from nepi_api.messages_if import MsgIF
 from nepi_api.system_if import ControlsIF
 from nepi_api.data_if import DataIF
+from nepi_api.connect_data_if import ConnectImageIF
+
+
+#########################################
+# Connect Names
+#
+# One connect name per connect IF. Each names the <app>/<connect_name> connect
+# namespace that IF owns, and is the exact string the matching Nepi_IF_Connect*
+# component in NepiAppControlsSandbox.js binds to. Declared rather than defaulted
+# because ConnectImageIF inherits ConnectDataIF's generic 'data_connect' default,
+# so it is passed explicitly to keep the RUI binding greppable from both sides.
+# Matches the arrangement in nepi_app_auto_move.
+IMAGE_CONNECT_NAME = "image_connect"
 
 
 #########################################
@@ -42,6 +55,14 @@ class NepiControlsSandboxApp(object):
   node_if = None
   controls_if = None
   data_if = None
+  image_if = None
+
+  # Latest image data dict and connect status message, stored on every
+  # first-connection callback invocation. First-connection flag keeps the log to
+  # one entry rather than one per received image.
+  image_dict = None
+  image_status = None
+  got_first_image = False
 
   # Drives the demonstration data values from the DataIF updater callback.
   data_counter = 0
@@ -163,6 +184,25 @@ class NepiControlsSandboxApp(object):
                     msg_if = self.msg_if
     )
     self.data_if.wait_for_data_ready()
+
+    ##############################
+    # Image source connect IF. Owns the <node>/image_connect namespace: it
+    # discovers the image topics on the device, publishes them as the selector's
+    # option list, and subscribes to whichever one the operator picks.
+    #
+    # show_selector=True is what puts the selector in the RUI; show_controls and
+    # show_data stay False because this IF's own data panel is not what renders
+    # the viewer -- the page mounts a SECOND Nepi_IF_ConnectData on this same
+    # connect namespace with show_data=true for that, so one selection drives
+    # both. See the renderImageViewer() comment in NepiAppControlsSandbox.js.
+    self.image_if = ConnectImageIF(
+                    connect_name = IMAGE_CONNECT_NAME,
+                    show_selector = True,
+                    show_controls = False,
+                    show_data = False,
+                    dataCB = self.imageConnectCb,
+                    msg_if = self.msg_if
+    )
 
     ##############################
     self.initCb(do_updates = True)
@@ -341,6 +381,24 @@ class NepiControlsSandboxApp(object):
     self.data_if.set_datum_value('demo_floats_data', [sine, -sine])
 
     return False
+
+  #######################
+  ### Connect IF Callback
+
+  def imageConnectCb(self, data_dict):
+    # Called by ConnectImageIF with the received image data dict each time an
+    # image arrives from the selected source. Stores the dict and the IF's
+    # current connect status, and logs both once, on the first arrival only --
+    # an image stream would otherwise flood the message log. The viewer in the
+    # RUI does not go through here: it streams from web_video_server against the
+    # topic the connect IF reports as selected.
+    self.image_dict = data_dict
+    self.image_status = self.image_if.get_status_msg()
+    if self.got_first_image == True:
+      return
+    self.got_first_image = True
+    self.msg_if.pub_info("Image first-connection data dict: " + str(self.image_dict))
+    self.msg_if.pub_info("Image first-connection status message: " + str(self.image_status))
 
   def dataUpdatedCb(self, datum_name):
     # Called by DataIF after a datum value is written. Left quiet on purpose:

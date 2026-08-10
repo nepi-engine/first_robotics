@@ -11,6 +11,9 @@ import { observer, inject } from "mobx-react"
 
 import Section from "./Section"
 import { Columns, Column } from "./Columns"
+import Label from "./Label"
+
+import NepiIFConnectData from "./Nepi_IF_ConnectData"
 
 import NepiAppControlsSandboxControls from "./NepiAppControlsSandbox-Controls"
 import NepiAppControlsSandboxData from "./NepiAppControlsSandbox-Data"
@@ -20,9 +23,21 @@ import NepiAppControlsSandboxSettings from "./NepiAppControlsSandbox-Settings"
 @inject("ros")
 @observer
 
-// Controls Sandbox main panel: a Controls box (one widget per control), a
-// read-only Data box (one row per datum) and, in develop run mode or when admin
-// mode is set, a Controls Settings box below them.
+// Controls Sandbox main panel: an image viewer in the left column, and in the
+// right column an Image connect selector, a Controls box (one widget per
+// control), a read-only Data box (one row per datum) and, in develop run mode or
+// when admin mode is set, a Controls Settings box below them.
+//
+// The image row follows nepi_app_auto_move exactly. Its connect namespace is
+// <app>/image_connect, owned by the ConnectImageIF in
+// controls_sandbox_app_node.py, and the connect name held in state below must
+// match that node-side IMAGE_CONNECT_NAME character for character. Two
+// components share that one namespace: the selector instance in the right column
+// runs with show_data={false}, and a SECOND Nepi_IF_ConnectData in the left
+// column runs with show_selector={false} show_data={true} and is what renders
+// Nepi_IF_ImageViewer. The viewer topic therefore comes from the connect
+// status, not from this app's status message, so ControlsSandboxStatus.msg
+// carries no image topic field.
 class NepiAppControlsSandbox extends Component {
   constructor(props) {
     super(props)
@@ -32,6 +47,11 @@ class NepiAppControlsSandbox extends Component {
       appNamespace: null,
       controlsNamespace: null,
       dataNamespace: null,
+
+      // Connect name of the image connect IF this page binds to. Must match
+      // IMAGE_CONNECT_NAME in controls_sandbox_app_node.py.
+      imageConnectName: 'image_connect',
+
       status_msg: null,
 
       statusListener: null,
@@ -41,8 +61,11 @@ class NepiAppControlsSandbox extends Component {
     this.getAppNamespace = this.getAppNamespace.bind(this)
     this.getControlsNamespace = this.getControlsNamespace.bind(this)
     this.getDataNamespace = this.getDataNamespace.bind(this)
+    this.getConnectNamespace = this.getConnectNamespace.bind(this)
     this.updateStatusListener = this.updateStatusListener.bind(this)
     this.statusListener = this.statusListener.bind(this)
+    this.renderImageViewer = this.renderImageViewer.bind(this)
+    this.renderConnections = this.renderConnections.bind(this)
   }
 
   getAppNamespace() {
@@ -76,6 +99,14 @@ class NepiAppControlsSandbox extends Component {
     }
     const appNamespace = this.getAppNamespace()
     return (appNamespace != null) ? appNamespace + "/data" : null
+  }
+
+  // Connect namespace a Nepi_IF_Connect* component subscribes to, i.e.
+  // <app>/<connect_name>, matching the connect_name the connect IF in the node
+  // passes to ConnectNodeIF.
+  getConnectNamespace(connectName) {
+    const appNamespace = this.getAppNamespace()
+    return (appNamespace != null) ? appNamespace + "/" + connectName : null
   }
 
   statusListener(message) {
@@ -121,6 +152,57 @@ class NepiAppControlsSandbox extends Component {
     }
   }
 
+  // The image viewer for the left column: a Nepi_IF_ConnectData on the image
+  // connect namespace carrying only the data panel (show_selector={false}
+  // show_data={true}). Its renderData() reads the image topic off
+  // ConnectIFStatus.selected_topic and mounts Nepi_IF_ImageViewer on it, and it
+  // already handles the unselected case -- renderData() returns an empty
+  // Columns/Column when selected_topic is null or 'None', so no viewer is
+  // mounted on a topic that does not exist. Sharing the namespace with the
+  // selector row rather than adding a second connect IF keeps one selection
+  // driving both halves of the row: whatever the operator picks on the right is
+  // what streams on the left.
+  renderImageViewer() {
+    return (
+      <Columns>
+        <Column>
+          <NepiIFConnectData
+            namespace={this.getConnectNamespace(this.state.imageConnectName)}
+            title={"Image"}
+            show_selector={false}
+            show_data={true}
+            make_section={false}
+          />
+        </Column>
+      </Columns>
+    )
+  }
+
+  // The image source selector, at the top of the right column.
+  //
+  // show_connect_header={true} is what titles the row: the component renders its
+  // title prop and its green "Connected" BooleanIndicator on one line ABOVE the
+  // Select, both driven by the connect namespace's ConnectIFStatus, so the page
+  // renders no bold Label of its own. make_section={false} keeps the component
+  // from drawing a bordered box inside the Section this method already opens.
+  renderConnections() {
+    return (
+      <Section title={"CONNECTIONS"}>
+
+        <NepiIFConnectData
+          namespace={this.getConnectNamespace(this.state.imageConnectName)}
+          title={"Image"}
+          show_selector={true}
+          show_data={false}
+          show_connect_header={true}
+          make_section={false}
+        />
+        <Label title={"Its stream feeds the viewer"}/>
+
+      </Section>
+    )
+  }
+
   render() {
     const controlsNamespace = this.getControlsNamespace()
     const dataNamespace = this.getDataNamespace()
@@ -137,7 +219,7 @@ class NepiAppControlsSandbox extends Component {
             <div style={{ display: 'flex' }}>
 
               <div style={{ width: "75%" }}>
-                {}
+                {this.renderImageViewer()}
               </div>
 
               <div style={{ width: '2%' }}>
@@ -145,6 +227,8 @@ class NepiAppControlsSandbox extends Component {
               </div>
 
               <div style={{ width: "23%" }}>
+
+                {this.renderConnections()}
 
                 <Section title={"CONTROLS SANDBOX"}>
 
