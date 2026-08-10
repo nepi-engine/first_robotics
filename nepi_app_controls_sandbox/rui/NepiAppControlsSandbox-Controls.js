@@ -374,8 +374,15 @@ class NepiAppControlsSandboxControls extends Component {
     // in which case we fall back to a sensible default (0 / 100).
     if (type === "FloatSlider") {
       const bounds = control_msg.float_bounds || []
-      const min = (bounds.length > 0 && bounds[0] !== -999) ? bounds[0] : 0
-      const max = (bounds.length > 1 && bounds[1] !== -999) ? bounds[1] : 100
+      const min = (bounds.length > 0 && bounds[1] !== -999) ? bounds[0] : 0
+      const max = (bounds.length > 1 && bounds[0] !== -999) ? bounds[1] : 100
+      // Step and display precision follow the control's own round_value
+      // (decimals its stored value is rounded to) instead of the previous
+      // hardcoded step of 1, which made any sub-unit range unusable.
+      const round_value = control_msg.round_value
+      const has_round = (typeof round_value === 'number' && round_value >= 0)
+      const step = has_round ? 1 / Math.pow(10, round_value) : 1
+      const displayDecimals = has_round ? round_value : undefined
       return (
         <SliderAdjustment
           key={name}
@@ -386,6 +393,8 @@ class NepiAppControlsSandboxControls extends Component {
           adjustment={control_msg.set_float}
           min={min}
           max={max}
+          step={step}
+          displayDecimals={displayDecimals}
           scaled={1}
           tooltip={control_msg.description}
           unit={""}
