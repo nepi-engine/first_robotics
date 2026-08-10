@@ -93,13 +93,47 @@ DATA_DICT = {
     'targets_dict': None,
     'navpose_dict': None,
 
-    # Outputs. obstacles is left as a plain list of dicts rather than
-    # nepi_app_obstacles/Obstacle messages: msg/Obstacle.msg and msg/Obstacles.msg
-    # exist in this package but are not listed in CMakeLists.txt
-    # add_message_files(), so neither type is generated and neither can be
-    # imported yet.
+    # Outputs. obstacles is a list of OBSTACLE_DICT-shaped dicts, one per
+    # obstacle, NOT a list of nepi_app_obstacles/Obstacle messages. This module
+    # is imported by obstacles_app_node.py and re-imported by its
+    # reload_processes path, and it must stay importable in contexts where the
+    # generated message types are not on the path, so the message conversion
+    # lives in the node (convertObstaclesMsg()) and this side stays plain dicts.
     'obstacles': [],
     'obstacle_count': 0,
+}
+
+
+# Unset-field constants, duplicated from the constants of the same names declared
+# in msg/Obstacle.msg.
+#
+# THEY MUST STAY IN SYNC WITH msg/Obstacle.msg. They are redeclared here rather
+# than imported from nepi_app_obstacles.msg because this module has to stay
+# importable where the generated messages are not available -- see the
+# 'obstacles' note in DATA_DICT above -- and an import of the generated type here
+# would make a process function unloadable in exactly the case the node's
+# reload_processes path is meant to survive.
+INT_FIELD_UNSET = -999
+FLOAT_FIELD_UNSET = -999.0
+
+
+# Per-obstacle dict schema.
+#
+# THE RULE: every key here corresponds to one field of msg/Obstacle.msg with the
+# SAME NAME, and the two are edited together. Adding a field to Obstacle.msg
+# without adding the matching key here means the node's convertObstaclesMsg()
+# has nothing to read for it; adding a key here without the message field means
+# the value is computed every cycle and silently dropped at conversion.
+#
+# Each default is the unset value for that field's type: numeric fields to the
+# constants above, string fields to ''. A consumer reads those as 'no value this
+# cycle' -- see docs/ADDING_OBSTACLE_MSG_FIELDS.md.
+OBSTACLE_DICT = {
+    'timestamp': FLOAT_FIELD_UNSET,
+    'name': '',
+    'id': INT_FIELD_UNSET,
+    'uid': '',
+    'confidence': FLOAT_FIELD_UNSET,
 }
 
 
@@ -172,12 +206,22 @@ def process_1(process_data_dict,
     depth_map_dict = process_data_dict['depth_map_dict']
     navpose_dict = process_data_dict['navpose_dict']
 
-    # Detection itself is not implemented. The depth map arrives as whatever dict
-    # ConnectDepthMapIF hands its dataCB, and extracting an obstacle from it is
-    # the app's remaining work -- writing a stand-in here would be inventing both
-    # that dict's key names and a detection result. What IS wired and verifiable
-    # is everything around it: the controls above are live and operator-settable,
-    # and the inputs below are the current cycle's data.
+    # process_1 emits NO obstacles, and that is a statement about the message
+    # rather than about the depth map.
+    #
+    # This process consumes only the depth map and the NavPose. A depth return
+    # is a geometry -- a range, a bearing, a size, a position -- and
+    # msg/Obstacle.msg declares no geometry field today: it carries timestamp,
+    # name, id, uid and confidence, which are identity and detection-quality
+    # fields. There is no honest way to name, identify or score an obstacle from
+    # a depth map alone, so emitting one here would mean inventing a name and a
+    # confidence for it, and the obstacle's actual content -- where it is --
+    # would have nowhere to go.
+    #
+    # This is the FIRST thing the next developer changes: add the geometry fields
+    # to msg/Obstacle.msg and the matching keys to OBSTACLE_DICT, then fill them
+    # here. Until then the depth map is read, the controls above are live and
+    # operator-settable, and the emitted list is empty.
     obstacles = []
     if depth_map_dict is not None:
         pass
@@ -260,13 +304,76 @@ def process_2(process_data_dict,
     targets_dict = process_data_dict['targets_dict']
     navpose_dict = process_data_dict['navpose_dict']
 
-    # Detection and fusion are not implemented -- same reason as process_1: the
-    # depth map and targets dicts are the connect IFs' own contracts, and this
-    # app has not defined how a target and a depth return combine into an
-    # obstacle yet. The controls and the inputs are wired and verifiable.
+    # Every field msg/Obstacle.msg declares today -- timestamp, name, id, uid,
+    # confidence -- is a property a detected target already carries, so this
+    # process fills them for real rather than emitting an empty list the way
+    # process_1 does.
+    #
+    # Source shape, from ConnectTargetsIF._dataCb (nepi_api/connect_targets_if.py):
+    # the dict handed to dataCB has keys 'namespace', 'data', 'timestamp' and
+    # 'process_time', where 'data' is the whole nepi_interfaces/Targets message
+    # run through nepi_sdk.convert_msg2dict(). So the per-target list is at
+    # targets_dict['data']['targets'], and each entry is a dict keyed by the
+    # nepi_interfaces/Target field names.
+    #
+    # Only the targets source is read here. The depth map is NOT fused in --
+    # combining a depth return with a target is the geometry work that has
+    # nowhere to land until msg/Obstacle.msg gains geometry fields, the same
+    # reason process_1 emits nothing.
     obstacles = []
-    if depth_map_dict is not None and targets_dict is not None:
-        pass
+    if targets_dict is not None:
+        targets_data = targets_dict.get('data', None)
+        target_list = []
+        if targets_data is not None:
+            target_list = targets_data.get('targets', []) or []
+
+        for target in target_list:
+            if len(obstacles) >= max_obstacles:
+                # max_obstacles control: cap the emitted list. Discovery order is
+                # the detector's own order; there is no better ranking to apply
+                # while Obstacle.msg carries no geometry to rank on.
+                break
+
+            confidence = target.get('confidence', FLOAT_FIELD_UNSET)
+            if confidence == FLOAT_FIELD_UNSET or confidence < min_target_confidence:
+                continue
+
+            # Range gate. nepi_interfaces/Target DOES carry range_m, so
+            # min_range_m / max_range_m are live here rather than inert -- but
+            # the producer fills it with FLOAT_FIELD_UNSET whenever it had no
+            # depth map to measure against (nepi_api/node_if_ai_detector.py
+            # leaves target_range_m at -999 when np_depth_map is None). Gating on
+            # an unset range would silently drop every obstacle from any detector
+            # running without depth, so an unset range skips the gate instead of
+            # failing it.
+            range_m = target.get('range_m', FLOAT_FIELD_UNSET)
+            if range_m != FLOAT_FIELD_UNSET:
+                if range_m < min_range_m or range_m > max_range_m:
+                    continue
+
+            obstacle = get_blank_obstacle_dict()
+            obstacle['name'] = target.get('name', '')
+            obstacle['uid'] = target.get('uid', '')
+            obstacle['confidence'] = confidence
+            # Epoch seconds of the source image the target was detected in, which
+            # is the closest thing to an obstacle observation time available.
+            obstacle['timestamp'] = target.get('timestamp', FLOAT_FIELD_UNSET)
+            # id is the obstacle's index in THIS cycle's emitted list, not the
+            # source target's id. nepi_interfaces/Target declares an id field but
+            # no producer assigns it -- node_if_ai_detector.py fills timestamp,
+            # name, uid, confidence and the pixel fields and never id -- so it
+            # arrives 0 on every target, and carrying it through would label every
+            # obstacle 0. Index is the only definition that distinguishes the
+            # obstacles in one message today. It is NOT stable across cycles; a
+            # tracker that assigns a persistent id is the next developer's work.
+            obstacle['id'] = len(obstacles)
+
+            obstacles.append(obstacle)
+
+    # use_navpose is declared and read above but inert: it asks for obstacle
+    # POSITIONS in the NavPose frame, and Obstacle.msg carries no position field
+    # to express one. The NavPose itself still reaches the consumer -- the node
+    # puts it on the Obstacles message, not on each Obstacle.
 
     process_data_dict['obstacles'] = obstacles
     process_data_dict['obstacle_count'] = len(obstacles)
@@ -308,4 +415,23 @@ PROCESSES_DICT['process_2'] = {'process_function': process_2,
 # migration.
 
 def get_blank_data_dict():
+    """Return a fresh per-cycle process data dict.
+
+    Returns:
+        dict: A deep copy of DATA_DICT, so a caller can mutate it without
+            touching the module-level template.
+    """
     return copy.deepcopy(DATA_DICT)
+
+
+def get_blank_obstacle_dict():
+    """Return a fresh per-obstacle dict with every field at its unset value.
+
+    Every key is one field of msg/Obstacle.msg of the same name. Fill only the
+    fields the process function can actually supply and leave the rest at the
+    unset value they arrive with -- see docs/ADDING_OBSTACLE_MSG_FIELDS.md.
+
+    Returns:
+        dict: A deep copy of OBSTACLE_DICT.
+    """
+    return copy.deepcopy(OBSTACLE_DICT)

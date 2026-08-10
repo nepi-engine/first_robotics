@@ -9,6 +9,6 @@ string source_topic
 float64 source_timestamp
 
 string navpose_frame
-NavPose navpose_msg
-nepi_app_obstacles/Obstacles[] obstacles
+nepi_interfaces/NavPose navpose_msg
+Obstacle[] obstacles
 

@@ -23,18 +23,12 @@ import { observer, inject } from "mobx-react"
 
 import Section from "./Section"
 import { Columns, Column } from "./Columns"
-import Label from "./Label"
-import Input from "./Input"
-import BooleanIndicator from "./BooleanIndicator"
-import Select, { Option } from "./Select"
-import Button, { ButtonMenu } from "./Button"
-import Styles from "./Styles"
 
-import NepiIFConnectData from "./Nepi_IF_ConnectData"
-import NepiIFImageViewer from "./Nepi_IF_ImageViewer"
-import NepiIFNavPose from "./Nepi_IF_NavPose"
-import NepiIFControls from "./Nepi_IF_Controls"
 import NepiIFConfig from "./Nepi_IF_Config"
+
+import NepiAppObstaclesImages from "./NepiAppObstacles-Images"
+import NepiAppObstaclesData from "./NepiAppObstacles-Data"
+import NepiAppObstaclesControls from "./NepiAppObstacles-Controls"
 
 @inject("ros")
 @observer
@@ -68,9 +62,10 @@ import NepiIFConfig from "./Nepi_IF_Config"
 // camera than the depth map is not a configuration worth being able to express.
 //
 // So this page renders exactly one <Select> for a source: the Depth Map one, which
-// Nepi_IF_ConnectData owns. The Targets and NavPose rows are read-only text plus
-// the same Connected indicator they carried as selectors, and every viewer reads
-// its topic off this app's status message (depth_map_image_topic / image_topic /
+// Nepi_IF_ConnectData owns, mounted by NepiAppObstacles-Data.js. The Targets and
+// NavPose rows are read-only text plus the same Connected indicator they carried as
+// selectors, and every viewer in NepiAppObstacles-Images.js reads its topic off
+// this app's status message (depth_map_image_topic / image_topic /
 // targets_image_topic), the NepiAppStereoCam pattern.
 //
 // Two ConnectIFStatus subscriptions of this page's own back the read-only rows --
@@ -86,6 +81,37 @@ import NepiIFConfig from "./Nepi_IF_Config"
 // clear is automatic -- publish_status() recomputes every derived topic from the
 // current selection in one pass, and each derivation's ownership gate forces
 // 'None' the instant the selection changes.
+//
+// STATE OWNERSHIP -- a deliberate departure from Nepi_IF_ConnectPTX. Do not "fix"
+// this back to child-owned subscriptions.
+//
+// This page is split into three children the way Nepi_IF_ConnectPTX splits into
+// Nepi_IF_PTX-Data and Nepi_IF_PTX-Controls, with ONE difference: in ConnectPTX
+// each child owns its own device status subscription, and here they own none. This
+// page is the SOLE owner of every ROS subscription on the page -- the app's own
+// NepiAppObstaclesStatus, and the three ConnectIFStatus subscriptions on
+// depth_map_connect, targets_connect and navpose_connect -- and the sole owner of
+// the derivation helpers getDerivedAreCurrent(), getDerivedTopic(),
+// getDerivedConnected() and isTopic(). The three children take already-derived
+// values as PROPS and are presentational.
+//
+// The reason is the "clear before re-deriving" guard documented above. It requires
+// that every derived value on the page agree about whether the current derivation
+// is stale, and staleness is decided by ONE comparison: the depth map connect's
+// live selected_topic against the depth_map_topic in the app status message. Two or
+// three components each computing that comparison from their own independently
+// batched subscriptions can disagree within a render pass -- which is exactly the
+// split-brain the guard exists to prevent: one viewer clearing while another keeps
+// streaming the previous depth map's image, or a read-only row naming one depth
+// map's targets source beside another depth map's picture. One owner, one answer,
+// passed down. A depth map change clears all three image viewers, the NavPose
+// viewer and both derived rows in the same render pass, and each child receives
+// 'None Available' rather than a stale topic for the duration of that window.
+//
+// Each child carries its own copy of isTopic() because each needs the mount gate;
+// that is safe where a second derivation would not be, because isTopic() is a pure
+// string predicate over a value this page already decided -- the same arrangement
+// NepiAppStereoCam-Controls.js has with NepiAppStereoCam.js.
 class NepiAppObstacles extends Component {
 
   constructor(props) {
@@ -121,9 +147,6 @@ class NepiAppObstacles extends Component {
     this.getBaseNamespace = this.getBaseNamespace.bind(this)
     this.getAppNamespace = this.getAppNamespace.bind(this)
     this.getConnectNamespace = this.getConnectNamespace.bind(this)
-    this.getActiveControlsNamespace = this.getActiveControlsNamespace.bind(this)
-    this.getExampleControlsNamespace = this.getExampleControlsNamespace.bind(this)
-    this.renderExampleControls = this.renderExampleControls.bind(this)
     this.statusListener = this.statusListener.bind(this)
     this.updateStatusListener = this.updateStatusListener.bind(this)
     this.connectStatusListener = this.connectStatusListener.bind(this)
@@ -133,17 +156,9 @@ class NepiAppObstacles extends Component {
     this.getDerivedAreCurrent = this.getDerivedAreCurrent.bind(this)
     this.getDerivedTopic = this.getDerivedTopic.bind(this)
     this.getDerivedConnected = this.getDerivedConnected.bind(this)
-    this.renderDerivedSource = this.renderDerivedSource.bind(this)
-    this.onSelectProcess = this.onSelectProcess.bind(this)
-    this.onReloadProcesses = this.onReloadProcesses.bind(this)
-    this.renderControls = this.renderControls.bind(this)
-    this.renderProcessSelector = this.renderProcessSelector.bind(this)
-    this.renderProcessControls = this.renderProcessControls.bind(this)
     this.isTopic = this.isTopic.bind(this)
-    this.renderImageViewer = this.renderImageViewer.bind(this)
-    this.renderImageViewers = this.renderImageViewers.bind(this)
-    this.renderNavPoseViewer = this.renderNavPoseViewer.bind(this)
     this.renderConfig = this.renderConfig.bind(this)
+    this.renderBody = this.renderBody.bind(this)
   }
 
   getBaseNamespace() {
@@ -171,72 +186,6 @@ class NepiAppObstacles extends Component {
       return appNamespace + "/" + connectName
     }
     return null
-  }
-
-  // Process selector handlers. Both publish to this app's own topics, the pair
-  // nepi_app_stereo_cam uses: a String carrying the process NAME, and an Empty
-  // trigger to re-import the module. The node is the authority on both -- neither
-  // handler touches local state, so the dropdown only moves once the node has
-  // accepted the change and republished its status.
-  onSelectProcess(event) {
-    const { sendStringMsg } = this.props.ros
-    const appNamespace = this.getAppNamespace()
-    if (appNamespace != null) {
-      sendStringMsg(appNamespace + "/set_selected_process", event.target.value)
-    }
-  }
-
-  onReloadProcesses() {
-    const { sendTriggerMsg } = this.props.ros
-    const appNamespace = this.getAppNamespace()
-    if (appNamespace != null) {
-      sendTriggerMsg(appNamespace + "/reload_processes")
-    }
-  }
-
-  // Controls namespace of the ACTIVE obstacle process, or null when there is none
-  // to mount.
-  //
-  // This is the whole of the one-set-at-a-time rule on the RUI side: the node owns
-  // one ControlsIF per process in nepi_obstacles.PROCESSES_DICT, names the active
-  // one here, and this page mounts a Nepi_IF_Controls on that namespace only. The
-  // inactive process's component is never mounted, which is what actually hides it
-  // -- the node's set_controls_hidden() call is intent, not suppression, because
-  // Nepi_IF_Controls reads each control's own hidden flag and never
-  // ControlsStatus.hidden.
-  //
-  // Falls back to <app>/<selected_process> if the namespace field is unset but the
-  // process name is known, for the same reason as above; null when neither is
-  // usable, and render() then mounts nothing rather than a dead subscription.
-  getActiveControlsNamespace() {
-    const status_msg = this.state.status_msg
-    if (status_msg == null) {
-      return null
-    }
-    if (this.isTopic(status_msg.active_controls_namespace)) {
-      return status_msg.active_controls_namespace
-    }
-    const appNamespace = this.getAppNamespace()
-    if (appNamespace != null && this.isTopic(status_msg.selected_process)) {
-      return appNamespace + "/" + status_msg.selected_process
-    }
-    return null
-  }
-
-  // Namespace of this app's example ControlsIF -- the control set that belongs to
-  // no process. Distinct from getActiveControlsNamespace() above, which names the
-  // ACTIVE process's set and changes as the operator switches processes; this one
-  // is fixed for the life of the node. Taken from the app status, which publishes
-  // it fully qualified, with the conventional <app>/example_controls path as the
-  // fallback for the window before the first status message arrives. Mirrors
-  // NepiAppControlsSandbox.js getControlsNamespace().
-  getExampleControlsNamespace() {
-    const status_msg = this.state.status_msg
-    if (status_msg != null && status_msg.example_controls_namespace) {
-      return status_msg.example_controls_namespace
-    }
-    const appNamespace = this.getAppNamespace()
-    return (appNamespace != null) ? appNamespace + "/example_controls" : null
   }
 
   statusListener(message) {
@@ -374,7 +323,9 @@ class NepiAppObstacles extends Component {
   // none to show -- either because the node could not derive one for the selected
   // depth map, or because the derivation is stale per getDerivedAreCurrent().
   // 'None Available' is already a not-a-topic value to isTopic(), so a caller can
-  // hand the result straight to renderImageViewer().
+  // hand the result straight to a child as a topic prop: the isTopic() gate in
+  // NepiAppObstacles-Images.renderImageViewer() rejects it and leaves that viewer
+  // unmounted.
   getDerivedTopic(field) {
     if (this.getDerivedAreCurrent() === false) {
       return 'None Available'
@@ -383,7 +334,8 @@ class NepiAppObstacles extends Component {
     return (this.isTopic(topic) === true) ? topic : 'None Available'
   }
 
-  // Connection state of a derived source, for its Connected indicator.
+  // Connection state of a derived source, for its Connected indicator in
+  // NepiAppObstacles-Data.js.
   //
   // ConnectIFStatus.connected alone is not the answer here the way it was for a
   // selector: the connect IF auto-selects an unrelated source when the derivation
@@ -403,6 +355,15 @@ class NepiAppObstacles extends Component {
       return false
     }
     return (connect_status_msg.connected === true)
+  }
+
+  // True when a topic string off the status message names a real topic. The node
+  // reports 'None' for an unselected source and for a selected depth map that has
+  // no depth map image, and an un-set ROS string field arrives as ''. Each child
+  // carries its own copy for its mount gate -- see the STATE OWNERSHIP note above
+  // for why duplicating this predicate is safe and duplicating a derivation is not.
+  isTopic(topic) {
+    return (topic != null && topic !== '' && topic !== 'None' && topic !== 'None Available')
   }
 
   componentDidMount() {
@@ -432,390 +393,6 @@ class NepiAppObstacles extends Component {
     }
   }
 
-  // One read-only row for a source the node derives from the selected depth map.
-  //
-  // Deliberately shaped to read as the row it replaces: a bold title and the same
-  // green "Connected" BooleanIndicator on one line, then the source itself on the
-  // line below -- the show_connect_header={true} layout of Nepi_IF_Connect*, with
-  // a disabled Input where the Select used to be. Same layout, same indicator, no
-  // choice to make.
-  //
-  // The disabled Input is the RUI's read-only value display (the same widget
-  // Nepi_IF_ConnectTargets.renderData() uses for every field it shows), so an
-  // unavailable source reads 'None Available' there rather than blank, and the
-  // caption line below says why. The caption is the page's existing affordance --
-  // the two lines under the Depth Map row are the same thing.
-  renderDerivedSource(title, valueLabel, connectName, derivedTopic, availableCaption, unavailableCaption) {
-    const available = this.isTopic(derivedTopic)
-    const connected = this.getDerivedConnected(connectName, derivedTopic)
-
-    return (
-      <React.Fragment>
-
-        <Columns>
-          <Column>
-
-            <Label title={title} labelStyle={{fontWeight: 'bold'}}/>
-
-          </Column>
-          <Column>
-
-            <Label title={"Connected"}>
-              <BooleanIndicator value={connected} />
-            </Label>
-
-          </Column>
-        </Columns>
-
-        <Columns>
-          <Column>
-
-            <Label title={valueLabel}>
-              <Input disabled value={derivedTopic} />
-            </Label>
-
-          </Column>
-        </Columns>
-
-        <Label title={(available === true) ? availableCaption : unavailableCaption}/>
-
-      </React.Fragment>
-    )
-  }
-
-  // The CONNECTIONS panel: ONE source selector and two derived, read-only rows --
-  // then the obstacle process selector this page renders itself (a dropdown plus
-  // Reload Processes, on this app's own topics), and the controls of whichever
-  // process it selects, a Nepi_IF_Controls bound to a ControlsIF namespace read off
-  // this app's status message.
-  //
-  // Only the Depth Map row still carries a Select. Targets and NavPose are derived
-  // from that depth map node-side and rendered read-only here, for the reason given
-  // at the top of this file: they are properties of the depth map the operator
-  // picked, not independent choices, and a targets source belonging to a different
-  // camera than the depth map is not worth being able to express.
-  //
-  // Nepi_IF_ConnectTargets / Nepi_IF_ConnectNavPose are gone from this page rather
-  // than mounted with show_selector={false}: both render their title and Connected
-  // indicator INSIDE renderSelector(), so with the selector off they render nothing
-  // at all. renderDerivedSource() reproduces that header row from this page's own
-  // ConnectIFStatus subscription on the same namespace.
-  //
-  // The node's two image connect IFs get no row -- they carry no selector and the
-  // node drives them. The three source rows live inside ONE bordered Section: they
-  // are a single panel of source connections, so the box goes around the whole set,
-  // each row separated from the next by the standard RUI divider, and
-  // make_section={false} keeps Nepi_IF_ConnectData from drawing a bordered box of
-  // its own inside that panel. The process selector and process controls sit
-  // OUTSIDE that box -- they are this app's own controls, not source connections.
-  renderControls() {
-    const divider = <div style={{ borderTop: "1px solid #ffffff", marginTop: Styles.vars.spacing.medium, marginBottom: Styles.vars.spacing.xs }}/>
-
-    const targets_topic = this.getDerivedTopic('targets_topic')
-    const navpose_topic = this.getDerivedTopic('navpose_topic')
-
-    return (
-      <React.Fragment>
-
-        <Section title={"Connections"}>
-
-          <NepiIFConnectData
-            namespace={this.getConnectNamespace(this.state.depthMapConnectName)}
-            title={"Depth Map"}
-            show_selector={true}
-            show_data={false}
-            show_connect_header={true}
-            make_section={false}
-          />
-          <Label title={"Its depth map image feeds the top viewer"}/>
-          <Label title={"Its color image feeds the middle viewer"}/>
-          <Label title={"Its targets and NavPose are set below"}/>
-
-          {divider}
-
-          {this.renderDerivedSource(
-            "Targets",
-            "Targeter",
-            this.state.targetsConnectName,
-            targets_topic,
-            "Its targets image feeds the bottom viewer",
-            "No targets source for the selected Depth Map"
-          )}
-
-          {divider}
-
-          {this.renderDerivedSource(
-            "NavPose",
-            "NavPose Source",
-            this.state.navposeConnectName,
-            navpose_topic,
-            "From the selected Depth Map",
-            "No NavPose source for the selected Depth Map"
-          )}
-
-        </Section>
-
-        {this.renderProcessSelector()}
-
-        {this.renderProcessControls(divider)}
-
-      </React.Fragment>
-    )
-  }
-
-  // Obstacle process selector: a native dropdown plus a Reload Processes button,
-  // the same block NepiAppStereoCam-Controls.js renders and the one exception to
-  // this page owning no controls of its own.
-  //
-  // It is deliberately NOT a Nepi_IF_Controls Selection control. Which process runs
-  // is app state that outlives either control set, a reload trigger is unreachable
-  // through Nepi_IF_Controls (it sends UpdateString to a topic ControlsIF subscribes
-  // as UpdateTrigger, and Store.js has no sendUpdateTriggerMsg), and a selector on a
-  // plain topic keeps working when a ControlsIF does not.
-  //
-  // Both lists come off the app status message, so the menu cannot drift from the
-  // processes nepi_obstacles actually registers. The dropdown is disabled while the
-  // node reports process_ready false, i.e. mid-reload.
-  renderProcessSelector() {
-    const status_msg = this.state.status_msg
-    const available_processes = (status_msg != null && status_msg.available_processes != null &&
-                                 status_msg.available_processes.length > 0)
-      ? status_msg.available_processes : ["None"]
-    const selected_process = (status_msg != null && this.isTopic(status_msg.selected_process))
-      ? status_msg.selected_process : "None"
-    const process_ready = (status_msg != null) ? status_msg.process_ready : false
-
-    return (
-      <React.Fragment>
-
-        <Label title={"Obstacle Process"} style={{fontWeight: 'bold'}} align={"left"} textAlign={"left"}/>
-        <Label title={"Process"}>
-          <Select
-            id="set_selected_process"
-            onChange={this.onSelectProcess}
-            value={selected_process}
-            disabled={process_ready === false}
-          >
-            {available_processes.map((opt) => (
-              <Option key={opt} value={opt}>{opt}</Option>
-            ))}
-          </Select>
-        </Label>
-
-        <ButtonMenu>
-          <Button onClick={this.onReloadProcesses}>{"Reload Processes"}</Button>
-        </ButtonMenu>
-
-      </React.Fragment>
-    )
-  }
-
-  // Controls of the ACTIVE obstacle process, or nothing.
-  //
-  // One Nepi_IF_Controls on the namespace the node reports as active. The node
-  // owns one controls namespace per process and only this one is ever mounted, so
-  // the operator is shown exactly the active process's controls and never the
-  // other's -- see getActiveControlsNamespace().
-  //
-  // key={namespace} makes a process switch REMOUNT the component rather than
-  // repoint it, the same guard renderImageViewer() uses on image topics.
-  // Nepi_IF_Controls does resubscribe when its namespace prop changes, but it
-  // carries per-control edit state (editValues / pending) that belongs to the set
-  // it was showing; remounting drops that state with the component instead of
-  // letting one process's in-progress edit reconcile against the other's status.
-  //
-  // allways_show_controls suppresses the component's own "Show Controls" toggle: a
-  // collapse toggle inside an already-labelled panel is noise, and the panel's bold
-  // Labels are the grouping affordance on this page.
-  renderProcessControls(divider) {
-    const namespace = this.getActiveControlsNamespace()
-    if (namespace == null) {
-      return null
-    }
-    const status_msg = this.state.status_msg
-    const title = (status_msg != null && this.isTopic(status_msg.selected_process))
-      ? ("Controls: " + status_msg.selected_process)
-      : "Process Controls"
-
-    return (
-      <React.Fragment>
-
-        {divider}
-
-        <Label title={title} style={{fontWeight: 'bold'}} align={"left"} textAlign={"left"}/>
-        <NepiIFControls
-          key={namespace}
-          namespace={namespace}
-          make_section={false}
-          allways_show_controls={true}
-        />
-
-      </React.Fragment>
-    )
-  }
-
-  // True when a topic string off the status message names a real topic. The node
-  // reports 'None' for an unselected source and for a selected depth map that has
-  // no depth map image, and an un-set ROS string field arrives as ''.
-  isTopic(topic) {
-    return (topic != null && topic !== '' && topic !== 'None' && topic !== 'None Available')
-  }
-
-  // One image viewer, or an empty column when there is no topic to mount it on.
-  //
-  // Nepi_IF_ImageViewer must NOT be mounted with an invalid topic.
-  // updateImageSource() gates on `if (this.props.image_topic)` and the string
-  // 'None' is truthy, so it would build a web_video_server URL ending in
-  // '...None&type=mjpeg' and then leave whatever frame is already on its canvas
-  // in place -- nothing clears the canvas when a stream stops. Unmounting instead
-  // is the guard Nepi_IF_ConnectData.renderData() uses (empty Columns/Column when
-  // the topic is null or 'None'), and it destroys the canvas with the component,
-  // so no stale frame can survive a selection change.
-  //
-  // key={topic} makes a change between two live topics remount the viewer as
-  // well, rather than repointing this.image.src underneath a canvas still holding
-  // the previous source's last frame.
-  renderImageViewer(topic, title) {
-    if (this.isTopic(topic) === false) {
-      return (
-        <Columns>
-          <Column>
-            <Label title={title} />
-          </Column>
-        </Columns>
-      )
-    }
-
-    return (
-      <Columns>
-        <Column>
-          <Label title={title} />
-          <NepiIFImageViewer
-            key={topic}
-            namespace={topic}
-            image_topic={topic}
-            title={title}
-          />
-        </Column>
-      </Columns>
-    )
-  }
-
-  // Three viewers stacked vertically, all three topics read off the app status
-  // message: the selected depth map's own depth map image on top, that same depth
-  // map's sibling color image in the middle, and the targets image of the targets
-  // source derived from that depth map at the bottom. Not one of them is hard-wired
-  // and not one has a selector -- the node derives each from the status message of
-  // the source it belongs to and reports 'None' when it cannot name a real topic. A
-  // 'None' leaves that viewer unmounted through the isTopic() gate in
-  // renderImageViewer(); a viewer never falls back to a neighbor's stream, so what
-  // each one shows is either the image that belongs to its source or nothing at
-  // all.
-  //
-  // Every topic goes through getDerivedTopic(), which adds the second half of that
-  // guarantee: while a depth map change is still in flight it returns 'None
-  // Available' for all three, so the bottom viewer cannot keep streaming the
-  // previous depth map's targets image into the window between the operator's
-  // selection and the node's next status message. Unmounting destroys the canvas
-  // with the component, which is the only thing that actually clears it -- nothing
-  // clears a canvas when a stream merely stops.
-  renderImageViewers() {
-    const depth_map_image_topic = this.getDerivedTopic('depth_map_image_topic')
-    const image_topic = this.getDerivedTopic('image_topic')
-    const targets_image_topic = this.getDerivedTopic('targets_image_topic')
-
-    return (
-      <React.Fragment>
-
-        {this.renderImageViewer(depth_map_image_topic, "Depth Map Image (from selected Depth Map)")}
-
-        {this.renderImageViewer(image_topic, "Color Image (from selected Depth Map)")}
-
-        {this.renderImageViewer(targets_image_topic, "Targets Image (from derived Targets source)")}
-
-      </React.Fragment>
-    )
-  }
-
-  // The NavPose of the selected depth map, displayed directly below the image
-  // viewers.
-  //
-  // Nepi_IF_NavPose is the RUI's reusable NavPose display -- the same component
-  // Nepi_IF_ImageViewer, NepiDeviceNPX and NepiSystemNavPose mount, given a
-  // namespace and left read-only. It subscribes to <ns>/status as a
-  // NavPoseStatus and to <ns> itself as a NavPose, so the namespace it wants is
-  // the navpose topic this app already derives; nothing is rendered here that
-  // the component does not already render everywhere else.
-  //
-  // Mounted through the same getDerivedTopic() / isTopic() gate as the three
-  // image viewers, and for the same reason: an unavailable source must leave the
-  // viewer UNMOUNTED rather than mounted on a dead namespace. When there is no
-  // topic the page renders the same read-only message the NavPose Source row
-  // already uses, so the two say the same thing. key={topic} remounts on a change
-  // between two live topics rather than repointing the subscriptions underneath a
-  // component still holding the previous source's values.
-  //
-  // There is deliberately no selector here. The NavPose stays derived from the
-  // selected depth map -- see the header comment and NepiAppObstaclesStatus.msg.
-  renderNavPoseViewer() {
-    const navpose_topic = this.getDerivedTopic('navpose_topic')
-
-    if (this.isTopic(navpose_topic) === false) {
-      return (
-        <Columns>
-          <Column>
-            <Label title={"NavPose (from selected Depth Map)"} />
-            <Label title={"No NavPose source for the selected Depth Map"} />
-          </Column>
-        </Columns>
-      )
-    }
-
-    return (
-      <Columns>
-        <Column>
-          <Label title={"NavPose (from selected Depth Map)"} />
-          <NepiIFNavPose
-            key={navpose_topic}
-            navposeNamespace={navpose_topic}
-            title={"NavPose Data"}
-            show_line={false}
-            read_only={true}
-            make_section={false}
-          />
-        </Column>
-      </Columns>
-    )
-  }
-
-  // A copy of the controls sandbox app's Controls box, bound to this app's example
-  // ControlsIF. Same component, mounted the same way the sandbox page mounts it --
-  // make_section={false} inside a Section of its own -- so it looks and behaves
-  // identically; the "Show Controls" toggle at the top of the box is
-  // Nepi_IF_Controls' own, not something this page adds. Only the Section title
-  // differs.
-  //
-  // This is the page's SECOND Nepi_IF_Controls, and the one that is always mounted.
-  // renderProcessControls() mounts the other on the active process's namespace and
-  // only while there is one; this box belongs to no process, so it never unmounts.
-  //
-  // The sandbox page also mounts NepiAppControlsSandbox-Settings below the box in
-  // develop/admin mode. That component is deliberately NOT copied: it lives in the
-  // sandbox app's rui/ directory, so importing it would make this app's RUI build
-  // depend on nepi_app_controls_sandbox being installed.
-  renderExampleControls() {
-    return (
-      <Section title={"Example Controls"}>
-
-        <NepiIFControls
-          namespace={this.getExampleControlsNamespace()}
-          make_section={false}
-        />
-
-      </Section>
-    )
-  }
-
   renderConfig() {
     const appNamespace = this.getAppNamespace()
     return (
@@ -830,13 +407,30 @@ class NepiAppObstacles extends Component {
 
   // Standard NEPI device-panel split: image viewers in the left ~75%, a small
   // gutter, and the selectors/config in the right ~23% column.
+  //
+  // Every derived value the children render is computed HERE, in one pass, so all
+  // of them see the same answer from getDerivedAreCurrent() -- see the STATE
+  // OWNERSHIP note above. NepiAppObstacles-Controls.js takes the app namespace and
+  // the raw status message instead, because nothing it renders is derived from the
+  // selected depth map; its Example Controls box is the last thing in the right
+  // column, below everything else the page puts there.
   renderBody() {
+    const depth_map_image_topic = this.getDerivedTopic('depth_map_image_topic')
+    const image_topic = this.getDerivedTopic('image_topic')
+    const targets_image_topic = this.getDerivedTopic('targets_image_topic')
+    const targets_topic = this.getDerivedTopic('targets_topic')
+    const navpose_topic = this.getDerivedTopic('navpose_topic')
+
     return (
       <div style={{ display: 'flex' }}>
 
         <div style={{ width: "75%" }}>
-          {this.renderImageViewers()}
-          {this.renderNavPoseViewer()}
+          <NepiAppObstaclesImages
+            depth_map_image_topic={depth_map_image_topic}
+            image_topic={image_topic}
+            targets_image_topic={targets_image_topic}
+            navpose_topic={navpose_topic}
+          />
         </div>
 
         <div style={{ width: '2%' }}>
@@ -844,9 +438,18 @@ class NepiAppObstacles extends Component {
         </div>
 
         <div style={{ width: "23%" }}>
-          {this.renderControls()}
+          <NepiAppObstaclesData
+            depthMapConnectNamespace={this.getConnectNamespace(this.state.depthMapConnectName)}
+            targets_topic={targets_topic}
+            navpose_topic={navpose_topic}
+            targets_connected={this.getDerivedConnected(this.state.targetsConnectName, targets_topic)}
+            navpose_connected={this.getDerivedConnected(this.state.navposeConnectName, navpose_topic)}
+          />
           {this.renderConfig()}
-          {this.renderExampleControls()}
+          <NepiAppObstaclesControls
+            appNamespace={this.getAppNamespace()}
+            status_msg={this.state.status_msg}
+          />
         </div>
 
       </div>

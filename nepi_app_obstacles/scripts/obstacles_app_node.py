@@ -18,9 +18,10 @@ from std_msgs.msg import Bool, Empty, String, Float32
 
 from nepi_interfaces.msg import TargetingStatus
 
-from nepi_app_obstacles.msg import NepiAppObstaclesStatus
+from nepi_app_obstacles.msg import NepiAppObstaclesStatus, Obstacle, Obstacles
 
 from nepi_sdk import nepi_sdk
+from nepi_sdk import nepi_nav
 
 from nepi_api.node_if import NodeClassIF
 from nepi_api.messages_if import MsgIF
@@ -141,6 +142,30 @@ TARGETS_IMAGE_SUBTOPIC = 'targets_image'
 # setupExampleControlsIF(). Unlike the per-process sets it is always mounted,
 # because there is no active/inactive question about it.
 EXAMPLE_CONTROLS_NAME = "example_controls"
+
+# Topic this app publishes its obstacles product on, under the node namespace:
+# <base>/app_obstacles/obstacles. Named for the product itself, the way every
+# other NEPI list-of-items product is -- an AI detector publishes its
+# nepi_interfaces/Targets product on <detector_node>/targets (AiDetectorIF's
+# TargetsIF, and the 'all_targets' pub in nepi_api/node_if_ai_detector.py) --
+# rather than being qualified with the app or the message name.
+OBSTACLES_TOPIC = 'obstacles'
+
+# Source each process's obstacles are derived FROM, keyed by process name and
+# valued by the getSourceTopics() field that names it.
+#
+# The two processes do not share a source. process_1 reads the depth map only.
+# process_2 builds every obstacle it emits out of the targets source -- name,
+# uid, confidence and timestamp all come off a detected target (see
+# nepi_obstacles.process_2) -- so reporting the depth map as its source_topic
+# would name the topic the targets were merely SELECTED through rather than the
+# one the obstacles were actually derived from. A process not listed here
+# reports the depth map, this app's root selection.
+PROCESS_SOURCE_FIELDS = {
+    'process_1': 'depth_map_topic',
+    'process_2': 'targets_topic'
+}
+DEFAULT_PROCESS_SOURCE_FIELD = 'depth_map_topic'
 
 # Rate the selected process function is called at. Deliberately independent of
 # STATUS_PUBLISH_RATE_HZ and of the connect IF data rates: the depth map may
@@ -305,6 +330,21 @@ class NepiObstaclesApp(object):
                 'msg': NepiAppObstaclesStatus,
                 'qsize': 1,
                 'latch': True
+            },
+            # The obstacles product. latch=False and qsize=1, unlike status_pub
+            # above: this is a STREAMING product published once per process
+            # cycle, not state a late subscriber needs the last value of. Same
+            # settings the sibling Targets product publisher uses -- the
+            # 'all_targets' entry in nepi_api/node_if_ai_detector.py is
+            # qsize 1 / latch False -- and for the same reason. Latching a
+            # streaming product would hand every new subscriber one stale cycle
+            # of obstacles as though it were current.
+            'obstacles_pub': {
+                'namespace': self.node_namespace,
+                'topic': OBSTACLES_TOPIC,
+                'msg': Obstacles,
+                'qsize': 1,
+                'latch': False
             }
         }
 
@@ -845,6 +885,108 @@ class NepiObstaclesApp(object):
         self.process_data_dict['navpose_dict'] = navpose_dict
         self.process_data_dict, _ = process['process_function'](
                         self.process_data_dict, process_controls_dict)
+
+        # Publish this cycle's obstacles product, at the process rate rather than
+        # on a timer of its own -- the product is the process's output, so it
+        # cannot be published more or less often than the process runs.
+        #
+        # Every guard is one already standing above rather than a new style of
+        # check: the enabled test, the process/controls-IF tests and the
+        # controls-dict test have all returned before reaching here, so a publish
+        # means the app is enabled and the selected process actually ran this
+        # cycle. The one test added is the active process's own source, read out
+        # of the source_topics already computed above. An Obstacles message
+        # carrying an empty obstacles array is CORRECT while connected and
+        # running -- it says the process looked and found nothing -- but a
+        # message published with the source disconnected would assert an
+        # observation this app never made.
+        source_field = PROCESS_SOURCE_FIELDS.get(self.selected_process,
+                                                 DEFAULT_PROCESS_SOURCE_FIELD)
+        if source_topics.get(source_field, 'None') == 'None':
+            return
+        obstacles_msg = self.convertObstaclesMsg(self.process_data_dict, source_topics)
+        if self.node_if is not None:
+            self.node_if.publish_pub('obstacles_pub', obstacles_msg)
+
+    # Build the Obstacles product message for one completed process cycle.
+    #
+    # source_topics is the set updateProcess() already computed for this cycle;
+    # it is recomputed only when a caller does not supply one, so the source this
+    # message names cannot drift from the one the publish was gated on.
+    def convertObstaclesMsg(self, process_data_dict, source_topics = None):
+        if source_topics is None:
+            source_topics = self.getSourceTopics()
+
+        obstacles_msg = Obstacles()
+
+        # Cycle time, taken from the value the process function itself stamped
+        # with nepi_utils.get_time() rather than re-read here, so the message
+        # timestamp is the time the process ran and not the slightly later time
+        # it was converted.
+        obstacles_msg.timestamp = float(process_data_dict.get('data_time', 0.0))
+
+        obstacles_msg.process_name = self.selected_process
+        # Fully-qualified controls namespace of the active process, the same form
+        # and the same helper the status message's active_controls_namespace uses
+        # -- see getControlsNamespace() for why it is not ControlsIF.get_namespace().
+        obstacles_msg.process_namespace = self.getControlsNamespace(self.selected_process)
+
+        # Source this process's obstacles were derived from -- the depth map for
+        # process_1, the targets source for process_2. See PROCESS_SOURCE_FIELDS
+        # for why the two differ.
+        source_field = PROCESS_SOURCE_FIELDS.get(self.selected_process,
+                                                 DEFAULT_PROCESS_SOURCE_FIELD)
+        obstacles_msg.source_topic = source_topics.get(source_field, 'None')
+        # Timestamp of the source data itself, off that connect IF's cached data
+        # dict (both ConnectDepthMapIF and ConnectTargetsIF put a 'timestamp' key
+        # there). Left at the unset float when no data has arrived from it yet.
+        source_data_dicts = {
+            'depth_map_topic': self.depth_map_dict,
+            'targets_topic': self.targets_dict
+        }
+        source_data_dict = source_data_dicts.get(source_field, None)
+        obstacles_msg.source_timestamp = float(nepi_obstacles.FLOAT_FIELD_UNSET)
+        if source_data_dict is not None:
+            obstacles_msg.source_timestamp = float(source_data_dict.get('timestamp',
+                                                   nepi_obstacles.FLOAT_FIELD_UNSET))
+
+        # NavPose, ONLY when one is actually connected. getNavPoseConnected()
+        # answers "is data arriving from the NavPose this app reports", which is
+        # the question here -- a derived-but-silent topic must not put a NavPose
+        # on this message. When there is none, navpose_frame stays '' and
+        # navpose_msg stays default constructed, and the EMPTY FRAME is how a
+        # consumer detects that: a real NavPose always names its frame. A NavPose
+        # that did not come from the connected source is never published.
+        if self.getNavPoseConnected() == True and self.navpose_dict is not None:
+            navpose_data = self.navpose_dict.get('data', None)
+            if navpose_data is not None:
+                navpose_msg = nepi_nav.convert_navpose_dict2msg(navpose_data)
+                if navpose_msg is not None:
+                    obstacles_msg.navpose_frame = navpose_data.get('navpose_frame', '')
+                    obstacles_msg.navpose_msg = navpose_msg
+
+        # One Obstacle message per obstacle dict, each field assigned by name.
+        # The dict keys are the Obstacle.msg field names -- that correspondence is
+        # the contract nepi_obstacles.OBSTACLE_DICT declares -- so a field added
+        # to the message needs its key added there and one line added here.
+        obstacle_msgs = []
+        obstacle_dicts = process_data_dict.get('obstacles', [])
+        if obstacle_dicts is None:
+            obstacle_dicts = []
+        for obstacle_dict in obstacle_dicts:
+            obstacle_msg = Obstacle()
+            obstacle_msg.timestamp = float(obstacle_dict.get('timestamp',
+                                           nepi_obstacles.FLOAT_FIELD_UNSET))
+            obstacle_msg.name = obstacle_dict.get('name', '')
+            obstacle_msg.id = int(obstacle_dict.get('id',
+                                  nepi_obstacles.INT_FIELD_UNSET))
+            obstacle_msg.uid = obstacle_dict.get('uid', '')
+            obstacle_msg.confidence = float(obstacle_dict.get('confidence',
+                                            nepi_obstacles.FLOAT_FIELD_UNSET))
+            obstacle_msgs.append(obstacle_msg)
+        obstacles_msg.obstacles = obstacle_msgs
+
+        return obstacles_msg
 
 
     ###################

@@ -11,5 +11,8 @@ APP_DICT:
 RUI_DICT:
   rui_files:
   - NepiAppObstacles.js
+  - NepiAppObstacles-Data.js
+  - NepiAppObstacles-Controls.js
+  - NepiAppObstacles-Images.js
   rui_main_file: NepiAppObstacles.js
   rui_main_class: NepiAppObstacles
