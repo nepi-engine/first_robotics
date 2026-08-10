@@ -1,0 +1,64 @@
+<title>Concept 2 — Dense Table</title>
+<meta charset="utf-8">
+<style>
+  :root { --line: #2b2f33; --bg: #14171a; --row: #1b1f23; --rowalt: #1f2327; --ink: #d7dbdd; --sub: #8a9096; --blue: #4fc3f7; --green: #57c26a; --red: #e06c6c; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: "Consolas","Menlo",monospace; font-size: 13px; }
+  header { padding: 10px 16px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; }
+  header h1 { font-size: 13px; margin: 0; font-weight: normal; color: var(--sub); text-transform: uppercase; letter-spacing: .04em; }
+  .layout { display: flex; }
+  .viewer { width: 55%; aspect-ratio: 16/9; background: repeating-linear-gradient(45deg,#1f2327,#1f2327 10px,#24282c 10px,#24282c 20px); display: flex; align-items: center; justify-content: center; color: var(--sub); margin: 12px; }
+  .tables { flex: 1; padding: 12px; }
+  table { width: 100%; border-collapse: collapse; margin-bottom: 18px; }
+  caption { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--sub); padding-bottom: 6px; }
+  th { text-align: left; font-size: 11px; color: var(--sub); font-weight: normal; border-bottom: 1px solid var(--line); padding: 4px 8px; }
+  td { padding: 4px 8px; border-bottom: 1px solid #21262b; }
+  tr:nth-child(even) td { background: var(--rowalt); }
+  .type { color: var(--sub); }
+  .val { color: var(--blue); }
+  input[type=text] { background: #10151a; border: 1px solid var(--line); color: var(--blue); font-family: inherit; font-size: 12px; padding: 2px 4px; width: 90px; }
+  select { background: #10151a; border: 1px solid var(--line); color: var(--blue); font-family: inherit; font-size: 12px; }
+  .sw { color: var(--sub); }
+  .sw.on { color: var(--green); }
+  .btn { background: none; border: 1px solid var(--line); color: var(--ink); font-family: inherit; font-size: 11px; padding: 1px 8px; cursor: pointer; }
+  .flag { color: var(--red); font-size: 11px; }
+  .foot { font-size: 11px; color: var(--sub); padding: 0 12px 12px; }
+</style>
+
+<header><h1>app_controls_sandbox — parameter table</h1><span class="foot" style="padding:0">controls/status · data/status · 1 Hz</span></header>
+
+<div class="layout">
+  <div class="viewer">Image Viewer</div>
+  <div class="tables">
+
+    <table>
+      <caption>controls (writable, ControlsIF)</caption>
+      <tr><th>name</th><th>type</th><th>value</th><th></th></tr>
+      <tr><td>demo_menu</td><td class="type">Menu</td><td><select><option>Off</option><option selected>Low</option><option>High</option></select></td><td></td></tr>
+      <tr><td>demo_selection</td><td class="type">Selection</td><td><select><option>Alpha</option><option selected>Bravo</option><option>Charlie</option></select></td><td></td></tr>
+      <tr><td>demo_selections</td><td class="type">Selections</td><td class="val">[Red, Blue]</td><td><span class="btn">edit</span></td></tr>
+      <tr><td>demo_trigger</td><td class="type">Trigger</td><td class="flag">— (RUI cannot fire, see note)</td><td><span class="btn">fire</span></td></tr>
+      <tr><td>demo_bool</td><td class="type">Bool</td><td><span class="sw on">● true</span></td><td><span class="btn">toggle</span></td></tr>
+      <tr><td>demo_string</td><td class="type">String</td><td><input type="text" value="hello nepi"></td><td></td></tr>
+      <tr><td>demo_int</td><td class="type">Int</td><td><input type="text" value="5"></td><td class="foot" style="padding:0">[0, 10]</td></tr>
+      <tr><td>demo_float</td><td class="type">Float</td><td><input type="text" value="2.5"></td><td class="foot" style="padding:0">[0.0, 10.0]</td></tr>
+      <tr><td>demo_float_slider</td><td class="type">FloatSlider</td><td class="val">50.0</td><td class="foot" style="padding:0">[0, 100]</td></tr>
+      <tr><td>demo_floats_slider</td><td class="type">FloatSliders</td><td class="flag">dropped by SDK</td><td></td></tr>
+    </table>
+
+    <table>
+      <caption>data (read-only, DataIF · 1 Hz)</caption>
+      <tr><th>name</th><th>type</th><th>value</th></tr>
+      <tr><td>demo_bool_data</td><td class="type">Bool</td><td><span class="sw on">● true</span></td></tr>
+      <tr><td>demo_bools_data</td><td class="type">Bools</td><td class="val">[true, false]</td></tr>
+      <tr><td>demo_string_data</td><td class="type">String</td><td class="val">14:22:07</td></tr>
+      <tr><td>demo_strings_data</td><td class="type">Strings</td><td class="val">[14:22:07, tick 812]</td></tr>
+      <tr><td>demo_int_data</td><td class="type">Int</td><td class="val">812</td></tr>
+      <tr><td>demo_ints_data</td><td class="type">Ints</td><td class="val">[812, -812]</td></tr>
+      <tr><td>demo_float_data</td><td class="type">Float</td><td class="val">0.799</td></tr>
+      <tr><td>demo_floats_data</td><td class="type">Floats</td><td class="val">[0.799, -0.799]</td></tr>
+    </table>
+
+    <div class="foot">One row per control/datum name, sourced 1:1 from <code>controls_name_list</code> / <code>data_name_list</code> — nothing hidden by default, matching every entry in <code>createControlsInitDict()</code> / <code>createDataInitDict()</code>. Row density trades the labeled Section/Label boxes of the current UI for scan-ability across all 18 items at once.</div>
+  </div>
+</div>

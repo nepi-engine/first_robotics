@@ -1,0 +1,84 @@
+<title>Concept 3 — Tabbed Groups</title>
+<meta charset="utf-8">
+<style>
+  :root { --grey1: #a5abb4; --grey0: #e1e6e9; --blue: #00a5ed; --green: #228b22; --ink: #1c2024; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: Arial, Helvetica, sans-serif; color: var(--ink); background: #fff; font-size: 14px; }
+  .page { display: flex; padding: 16px; gap: 16px; }
+  .viewer { flex: 3; aspect-ratio: 16/9; background: repeating-linear-gradient(45deg,#d8d8d8,#d8d8d8 10px,#cfcfcf 10px,#cfcfcf 20px); display: flex; align-items: center; justify-content: center; color: #666; }
+  .panel { flex: 2; border: 1px solid var(--grey1); }
+  .tabbar { display: flex; border-bottom: 1px solid var(--grey1); }
+  .tab { flex: 1; text-align: center; padding: 10px 4px; cursor: pointer; font-size: 12px; text-transform: uppercase; letter-spacing: .03em; color: #666; border-right: 1px solid var(--grey1); }
+  .tab:last-child { border-right: none; }
+  .tab.active { background: var(--blue); color: #fff; font-weight: bold; }
+  .tabpage { display: none; padding: 16px; }
+  .tabpage.active { display: block; }
+  .row { display: flex; align-items: center; margin-top: 14px; }
+  .row:first-child { margin-top: 0; }
+  .row label { flex: 1; }
+  .row .ctl { flex: 1; text-align: right; }
+  select, input[type=text] { width: 100%; padding: 4px 6px; border: 1px solid var(--grey1); font-family: inherit; }
+  input[disabled] { background: var(--grey0); }
+  .toggle { width: 38px; height: 21px; border-radius: 11px; background: var(--grey1); display: inline-block; position: relative; }
+  .toggle.on { background: var(--blue); }
+  .toggle .thumb { width: 17px; height: 17px; border-radius: 50%; background: #fff; position: absolute; top: 2px; left: 2px; }
+  .toggle.on .thumb { left: 19px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--grey1); display: inline-block; margin-right: 6px; }
+  .dot.on { background: var(--green); }
+  .btn { border: 1px solid #888; background: var(--grey0); padding: 5px 14px; cursor: pointer; }
+  .multi { display: flex; gap: 12px; }
+  .multi > div { text-align: center; font-size: 11px; }
+  .note { font-size: 12px; color: #666; margin-top: 14px; border-top: 1px dashed var(--grey1); padding-top: 10px; }
+</style>
+
+<div class="page">
+  <div class="viewer">Image Viewer</div>
+
+  <div class="panel">
+    <div class="tabbar">
+      <div class="tab active" onclick="showTab(0)">Choices</div>
+      <div class="tab" onclick="showTab(1)">Actions</div>
+      <div class="tab" onclick="showTab(2)">Values</div>
+      <div class="tab" onclick="showTab(3)">Data</div>
+    </div>
+
+    <div class="tabpage active" id="tab0">
+      <div class="row"><label>Demo Menu</label><div class="ctl"><select><option>Off</option><option selected>Low</option><option>High</option></select></div></div>
+      <div class="row"><label>Demo Selection</label><div class="ctl"><select><option>Alpha</option><option selected>Bravo</option><option>Charlie</option></select></div></div>
+      <div class="row"><label>Demo Selections</label><div class="ctl multi">
+        <div>Red<div class="toggle on" style="margin-top:4px"><div class="thumb"></div></div></div>
+        <div>Green<div class="toggle" style="margin-top:4px"><div class="thumb"></div></div></div>
+        <div>Blue<div class="toggle on" style="margin-top:4px"><div class="thumb"></div></div></div>
+      </div></div>
+      <div class="note">Grouped by interaction style, not by original dict order — <code>createControlsInitDict()</code> is unchanged; this tab set is purely a RUI-side regrouping.</div>
+    </div>
+
+    <div class="tabpage" id="tab1">
+      <div class="row"><label>Demo Bool</label><div class="ctl"><div class="toggle on"><div class="thumb"></div></div></div></div>
+      <div class="row"><label>Demo Trigger</label><div class="ctl"><button class="btn">Trigger</button></div></div>
+      <div class="note">A separate "Actions" tab is the natural home for the fix to the broken Trigger control (README's Known Rough Edges): once it uses the plain-app-topic pattern from <code>nepi_app_stereo_cam</code>, it lives here alongside Bool.</div>
+    </div>
+
+    <div class="tabpage" id="tab2">
+      <div class="row"><label>Demo String</label><div class="ctl"><input type="text" value="hello nepi"></div></div>
+      <div class="row"><label>Demo Int</label><div class="ctl"><input type="text" value="5"></div></div>
+      <div class="row"><label>Demo Float</label><div class="ctl"><input type="text" value="2.5"></div></div>
+      <div class="row"><label>Demo Float Slider</label><div class="ctl"><input type="range" min="0" max="100" value="50" style="width:100%"></div></div>
+    </div>
+
+    <div class="tabpage" id="tab3">
+      <div class="row"><label>Demo Bool</label><div class="ctl"><span class="dot on"></span>true</div></div>
+      <div class="row"><label>Demo Int</label><div class="ctl"><input type="text" disabled value="812"></div></div>
+      <div class="row"><label>Demo Float</label><div class="ctl"><input type="text" disabled value="0.799"></div></div>
+      <div class="row"><label>Demo String</label><div class="ctl"><input type="text" disabled value="14:22:07"></div></div>
+      <div class="note">Data Sandbox becomes its own tab instead of a second stacked Section — same read-only DataIF feed, no writer added.</div>
+    </div>
+  </div>
+</div>
+
+<script>
+  function showTab(i) {
+    document.querySelectorAll('.tab').forEach((t, idx) => t.classList.toggle('active', idx === i))
+    document.querySelectorAll('.tabpage').forEach((p, idx) => p.classList.toggle('active', idx === i))
+  }
+</script>

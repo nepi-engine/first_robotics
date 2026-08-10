@@ -1,0 +1,74 @@
+<title>Concept 4 — Mobile Accordion</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { --grey1: #a5abb4; --grey0: #f0f2f3; --blue: #00a5ed; --green: #228b22; --ink: #1c2024; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, Arial, sans-serif; color: var(--ink); background: #f7f8f9; font-size: 15px; }
+  .frame { max-width: 420px; margin: 0 auto; background: #fff; min-height: 100vh; box-shadow: 0 0 0 1px var(--grey1); }
+  .viewer { width: 100%; aspect-ratio: 4/3; background: repeating-linear-gradient(45deg,#e2e5e7,#e2e5e7 10px,#d7dadc 10px,#d7dadc 20px); display: flex; align-items: center; justify-content: center; color: #777; }
+  .group { border-bottom: 1px solid var(--grey1); }
+  .group-head { display: flex; justify-content: space-between; align-items: center; padding: 14px 16px; cursor: pointer; }
+  .group-head .name { font-weight: 600; }
+  .group-head .chip { font-size: 13px; color: #666; }
+  .group-head .arrow { transition: transform .15s; color: #999; }
+  .group.open .arrow { transform: rotate(90deg); }
+  .group-body { display: none; padding: 0 16px 14px; }
+  .group.open .group-body { display: block; }
+  .row { display: flex; align-items: center; padding: 8px 0; border-top: 1px solid #eee; }
+  .row:first-child { border-top: none; }
+  .row label { flex: 1; font-size: 14px; }
+  .row .ctl { flex: 1; text-align: right; }
+  select, input[type=text] { width: 100%; padding: 8px; border: 1px solid var(--grey1); border-radius: 8px; font-size: 14px; font-family: inherit; }
+  input[disabled] { background: var(--grey0); }
+  .toggle { width: 42px; height: 24px; border-radius: 12px; background: var(--grey1); display: inline-block; position: relative; }
+  .toggle.on { background: var(--blue); }
+  .toggle .thumb { width: 20px; height: 20px; border-radius: 50%; background: #fff; position: absolute; top: 2px; left: 2px; }
+  .toggle.on .thumb { left: 20px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--grey1); display: inline-block; margin-right: 6px; }
+  .dot.on { background: var(--green); }
+  .btn { border: none; background: var(--blue); color: #fff; border-radius: 8px; padding: 8px 16px; font-size: 14px; }
+  .note { font-size: 12px; color: #777; padding: 12px 16px; }
+</style>
+
+<div class="frame">
+  <div class="viewer">Image Viewer</div>
+
+  <div class="group open" onclick="this.classList.toggle('open')">
+    <div class="group-head"><span class="name">Choices</span><span class="chip">Low · Bravo · 2 sel</span><span class="arrow">›</span></div>
+    <div class="group-body" onclick="event.stopPropagation()">
+      <div class="row"><label>Demo Menu</label><div class="ctl"><select><option>Off</option><option selected>Low</option><option>High</option></select></div></div>
+      <div class="row"><label>Demo Selection</label><div class="ctl"><select><option>Alpha</option><option selected>Bravo</option><option>Charlie</option></select></div></div>
+    </div>
+  </div>
+
+  <div class="group" onclick="this.classList.toggle('open')">
+    <div class="group-head"><span class="name">Toggles &amp; Actions</span><span class="chip">Bool: on</span><span class="arrow">›</span></div>
+    <div class="group-body" onclick="event.stopPropagation()">
+      <div class="row"><label>Demo Bool</label><div class="ctl"><div class="toggle on"><div class="thumb"></div></div></div></div>
+      <div class="row"><label>Demo Trigger</label><div class="ctl"><button class="btn">Fire</button></div></div>
+    </div>
+  </div>
+
+  <div class="group" onclick="this.classList.toggle('open')">
+    <div class="group-head"><span class="name">Values</span><span class="chip">3 set</span><span class="arrow">›</span></div>
+    <div class="group-body" onclick="event.stopPropagation()">
+      <div class="row"><label>Demo String</label><div class="ctl"><input type="text" value="hello nepi"></div></div>
+      <div class="row"><label>Demo Int</label><div class="ctl"><input type="text" value="5"></div></div>
+      <div class="row"><label>Demo Float</label><div class="ctl"><input type="text" value="2.5"></div></div>
+      <div class="row"><label>Demo Float Slider</label><div class="ctl" style="text-align:left"><input type="range" min="0" max="100" value="50" style="width:100%"></div></div>
+    </div>
+  </div>
+
+  <div class="group" onclick="this.classList.toggle('open')">
+    <div class="group-head"><span class="name">Live Data</span><span class="chip">812 · 0.799</span><span class="arrow">›</span></div>
+    <div class="group-body" onclick="event.stopPropagation()">
+      <div class="row"><label>Demo Bool</label><div class="ctl"><span class="dot on"></span>true</div></div>
+      <div class="row"><label>Demo Int</label><div class="ctl"><input type="text" disabled value="812"></div></div>
+      <div class="row"><label>Demo Float</label><div class="ctl"><input type="text" disabled value="0.799"></div></div>
+      <div class="row"><label>Demo String</label><div class="ctl"><input type="text" disabled value="14:22:07"></div></div>
+    </div>
+  </div>
+
+  <div class="note">Each collapsed header shows a live-value chip built from the same status fields the expanded rows use, so an operator can glance at the page without opening a group. This extends the existing single global "Show Controls" / "Show Data" toggle already in <code>NepiAppControlsSandbox-Controls.js</code> / <code>-Data.js</code> into one toggle per group, for a phone/tablet-width viewport.</div>
+</div>
