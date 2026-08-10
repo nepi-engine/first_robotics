@@ -148,6 +148,10 @@ class NepiAppObstaclesControls extends Component {
   // Both lists come off the app status message, so the menu cannot drift from the
   // processes nepi_obstacles actually registers. The dropdown is disabled while the
   // node reports process_ready false, i.e. mid-reload.
+  //
+  // Carries no bold title Label of its own: render() puts this block and
+  // renderProcessControls() inside one "Obstacle Process" Section, and that
+  // Section's title is the heading. Only the per-widget "Process" Label remains.
   renderProcessSelector() {
     const status_msg = this.props.status_msg
     const available_processes = (status_msg != null && status_msg.available_processes != null &&
@@ -160,7 +164,6 @@ class NepiAppObstaclesControls extends Component {
     return (
       <React.Fragment>
 
-        <Label title={"Obstacle Process"} style={{fontWeight: 'bold'}} align={"left"} textAlign={"left"}/>
         <Label title={"Process"}>
           <Select
             id="set_selected_process"
@@ -198,8 +201,12 @@ class NepiAppObstaclesControls extends Component {
   // the other's status.
   //
   // allways_show_controls suppresses the component's own "Show Controls" toggle: a
-  // collapse toggle inside an already-labelled panel is noise, and the panel's bold
-  // Labels are the grouping affordance on this page.
+  // collapse toggle inside an already-labelled panel is noise, and the enclosing
+  // "Obstacle Process" Section is the grouping affordance. make_section={false}
+  // keeps Nepi_IF_Controls from drawing a bordered box of its own inside that one.
+  //
+  // The bold Label below stays even though the Section is titled: it carries the
+  // LIVE process name, which the Section title does not.
   renderProcessControls(divider) {
     const namespace = this.getActiveControlsNamespace()
     if (namespace == null) {
@@ -259,17 +266,32 @@ class NepiAppObstaclesControls extends Component {
 
   // The process selector and the active process's controls sit OUTSIDE the
   // Connections box in NepiAppObstacles-Data.js -- they are this app's own
-  // controls, not source connections -- and the Example Controls box sits at the
-  // bottom of the column, below everything else the page puts there.
+  // controls, not source connections -- in a bordered "Obstacle Process" Section
+  // of their own, and the Example Controls box sits at the bottom of the column,
+  // below everything else the page puts there.
+  //
+  // ONE Section around both, not two: which process is running and what that
+  // process's controls are is a single operator concern. The divider still
+  // separates them, now inside that box. Example Controls keeps its own separate
+  // Section -- it belongs to no process.
+  //
+  // The Section renders whether or not renderProcessControls() returns null, so
+  // with no active controls namespace the box still shows the selector and the
+  // Reload Processes button. That is the point: the reload button is how the
+  // operator recovers from exactly that state.
   render() {
     const divider = <div style={{ borderTop: "1px solid #ffffff", marginTop: Styles.vars.spacing.medium, marginBottom: Styles.vars.spacing.xs }}/>
 
     return (
       <React.Fragment>
 
-        {this.renderProcessSelector()}
+        <Section title={"Obstacle Process"}>
 
-        {this.renderProcessControls(divider)}
+          {this.renderProcessSelector()}
+
+          {this.renderProcessControls(divider)}
+
+        </Section>
 
         {this.renderExampleControls()}
 
