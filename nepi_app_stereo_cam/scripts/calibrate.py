@@ -504,6 +504,49 @@ def solve_stereo(objpoints, imgpoints_l, imgpoints_r, image_size, out_path, alph
         flags=cv2.CALIB_FIX_INTRINSIC
     )
 
+    # WHICH CAMERA IS ACTUALLY ON THE LEFT.
+    #
+    # stereoCalibrate returns the transform FROM camera 1 INTO camera 2, so a rig
+    # whose second camera really is to the right of the first comes back with T[0]
+    # NEGATIVE: camera 1's origin sits at +baseline along camera 2's x axis. A
+    # POSITIVE T[0] means the two image streams are the other way round -- the RUI's
+    # "Left Camera" selector is pointed at the physically RIGHT camera.
+    #
+    # That mistake is invisible at every point it would normally be caught.
+    # Rectification still puts matching features on the same row, so the epipolar RMS
+    # below comes back excellent; the baseline is reported through abs(), so it looks
+    # right too; both mono RMS values are fine because each camera is individually
+    # well calibrated. What it breaks is the only thing that matters: block matching
+    # searches disparities from min_disparity UPWARD, and a reversed pair has
+    # NEGATIVE disparity at every pixel, so nothing matches anywhere and the depth
+    # map comes out completely empty -- a calibration that reports success and
+    # produces no depth.
+    #
+    # Corrected here rather than refused. The captures are good data about a rig that
+    # was described backwards, and inverting the transform (X1 = R^T X2 - R^T T)
+    # re-solves it exactly, with no recapture: everything below -- rectification, the
+    # maps, the epipolar error, the baseline -- is then computed on the TRUE
+    # left/right ordering. The .npz records swap_lr so Rectifier hands the two live
+    # streams over in the order the maps were built for, and the solve message says
+    # what happened, because the selectors are still worth putting right.
+    #
+    # rms_left / rms_right in the returned dict deliberately do NOT follow the swap.
+    # They are how the operator is told which camera has bad corners, and the only
+    # handle they have on a camera is the selector it is plugged into, so those two
+    # stay named after the SELECTED streams.
+    swap_lr = bool(float(T.ravel()[0]) > 0.0)
+    if swap_lr:
+        R, T = R.T, -R.T.dot(T)
+        KL, DL, KR, DR = KR, DR, KL, DL
+        imgpoints_l, imgpoints_r = imgpoints_r, imgpoints_l
+
+    # Block matching searches along image ROWS, so it can only measure a rig whose
+    # cameras are separated horizontally. A pair mounted one above the other
+    # rectifies and solves perfectly well and then yields no depth at all, for the
+    # same reason a reversed pair does -- reported so that outcome has a name.
+    baseline_vec = np.abs(T.ravel())
+    horizontal_rig = bool(baseline_vec[0] >= max(baseline_vec[1], baseline_vec[2]))
+
     # rectification transforms:
     R1, R2, P1, P2, Q, roi1, roi2 = cv2.stereoRectify(
         KL, DL, KR, DR, image_size, R, T,
@@ -529,6 +572,9 @@ def solve_stereo(objpoints, imgpoints_l, imgpoints_r, image_size, out_path, alph
     np.savez(out_path,
              map1x=map1x, map1y=map1y, map2x=map2x, map2y=map2y,
              Q=Q, focal_length_px=focal_length_px, baseline_mm=baseline_mm,
+             # Which live stream each map belongs to. Rectifier reads this; without
+             # it the maps of a corrected solve would be applied to the wrong frames.
+             swap_lr=np.array(swap_lr),
              # Kept so the maps can be rebuilt at another alpha, and for debug.
              KL=KL, DL=DL, KR=KR, DR=DR, R=R, T=T,
              R1=R1, R2=R2, P1=P1, P2=P2,
@@ -545,6 +591,8 @@ def solve_stereo(objpoints, imgpoints_l, imgpoints_r, image_size, out_path, alph
         "baseline_mm": baseline_mm,
         "epipolar_rms_px": epipolar_rms,
         "good": bool(epipolar_rms < GOOD_EPIPOLAR_RMS_PX),
+        "swap_lr": swap_lr,
+        "horizontal_rig": horizontal_rig,
         "out_path": out_path,
     }
 
@@ -704,7 +752,13 @@ class StereoCalibrator:
         try:
             info = solve_stereo(self._objpoints, self._imgpoints_l, self._imgpoints_r,
                                 self.image_size, out_path, alpha=alpha)
-        except (ValueError, cv2.error) as exc:
+        # OSError belongs here with the solve errors: the solve ENDS in np.savez, so
+        # an unwritable calibration folder (a path typed into the RUI, a read-only
+        # mount) fails after all the work is done. Without it that failure escapes
+        # into the ROS callback, where it takes down the press without ever reaching
+        # calib_message -- the panel keeps showing the previous result and the button
+        # reads as having done nothing.
+        except (ValueError, cv2.error, OSError) as exc:
             return False, f"calibration failed: {str(exc).splitlines()[-1]}", None
         quality = "good" if info["good"] else "TOO HIGH -- recapture"
         # The per-camera RMS values separate the two failures that a single
@@ -720,6 +774,16 @@ class StereoCalibrator:
                    f"epipolar {info['epipolar_rms_px']:.3f} px ({quality}), "
                    f"f {info['focal_length_px']:.1f} px, "
                    f"baseline {info['baseline_mm']:.1f} mm")
+        # Both of these produce a calibration that reports success and a depth map
+        # with nothing in it, so neither can be left to the numbers above to imply.
+        if info["swap_lr"]:
+            message += ("; NOTE the Left/Right camera selections are REVERSED -- "
+                        "corrected in this calibration, but swap the two selectors "
+                        "so the raw viewers and any future solve match the rig")
+        if not info["horizontal_rig"]:
+            message += ("; WARNING the two cameras are not separated HORIZONTALLY -- "
+                        "block matching searches along image rows, so a stacked pair "
+                        "yields no depth; remount them side by side")
         return True, message, info
 
 
@@ -765,6 +829,12 @@ class Rectifier:
         # These two feed stereo_library settings so depth uses true geometry.
         self.focal_length_px = float(data["focal_length_px"])
         self.baseline_mm = float(data["baseline_mm"])
+        # True when solve_stereo found the two camera selections reversed and solved
+        # the TRUE left/right ordering instead (see the swap_lr comment there). The
+        # maps then belong to the opposite streams to the ones the node calls left
+        # and right, so rectify() hands them over swapped. Absent in a .npz written
+        # before this existed, which by definition was not corrected -- default False.
+        self.swap_lr = bool(data["swap_lr"]) if "swap_lr" in data.files else False
         # (w, h) the maps were built for; raw frames must match this.
         self.image_size = (int(self.map1x.shape[1]), int(self.map1x.shape[0]))
         self.calib_path = calib_path
@@ -776,7 +846,14 @@ class Rectifier:
         return (image.shape[1], image.shape[0]) == self.image_size
 
     def rectify(self, left_image, right_image):
-        """Return (rect_left, rect_right), ready for compute_depth_map()."""
+        """Return (rect_left, rect_right), ready for compute_depth_map().
+
+        The returned pair is always in TRUE left/right order -- the order block
+        matching needs to produce positive disparity -- whichever way round the two
+        camera selections happen to be (see swap_lr).
+        """
+        if self.swap_lr:
+            left_image, right_image = right_image, left_image
         left = cv2.remap(left_image, self.map1x, self.map1y, cv2.INTER_LINEAR)
         right = cv2.remap(right_image, self.map2x, self.map2y, cv2.INTER_LINEAR)
         return left, right

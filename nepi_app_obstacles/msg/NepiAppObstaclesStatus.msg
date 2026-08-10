@@ -10,29 +10,68 @@ string selected_option
 float32 value
 
 #################
-# Operator Selections
+# Operator Selection
 #################
-# The only three topics an operator picks on this app's RUI page. Each is the
-# selected_topic of one Nepi_IF_Connect* selector, or "None" when nothing is
-# connected.
+# The ONE topic an operator picks on this app's RUI page. It is the
+# selected_topic of the app's single Nepi_IF_Connect* selector, or "None" when
+# nothing is connected.
 
 # Selected depth map source topic, or "None" when nothing is connected
 string depth_map_topic
-# Selected targets source topic, or "None" when nothing is connected
+
+#################
+# Derived Source Topics
+#################
+# The targets and NavPose sources are DERIVED from the depth map selected above,
+# not selected. A targets source is a property of the image a detector ran on and
+# a NavPose is a property of the depth map's producer, so a selector for either
+# could only offer a way to point this app at a source belonging to a different
+# camera than the depth map it is fusing with.
+#
+# Neither field reports the connect IF's own selected_topic, and this is not a
+# style choice: ConnectNodeIF's discovery tick auto-selects available_topics[0]
+# whenever the current selection is "None" -- unconditionally, ignoring the
+# auto_select_enabled flag -- so a depth map with no targets source of its own
+# would otherwise be reported alongside some unrelated detector within a second.
+# What is reported is the derivation, and the node drives each connect IF to that
+# same topic through its normal set_selected_topic() path.
+
+# Targets source topic belonging to the depth map selected above: the AI
+# detector's targets product inside that depth map's sibling color image
+# namespace, <image_topic>/targets. "None" when nothing is connected, the depth
+# map reports no sibling color image, or no such targets topic has been
+# discovered -- which is the case when AI detection has not been run on this
+# depth map's color image. The RUI renders that "None" as a not-available message
+# with the Connected indicator off -- see obstacles_app_node.py getTargetsTopic()
 string targets_topic
-# Selected NavPose source topic, or "None" when nothing is connected
+# NavPose source topic belonging to the depth map selected above, read from that
+# depth map's DepthMapStatus.navpose_topic and accepted only when a NavPose
+# source is actually publishing there. "None" when nothing is connected, the
+# depth map names no NavPose, or the named topic is not among the discovered
+# NavPose sources -- see obstacles_app_node.py getNavPoseTopic()
 string navpose_topic
+# True only while the app's own NavPose connect IF is subscribed to the topic
+# named above AND that subscription is reporting connected. Named-but-silent is
+# the case this field exists to express: navpose_topic can name a real topic that
+# is advertised and never published -- which is exactly what
+# nepi_app_file_pub_depthmap did before it gained a NavPose source -- and a name
+# alone tells an operator nothing about whether data is arriving. The IF's own
+# connected flag is not the answer by itself either, for the reason given on
+# applyDerivedNavPoseSelection(): ConnectNodeIF auto-selects an unrelated source
+# when the derivation is "None" and then reports itself connected to that one, so
+# the selection is checked against the derivation first -- see
+# obstacles_app_node.py getNavPoseConnected()
+bool navpose_connected
 
 #################
 # Derived Image Topics
 #################
-# Every image this app reports is DERIVED from one of the selections above and
-# never selected directly -- there is no image selector on the page. Each is
-# read off the selected source's own live status message, is rejected unless
-# that status belongs to the currently selected source, and is "None" whenever
-# the derivation cannot name a real topic. The RUI mounts a viewer only on a
-# topic that is not "None", so "None" means the viewer stays unmounted rather
-# than mounting a dead stream.
+# Every image this app reports is DERIVED from the selection above and never
+# selected directly -- there is no image selector on the page. Each is read off
+# its source's own live status message, is rejected unless that status belongs to
+# the source currently derived, and is "None" whenever the derivation cannot name
+# a real topic. The RUI mounts a viewer only on a topic that is not "None", so
+# "None" means the viewer stays unmounted rather than mounting a dead stream.
 
 # Depth map image topic belonging to the depth map selected above. Derived from
 # that depth map's DepthMapStatus: image_topic when it resolves under the
@@ -50,7 +89,7 @@ string depth_map_image_topic
 # image resolves under the depth map namespace and so is a depth map image
 # rather than a color image -- see obstacles_app_node.py getColorImageTopic()
 string image_topic
-# Targets image topic belonging to the targets source selected above. Derived
+# Targets image topic belonging to the targets source derived above. Derived
 # from that source's TargetingStatus: the targets overlay image the detector
 # image pub node publishes as a sibling of the detections image named in
 # ProcessStatus.imaging_pub_topics. "None" when nothing is connected, the

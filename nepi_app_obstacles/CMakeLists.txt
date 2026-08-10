@@ -9,14 +9,26 @@ License: 3-clause BSD, see https://opensource.org/licenses/BSD-3-Clause
 cmake_minimum_required(VERSION 3.5)
 project(nepi_app_obstacles)
 
+# sensor_msgs, geometry_msgs, and nav_msgs are not used by this package's own
+# messages. They are nepi_interfaces' MSG_DEP_SET, and genmsg resolves a message
+# dependency's full dep set through this find_package, so listing nepi_interfaces
+# in generate_messages() below without them fails the build with
+# "Messages depends on unknown pkg: sensor_msgs". Same pattern as
+# nepi_app_sim_connector.
 find_package(catkin REQUIRED COMPONENTS
   message_generation
   std_msgs
+  sensor_msgs
+  geometry_msgs
+  nav_msgs
+  nepi_interfaces
 )
 
 ## Generate messages in the 'msg' folder
 add_message_files(FILES
   NepiAppObstaclesStatus.msg
+  Obstacle.msg
+  Obstacles.msg
 )
 
 ## Generate services in the 'srv' folder
@@ -28,11 +40,13 @@ add_message_files(FILES
 generate_messages(
   DEPENDENCIES
   std_msgs
+  nepi_interfaces
 )
 
 catkin_package(
   CATKIN_DEPENDS
   message_runtime
+  nepi_interfaces
 )
 
 include_directories(
@@ -41,6 +55,7 @@ include_directories(
 
 catkin_install_python(PROGRAMS
   scripts/obstacles_app_node.py
+  scripts/nepi_obstacles.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 
