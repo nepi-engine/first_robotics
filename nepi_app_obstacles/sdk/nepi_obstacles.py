@@ -42,7 +42,7 @@ logger = Logger(log_name = log_name)
 # raises NameError on an out-of-bounds Float default and the bare except around
 # the per-control body silently DROPS the control, so an out-of-bounds default
 # does not clamp -- it makes the control disappear.
-PROCESS_CONTROLS = {
+PROCESS_CONTROLS_DICT = {
 
     'min_range_m': {
         'type': 'Float', 'default': 0.5, 'bounds': [0.1, 100.0], 'round_value': 2,
@@ -93,13 +93,14 @@ PROCESS_CONTROLS = {
 # velocity needs the previous cycle's obstacle centroids, and a module-level
 # store is how the process functions in this SDK keep that between calls. One
 # node process owns one obstacles process, so there is no cross-process sharing.
-PROCESS_DATA = {
+PROCESS_DATA_DICT = {
     # Required Fields
     'data_time': 0.0,
     'process_time': 0.0,
     # source topic -> {'time': float, 'obstacles': [ {'uid','cx','cy'} ]}
     'last_cycle': {},
     'next_id': 0,
+    # Add Fields
 }
 
 # An obstacle centroid within this fraction of the image diagonal of a previous
@@ -119,17 +120,10 @@ INT_FIELD_UNSET = -999
 #########################
 
 
-def get_process_controls():
-    """Return a copy of this module's control definition dictionary.
-
-    Returns:
-        dict: The nepi_controls init-dict form of every control this module's
-            process function reads. Callers hand this to a ControlsIF.
-    """
-    return copy.deepcopy(PROCESS_CONTROLS)
 
 
-def process_depth_map(np_depth_map, status_dict, navpose_dict, controls_dict):
+
+def process_data(np_depth_map, status_dict, navpose_dict, data_dict, controls_dict):
     """Segment a depth map into ground and obstacles and locate each obstacle.
 
     Range-gates the depth map, converts every remaining return to a height in a
@@ -146,7 +140,7 @@ def process_depth_map(np_depth_map, status_dict, navpose_dict, controls_dict):
         navpose_dict (dict): The source's NavPose as a dictionary. Read for
             'has_orientation', 'roll_deg' and 'pitch_deg'.
         controls_dict (dict): Live nepi_controls controls dictionary built from
-            PROCESS_CONTROLS.
+            PROCESS_CONTROLS_DICT.
 
     Returns:
         list: obstacles_dict_list -- one dict per obstacle, ordered largest
@@ -238,7 +232,7 @@ def process_depth_map(np_depth_map, status_dict, navpose_dict, controls_dict):
         ##############################
         # Build one entry per component
         timestamp = nepi_utils.get_time()
-        last_cycle = PROCESS_DATA['last_cycle'].get(source_topic, None)
+        last_cycle = PROCESS_DATA_DICT['last_cycle'].get(source_topic, None)
         match_dist = TRACK_MATCH_RATIO * math.sqrt(float(width_px) ** 2 + float(height_px) ** 2)
         delta_t = 0.0
         if last_cycle is not None:
@@ -271,26 +265,23 @@ def process_depth_map(np_depth_map, status_dict, navpose_dict, controls_dict):
         logger.log_warn("Failed to process depth map: " + str(e), throttle_s = 5.0)
         return [], None, None
 
-    PROCESS_DATA['data_time'] = start_time
-    PROCESS_DATA['process_time'] = nepi_utils.get_time() - start_time
+    data_dict['data_time'] = start_time
+    data_dict['process_time'] = nepi_utils.get_time() - start_time
 
-    return obstacles_dict_list, depth_map_ground, depth_map_obstacles
-
+    return obstacles_dict_list, depth_map_ground, depth_map_obstacles, data_dict
 
 #########################
-# Private Helpers
+# Process Helpers
 #########################
 
 
-def getControlValue(controls_dict, control_name, default_value):
-    if controls_dict is None:
-        return default_value
+
+
+def getControlValue(controls_dict, control_name):
     try:
         value = nepi_controls.get_control_value(controls_dict, control_name)
     except Exception:
         value = None
-    if value is None:
-        return default_value
     return value
 
 
@@ -446,8 +437,8 @@ def matchPrevious(obstacle_dict, last_cycle, match_dist, delta_t):
                 best = prev
 
     if best is None:
-        uid = 'obstacle_' + str(PROCESS_DATA['next_id'])
-        PROCESS_DATA['next_id'] = PROCESS_DATA['next_id'] + 1
+        uid = 'obstacle_' + str(PROCESS_DATA_DICT['next_id'])
+        PROCESS_DATA_DICT['next_id'] = PROCESS_DATA_DICT['next_id'] + 1
         return [uid, [0.0, 0.0, 0.0]]
 
     if delta_t > 0.001:
@@ -464,7 +455,28 @@ def getObstacleName(obstacle_dict):
 
 
 def recordCycle(source_topic, cycle_obstacles, timestamp):
-    PROCESS_DATA['last_cycle'][source_topic] = {
+    PROCESS_DATA_DICT['last_cycle'][source_topic] = {
         'time': timestamp,
         'obstacles': cycle_obstacles,
     }
+
+
+
+def init_process_controls_dict():
+    """Return a copy of this module's control definition dictionary.
+
+    Returns:
+        dict: The nepi_controls init-dict form of every control this module's
+            process function reads. Callers hand this to a ControlsIF.
+    """
+    return copy.deepcopy(PROCESS_CONTROLS_DICT)
+
+
+def init_process_data_dict():
+    """Return a copy of this module's control definition dictionary.
+
+    Returns:
+        dict: The nepi_controls init-dict form of every control this module's
+            process function reads. Callers hand this to a ControlsIF.
+    """
+    return copy.deepcopy(PROCESS_CONTROLS_DICT)

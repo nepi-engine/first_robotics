@@ -123,6 +123,7 @@ class ObstaclesIF:
     get_source_topic = "None"
     got_source_topic = None
 
+    data_dict = dict()
     controls_dict = dict()
 
     first_process_complete = False
@@ -193,6 +194,7 @@ class ObstaclesIF:
     def __init__(self,
                 namespace,
                 description,
+                data_dict,
                 controls_dict,
                 processDataFunction,
                 enable_image_pub = True,
@@ -603,6 +605,8 @@ class ObstaclesIF:
                         log_name_list = self.log_name_list,
                         msg_if = self.msg_if)
         self.controls_if.wait_for_controls_ready()
+
+        self.data_dict = copy.deepcopy(data_dict)
 
         # Setup States IF
         self.states_if = StatesIF(
@@ -1398,6 +1402,7 @@ class ObstaclesIF:
 
                 controls_dict = self.get_controls_dict()
 
+
                 ##############################
                 # Process Obstacles
                 obstacles_dict_list = []
@@ -1406,9 +1411,10 @@ class ObstaclesIF:
                 start_process_time = nepi_utils.get_time()
                 obstacles_timestamp = nepi_utils.get_time()
                 try:
-                    [obstacles_dict_list, depth_map_ground, depth_map_obstacles] = self.processData(np_depth_map,
+                    [obstacles_dict_list, depth_map_ground, depth_map_obstacles, self.data_dict] = self.processData(np_depth_map,
                                                                                                     status_dict,
                                                                                                     navpose_dict,
+                                                                                                    self.data_dict,
                                                                                                     controls_dict)
                     self.first_process_complete = True
                 except Exception as e:
