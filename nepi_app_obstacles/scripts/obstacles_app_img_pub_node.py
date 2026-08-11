@@ -50,16 +50,46 @@ OBSTACLE_BOX_COLOR = (0, 255, 0)
 GROUND_OVERLAY_RATIO = 0.4
 OBSTACLES_OVERLAY_RATIO = 0.6
 
+# Colour painted over every non-member pixel of a segmentation render, BGR.
+# The platform colorizer folds NaN onto the max-range colour, which is the same
+# dark blue a genuine far return gets -- so "not in this segment" would read as
+# "at the far end of the range". Black is outside the jet colormap entirely, so
+# the segment boundary is unambiguous.
+SEGMENT_NONE_COLOR = (0, 0, 0)
+
 
 class ObstaclesImgPub:
 
-    DATA_PRODUCTS = ['obstacles_image']
     OBSTACLES_IMG_DATA_PRODUCT = 'obstacles_image'
+    GROUND_MAP_IMG_DATA_PRODUCT = 'ground_depth_map_image'
+    OBSTACLES_MAP_IMG_DATA_PRODUCT = 'obstacles_depth_map_image'
+
+    # The two depth map segmentation image products. Each entry drives one raw
+    # publisher, one ColorImageIF and one img_node_dict key pair, created and
+    # purged with its source exactly like obstacles_image. Named <range
+    # product>_image after the platform convention DepthMapIF sets: the raw
+    # 32FC1 range data is <name>, its colourized viewable render is <name>_image.
+    SEGMENT_IMG_PRODUCTS = [
+        {'data_product': GROUND_MAP_IMG_DATA_PRODUCT,
+         'map_key': 'depth_map_ground',
+         'if_key': 'ground_img_if',
+         'pub_key': 'ground_img_pub'},
+        {'data_product': OBSTACLES_MAP_IMG_DATA_PRODUCT,
+         'map_key': 'depth_map_obstacles',
+         'if_key': 'obstacles_map_img_if',
+         'pub_key': 'obstacles_map_img_pub'},
+    ]
+
+    DATA_PRODUCTS = [OBSTACLES_IMG_DATA_PRODUCT,
+                     GROUND_MAP_IMG_DATA_PRODUCT,
+                     OBSTACLES_MAP_IMG_DATA_PRODUCT]
 
     # Never subscribe to our own overlay outputs as input image sources; skip
     # these product basenames even if the parent process's selected_sources
     # lists them (they resolve as real topics under the image namespace).
-    OUTPUT_IMG_PRODUCTS = [OBSTACLES_IMG_DATA_PRODUCT]
+    OUTPUT_IMG_PRODUCTS = [OBSTACLES_IMG_DATA_PRODUCT,
+                           GROUND_MAP_IMG_DATA_PRODUCT,
+                           OBSTACLES_MAP_IMG_DATA_PRODUCT]
 
     node_if = None
     save_data_if = None
@@ -265,6 +295,13 @@ class ObstaclesImgPub:
         img_info_dict['depth_map_obstacles'] = None
         img_info_dict['img_stamp'] = 0
 
+        # One "first publish logged" flag per segmentation product, keyed by
+        # data product name, so each new topic announces itself once the way
+        # obstacles_image does through img_published.
+        img_info_dict['segment_img_published'] = dict()
+        for product in self.SEGMENT_IMG_PRODUCTS:
+            img_info_dict['segment_img_published'][product['data_product']] = False
+
         img_info_dict['last_img'] = None
         return img_info_dict
 
@@ -334,11 +371,18 @@ class ObstaclesImgPub:
             self.img_node_lock.acquire()
             if source_topic in self.img_node_dict.keys():
                 self.img_node_dict[source_topic]['img_pub'] = nepi_sdk.create_publisher(img_pub_topic, Image, queue_size = 1, log_name_list = [])
+                for product in self.SEGMENT_IMG_PRODUCTS:
+                    segment_pub_topic = os.path.join(pub_namespace, product['data_product'])
+                    self.img_node_dict[source_topic][product['pub_key']] = nepi_sdk.create_publisher(segment_pub_topic, Image, queue_size = 1, log_name_list = [])
                 nepi_sdk.sleep(1)
                 self.img_node_dict[source_topic]['img_sub'] = nepi_sdk.create_subscriber(source_topic, Image, self.imageCb, queue_size = 1, callback_args = (source_topic), log_name_list = [])
                 img_status_topic = nepi_sdk.create_namespace(source_topic, 'status')
                 self.img_node_dict[source_topic]['img_status_sub'] = nepi_sdk.create_subscriber(img_status_topic, ImageStatus, self.imageStatusCb, queue_size = 1, callback_args = (source_topic), log_name_list = [])
                 self.img_node_dict[source_topic]['img_if'].register_pubs()
+                for product in self.SEGMENT_IMG_PRODUCTS:
+                    segment_if = self.img_node_dict[source_topic][product['if_key']]
+                    if segment_if is not None:
+                        segment_if.register_pubs()
             self.img_node_lock.release()
             self.imgs_info_lock.acquire()
             self.sources_info_dict[source_topic]['active'] = True
@@ -367,6 +411,29 @@ class ObstaclesImgPub:
                         log_name_list = [],
                         msg_if = self.msg_if)
 
+        # Create the two segmentation image publishers beside the overlay one.
+        # Same ColorImageIF pattern, same save_data_if, same pub_namespace --
+        # only the data product name differs, so all three appear and disappear
+        # together with their source.
+        segment_nodes_dict = dict()
+        for product in self.SEGMENT_IMG_PRODUCTS:
+            data_product = product['data_product']
+            segment_pub_topic = os.path.join(pub_namespace, data_product)
+            self.msg_if.pub_info('Publishing image ' + source_topic + ' on namespace: ' + segment_pub_topic)
+            segment_nodes_dict[product['pub_key']] = nepi_sdk.create_publisher(segment_pub_topic, Image, queue_size = 1, log_name_list = [])
+            segment_nodes_dict[product['if_key']] = ColorImageIF(namespace = pub_namespace,
+                            data_product = data_product,
+                            data_source_description = 'image',
+                            data_ref_description = 'image',
+                            perspective = 'pov',
+                            save_data_if = self.save_data_if,
+                            init_overlay_text_list = [],
+                            live_adjustments_disabled = True,
+                            aspect_adjustment_disabled = True,
+                            log_name = data_product,
+                            log_name_list = [],
+                            msg_if = self.msg_if)
+
         self.img_node_lock.acquire()
         self.img_node_dict[source_topic] = {
                                         'img_sub': img_sub,
@@ -374,6 +441,7 @@ class ObstaclesImgPub:
                                         'img_pub': img_pub,
                                         'img_if': img_if,
                                         }
+        self.img_node_dict[source_topic].update(segment_nodes_dict)
         self.img_node_lock.release()
 
         self.imgs_info_lock.acquire()
@@ -400,10 +468,19 @@ class ObstaclesImgPub:
                 self.img_node_dict[source_topic]['img_pub'].unregister()
             if self.img_node_dict[source_topic]['img_if'] is not None:
                 self.img_node_dict[source_topic]['img_if'].unregister_pubs()
+            for product in self.SEGMENT_IMG_PRODUCTS:
+                segment_pub = self.img_node_dict[source_topic].get(product['pub_key'], None)
+                if segment_pub is not None:
+                    segment_pub.unregister()
+                segment_if = self.img_node_dict[source_topic].get(product['if_key'], None)
+                if segment_if is not None:
+                    segment_if.unregister_pubs()
             nepi_sdk.sleep(1)
             self.img_node_dict[source_topic]['img_sub'] = None
             self.img_node_dict[source_topic]['img_status_sub'] = None
             self.img_node_dict[source_topic]['img_pub'] = None
+            for product in self.SEGMENT_IMG_PRODUCTS:
+                self.img_node_dict[source_topic][product['pub_key']] = None
         self.img_node_lock.release()
 
         self.imgs_info_lock.acquire()
@@ -417,6 +494,24 @@ class ObstaclesImgPub:
         self.imgs_info_lock.release()
 
         return True
+
+    def needsImgCheck(self, source_topic, if_key = None):
+        # if_key None asks about every published product for this source; a key
+        # asks about that one. The IF's needs_data is a level flag its own timer
+        # refreshes from subscriber and save state, so polling it is free.
+        if_keys = [if_key]
+        if if_key is None:
+            if_keys = ['img_if'] + [p['if_key'] for p in self.SEGMENT_IMG_PRODUCTS]
+        needs_img = False
+        self.img_node_lock.acquire()
+        if source_topic in self.img_node_dict.keys():
+            for key in if_keys:
+                img_if = self.img_node_dict[source_topic].get(key, None)
+                if img_if is not None and img_if.needs_data_check() == True:
+                    needs_img = True
+                    break
+        self.img_node_lock.release()
+        return needs_img
 
     def imageStatusCb(self, status_msg, args):
         source_topic = args
@@ -440,13 +535,10 @@ class ObstaclesImgPub:
             self.msg_if.pub_info('Connected to image topic: ' + source_topic)
         self.sources_info_dict[source_topic]['img_connected'] = True
 
-        needs_img = False
-        self.img_node_lock.acquire()
-        if source_topic in self.img_node_dict.keys():
-            img_if = self.img_node_dict[source_topic]['img_if']
-            if img_if is not None:
-                needs_img = img_if.needs_data_check()
-        self.img_node_lock.release()
+        # Any of the three published products wanting data is enough to run the
+        # cycle; publishImgData then skips the individual products nobody is
+        # watching, so an unwatched product still costs nothing.
+        needs_img = self.needsImgCheck(source_topic)
 
         if needs_img == False or self.imaging_enabled == False:
             return
@@ -550,7 +642,81 @@ class ObstaclesImgPub:
             self.msg_if.pub_info('Published image topic: ' + os.path.join(namespace, self.OBSTACLES_IMG_DATA_PRODUCT))
         self.sources_info_dict[source_topic]['img_published'] = True
 
+        # The two segmentation renders ride the same cycle as the overlay, so
+        # they obey set_image_pub, max_image_pub_rate_hz, use_last_image and the
+        # process state gate without a second rate path of their own.
+        self.publishSegmentImgs(source_topic,
+                                depth_map_ground,
+                                depth_map_obstacles,
+                                width_deg = width_deg,
+                                height_deg = height_deg,
+                                timestamp = timestamp)
+
         return True
+
+    def publishSegmentImgs(self, source_topic,
+                                 depth_map_ground,
+                                 depth_map_obstacles,
+                                 width_deg = 100,
+                                 height_deg = 70,
+                                 timestamp = None):
+        if source_topic not in self.sources_info_dict.keys():
+            return False
+
+        depth_maps = {
+            'depth_map_ground': depth_map_ground,
+            'depth_map_obstacles': depth_map_obstacles,
+        }
+        namespace = self.sources_info_dict[source_topic]['pub_namespace']
+
+        for product in self.SEGMENT_IMG_PRODUCTS:
+            data_product = product['data_product']
+            if self.needsImgCheck(source_topic, if_key = product['if_key']) == False:
+                continue
+            # A map the process did not produce this cycle arrives as None -- the
+            # parent sends a 0x0 Image and getDepthMapFromMsg turns that back into
+            # None. Skip the publish rather than putting an empty image on the wire.
+            cv2_img = self.getSegmentColorImg(depth_maps.get(product['map_key'], None))
+            if cv2_img is None:
+                continue
+            self.publishImgData(source_topic,
+                                cv2_img,
+                                width_deg = width_deg,
+                                height_deg = height_deg,
+                                timestamp = timestamp,
+                                add_overlay_text_list = [],
+                                img_if_key = product['if_key'],
+                                img_pub_key = product['pub_key'])
+            if self.sources_info_dict[source_topic]['segment_img_published'].get(data_product, False) == False:
+                self.msg_if.pub_info('Published image topic: ' + os.path.join(namespace, data_product))
+                self.sources_info_dict[source_topic]['segment_img_published'][data_product] = True
+
+        return True
+
+    def getSegmentColorImg(self, np_depth_map):
+        # Colourize one half of the per-cycle segmentation for viewing, using the
+        # platform depth map colorizer rather than a routine of this app's own.
+        # Non-member pixels are NaN by contract, so isfinite IS the segment mask;
+        # they are painted SEGMENT_NONE_COLOR afterwards because the colorizer
+        # folds NaN onto the max-range colour, which a viewer cannot tell from a
+        # real far return. The colorizer rewrites its input in place, hence the
+        # deep copy -- the caller's map is still needed by the overlay path.
+        if np_depth_map is None:
+            return None
+        try:
+            mask = np.isfinite(np_depth_map)
+            if mask.any() == False:
+                return None
+            cv2_img = nepi_img.npDepthMap_to_cv2ColorImg(copy.deepcopy(np_depth_map),
+                                                        min_range_m = self.min_range_m,
+                                                        max_range_m = self.max_range_m)
+            if cv2_img is None:
+                return None
+            cv2_img[np.logical_not(mask)] = SEGMENT_NONE_COLOR
+            return cv2_img
+        except Exception as e:
+            self.msg_if.pub_warn("Failed to colorize segmentation depth map: " + str(e), throttle_s = 5.0)
+            return None
 
     def publishImgData(self, source_topic, cv2_img, encoding = "bgr8", timestamp = None,
                         width_deg = 100,
@@ -568,6 +734,12 @@ class ObstaclesImgPub:
         try:
             img_if = self.img_node_dict[source_topic][img_if_key]
             img_pub = self.img_node_dict[source_topic][img_pub_key]
+
+            # Per-product subscriber gate. imageCb runs the cycle when ANY of the
+            # three products wants data, so an unwatched product still has to opt
+            # out here or it would pay for a neighbour's subscriber.
+            if img_if is not None and img_if.ready == True and img_if.needs_data_check() == False:
+                return
 
             if img_if is None or img_if.ready == False:
                 img_msg = nepi_img.cv2img_to_rosimg(cv2_img, encoding = encoding)

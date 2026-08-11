@@ -90,6 +90,7 @@ class NepiAppObstacles extends Component {
 
     this.getDisplayImgOptions = this.getDisplayImgOptions.bind(this)
     this.onDisplayImgSelected = this.onDisplayImgSelected.bind(this)
+    this.getSegmentImgTopics = this.getSegmentImgTopics.bind(this)
 
     this.renderApp = this.renderApp.bind(this)
     this.renderAppSettings = this.renderAppSettings.bind(this)
@@ -570,6 +571,30 @@ class NepiAppObstacles extends Component {
     })
   }
 
+  // The two segmentation viewers follow whatever source the main viewer is on,
+  // so the operator picks a source once. The node builds imaging_pub_topics and
+  // the two segmentation lists from the same active source order, so the index
+  // of the selected overlay topic indexes both pairs. A selection that is not in
+  // the list yet -- first render, or a source that has just been purged --
+  // falls back to the first available pair.
+  getSegmentImgTopics() {
+    const status_msg = this.state.status_msg
+    const process_status_msg = this.state.process_status_msg
+    if (status_msg == null || process_status_msg == null) {
+      return ["None", "None"]
+    }
+    const image_pub_topics = process_status_msg.imaging_pub_topics
+    const ground_topics = status_msg.ground_image_pub_topics
+    const obstacles_topics = status_msg.obstacles_image_pub_topics
+    var index = image_pub_topics.indexOf(this.state.selected_display_topic)
+    if (index === -1) {
+      index = 0
+    }
+    const ground_topic = (ground_topics.length > index && ground_topics[index] !== '') ? ground_topics[index] : "None"
+    const obstacles_topic = (obstacles_topics.length > index && obstacles_topics[index] !== '') ? obstacles_topics[index] : "None"
+    return [ground_topic, obstacles_topic]
+  }
+
   render() {
     const { imageTopics } = this.props.ros
     const img_options = this.getDisplayImgOptions()
@@ -579,6 +604,23 @@ class NepiAppObstacles extends Component {
     const selected_image_topic = (img_publishing === true && this.state.connected === true) ? selected_image_topic_topic : "None"
     const selected_image_topic_text = (selected_image_topic_topic === 'None') ? 'No Image Selected' :
       img_publishing ? this.state.selected_display_text : 'Waiting for image to publish'
+
+    // Same publishing/connected gate as the main viewer above, so each
+    // segmentation viewer shows a waiting title instead of a broken image
+    // before its topic is advertised.
+    const segment_img_topics = this.getSegmentImgTopics()
+    const ground_img_topic = segment_img_topics[0]
+    const obstacles_img_topic = segment_img_topics[1]
+
+    const ground_publishing = imageTopics.indexOf(ground_img_topic) !== -1
+    const ground_image_topic = (ground_publishing === true && this.state.connected === true) ? ground_img_topic : "None"
+    const ground_image_topic_text = (ground_img_topic === 'None') ? 'No Ground Map Available' :
+      ground_publishing ? 'Ground Depth Map' : 'Waiting for image to publish'
+
+    const obstacles_publishing = imageTopics.indexOf(obstacles_img_topic) !== -1
+    const obstacles_image_topic = (obstacles_publishing === true && this.state.connected === true) ? obstacles_img_topic : "None"
+    const obstacles_image_topic_text = (obstacles_img_topic === 'None') ? 'No Obstacles Map Available' :
+      obstacles_publishing ? 'Obstacles Depth Map' : 'Waiting for image to publish'
 
     const save_data_topic = this.getSaveNamespace()
 
@@ -615,6 +657,41 @@ class NepiAppObstacles extends Component {
             title={"Nepi_IF_SaveData"}
           />
         : null}
+
+        <div style={{ borderTop: "1px solid #ffffff", marginTop: Styles.vars.spacing.medium, marginBottom: Styles.vars.spacing.xs }} />
+
+        {/* The two segmentation renders for the source the main viewer is on.
+            Their per-image save and render control rows are hidden so they fit
+            the narrow side-by-side columns -- the same choice the stereo cam
+            page makes for its two input previews. */}
+        <Columns>
+        <Column>
+
+          <Label title={"Ground Depth Map"} />
+
+          <NepiIFImageViewer
+            image_topic={ground_image_topic}
+            title={ground_image_topic_text}
+            show_res_orient={false}
+            show_save_controls={false}
+            show_image_controls={false}
+          />
+
+        </Column>
+        <Column>
+
+          <Label title={"Obstacles Depth Map"} />
+
+          <NepiIFImageViewer
+            image_topic={obstacles_image_topic}
+            title={obstacles_image_topic_text}
+            show_res_orient={false}
+            show_save_controls={false}
+            show_image_controls={false}
+          />
+
+        </Column>
+        </Columns>
 
       </Column>
       <Column>

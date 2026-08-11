@@ -114,6 +114,16 @@ DEFAULT_HEIGHT_DEG = 70.0
 FLOAT_FIELD_UNSET = -999.0
 INT_FIELD_UNSET = -999
 
+# NEPI depth map data products carry MILLIMETRE range values while their status
+# bounds and every control in this module are in METRES. nepi_img is the
+# authority on this split: get_range_from_npDepthMap divides the array by 1000
+# to report metres, and npDepthMap_to_cv2ColorImg scales its metre bounds up by
+# 1e3 to compare against the array. Producers convert up to millimetres for
+# exactly this reason (see idx_zed_node and stereo_cam_app_node). This module
+# does its geometry in metres and hands the segmentation maps back in the
+# source's millimetres, so the same colorizer renders them.
+MM_PER_M = 1000.0
+
 
 #########################
 # Process Functions
@@ -133,23 +143,31 @@ def process_results(np_depth_map, status_dict, navpose_dict, data_dict, controls
     azimuth, elevation, and pixel velocity.
 
     Args:
-        np_depth_map (numpy.ndarray): Range image in metres, shape (H, W).
-            Non-returns may be NaN, inf, or zero.
+        np_depth_map (numpy.ndarray): Range image in MILLIMETRES, shape (H, W).
+            Non-returns may be NaN, inf, or zero. See MM_PER_M.
         status_dict (dict): The source's DepthMapStatus as a dictionary. Read
             for 'width_deg', 'height_deg' and 'depth_map_topic'.
         navpose_dict (dict): The source's NavPose as a dictionary. Read for
             'has_orientation', 'roll_deg' and 'pitch_deg'.
+        data_dict (dict): Per-cycle process bookkeeping in the
+            PROCESS_DATA_DICT form. Returned with its timing fields updated.
         controls_dict (dict): Live nepi_controls controls dictionary built from
             PROCESS_CONTROLS_DICT.
 
     Returns:
         list: obstacles_dict_list -- one dict per obstacle, ordered largest
             first, carrying every field of nepi_app_obstacles/Obstacle.
-        numpy.ndarray: depth_map_ground -- the range-gated depth map with every
-            non-ground pixel set to NaN, or None if no ground was found.
-        numpy.ndarray: depth_map_obstacles -- the range-gated depth map with
-            every non-obstacle pixel set to NaN, or None if no obstacle
-            returns were found.
+        numpy.ndarray: depth_map_ground -- the range-gated depth map in the
+            source's millimetres with every non-ground pixel set to NaN, or
+            None if no ground was found.
+        numpy.ndarray: depth_map_obstacles -- the range-gated depth map in the
+            source's millimetres with every non-obstacle pixel set to NaN, or
+            None if no obstacle returns were found.
+        dict: data_dict -- the caller's bookkeeping dict.
+
+    Every return path hands back all four values. The caller unpacks four, and
+    a short tuple raises a ValueError that its try/except swallows, which loses
+    the whole cycle including any segmentation map already built.
     """
     obstacles_dict_list = []
     depth_map_ground = None
@@ -158,13 +176,13 @@ def process_results(np_depth_map, status_dict, navpose_dict, data_dict, controls
     start_time = nepi_utils.get_time()
 
     if np_depth_map is None:
-        return obstacles_dict_list, depth_map_ground, depth_map_obstacles
+        return obstacles_dict_list, depth_map_ground, depth_map_obstacles, data_dict
 
     try:
         np_depth_map = np.asarray(np_depth_map, dtype = np.float32)
         if np_depth_map.ndim != 2:
             logger.log_warn("Depth map is not a single channel range image: " + str(np_depth_map.shape), throttle_s = 5.0)
-            return obstacles_dict_list, depth_map_ground, depth_map_obstacles
+            return obstacles_dict_list, depth_map_ground, depth_map_obstacles, data_dict
 
         min_range_m = getControlValue(controls_dict, 'min_range_m', 0.5)
         max_range_m = getControlValue(controls_dict, 'max_range_m', 10.0)
@@ -183,8 +201,12 @@ def process_results(np_depth_map, status_dict, navpose_dict, data_dict, controls
         source_topic = str(status_dict.get('depth_map_topic', '') or '')
 
         ##############################
-        # Range gate
-        np_ranged = copy.deepcopy(np_depth_map)
+        # Range gate.
+        #
+        # The source array is millimetres; every control and every geometry
+        # term below is metres, so convert once here and keep np_depth_map as
+        # the untouched source-unit copy the segmentation maps are cut from.
+        np_ranged = np.asarray(np_depth_map, dtype = np.float32) / MM_PER_M
         np_ranged[np.isinf(np_ranged)] = np.nan
         np_ranged[np_ranged <= 0] = np.nan
         np_ranged[np_ranged < min_range_m] = np.nan
@@ -192,7 +214,7 @@ def process_results(np_depth_map, status_dict, navpose_dict, data_dict, controls
 
         valid_mask = np.isfinite(np_ranged)
         if valid_mask.any() == False:
-            return obstacles_dict_list, depth_map_ground, depth_map_obstacles
+            return obstacles_dict_list, depth_map_ground, depth_map_obstacles, data_dict
 
         ##############################
         # Per-pixel bearing and height
@@ -205,15 +227,23 @@ def process_results(np_depth_map, status_dict, navpose_dict, data_dict, controls
         ground_mask = valid_mask & (np_height <= ground_max_height_m)
         obstacle_mask = valid_mask & (np_height > ground_max_height_m)
 
+        # Cut both maps from the SOURCE array, not from np_ranged, so they come
+        # back in the millimetres every downstream consumer of a NEPI depth map
+        # expects -- the colorizer included. Non-member pixels stay NaN, which
+        # is the marker the overlay and the segmentation viewers mask on.
         if ground_mask.any():
-            depth_map_ground = np.full(np_ranged.shape, np.nan, dtype = np.float32)
-            depth_map_ground[ground_mask] = np_ranged[ground_mask]
+            depth_map_ground = np.full(np_depth_map.shape, np.nan, dtype = np.float32)
+            depth_map_ground[ground_mask] = np_depth_map[ground_mask]
         if obstacle_mask.any():
-            depth_map_obstacles = np.full(np_ranged.shape, np.nan, dtype = np.float32)
-            depth_map_obstacles[obstacle_mask] = np_ranged[obstacle_mask]
+            depth_map_obstacles = np.full(np_depth_map.shape, np.nan, dtype = np.float32)
+            depth_map_obstacles[obstacle_mask] = np_depth_map[obstacle_mask]
         else:
+            # No obstacle returns is a normal outcome, and the ground map built
+            # just above is still valid -- hand it back rather than dropping it.
             recordCycle(source_topic, [], start_time)
-            return obstacles_dict_list, depth_map_ground, depth_map_obstacles
+            data_dict['data_time'] = start_time
+            data_dict['process_time'] = nepi_utils.get_time() - start_time
+            return obstacles_dict_list, depth_map_ground, depth_map_obstacles, data_dict
 
         ##############################
         # Group obstacle returns.
@@ -263,7 +293,7 @@ def process_results(np_depth_map, status_dict, navpose_dict, data_dict, controls
 
     except Exception as e:
         logger.log_warn("Failed to process depth map: " + str(e), throttle_s = 5.0)
-        return [], None, None
+        return [], None, None, data_dict
 
     data_dict['data_time'] = start_time
     data_dict['process_time'] = nepi_utils.get_time() - start_time
@@ -277,11 +307,18 @@ def process_results(np_depth_map, status_dict, navpose_dict, data_dict, controls
 
 
 
-def getControlValue(controls_dict, control_name):
+def getControlValue(controls_dict, control_name, default_value = None):
+    # nepi_controls.get_control_value returns None for a control that is not in
+    # the dict -- including one that create_controls_dict silently dropped for an
+    # out-of-bounds default. Every caller here needs a usable number, so the
+    # default stands in rather than propagating a None into the geometry.
+    value = None
     try:
         value = nepi_controls.get_control_value(controls_dict, control_name)
     except Exception:
         value = None
+    if value is None:
+        value = default_value
     return value
 
 
@@ -473,10 +510,10 @@ def init_process_controls_dict():
 
 
 def init_process_data_dict():
-    """Return a copy of this module's control definition dictionary.
+    """Return a copy of this module's per-cycle process data dictionary.
 
     Returns:
-        dict: The nepi_controls init-dict form of every control this module's
-            process function reads. Callers hand this to a ControlsIF.
+        dict: The PROCESS_DATA_DICT bookkeeping form this module's process
+            function reads and writes. Callers hand this to an ObstaclesIF.
     """
-    return copy.deepcopy(PROCESS_CONTROLS_DICT)
+    return copy.deepcopy(PROCESS_DATA_DICT)

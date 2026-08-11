@@ -73,15 +73,29 @@ CONNECTED_TIMEOUT_SEC = 2
 IMG_PUB_PKG_NAME = 'nepi_app_obstacles'
 IMG_PUB_NODE_FILE = 'obstacles_app_img_pub_node.py'
 
+# Image data products the image pub node publishes, one set per active source.
+# Named after the platform convention DepthMapIF sets -- raw range data at
+# <name>, its colourized viewable render at <name>_image. These must match the
+# names in obstacles_app_img_pub_node.py; that node owns the publishers, this
+# class only reports where they will appear.
+OBSTACLES_IMG_PRODUCT = 'obstacles_image'
+GROUND_MAP_IMG_PRODUCT = 'ground_depth_map_image'
+OBSTACLES_MAP_IMG_PRODUCT = 'obstacles_depth_map_image'
+
 
 class ObstaclesIF:
 
-    OBSTACLES_DATA_PRODUCTS = ['obstacles', 'obstacles_image']
+    OBSTACLES_DATA_PRODUCTS = ['obstacles',
+                               OBSTACLES_IMG_PRODUCT,
+                               GROUND_MAP_IMG_PRODUCT,
+                               OBSTACLES_MAP_IMG_PRODUCT]
 
     # An obstacles process must never consume its own overlay output as an
     # input source; skip these product basenames even if a stale or explicit
     # selection lists them.
-    OUTPUT_IMG_PRODUCTS = ['obstacles_image']
+    OUTPUT_IMG_PRODUCTS = [OBSTACLES_IMG_PRODUCT,
+                           GROUND_MAP_IMG_PRODUCT,
+                           OBSTACLES_MAP_IMG_PRODUCT]
 
     namespace = '~'
     obstacles_namespace = '~'
@@ -119,6 +133,13 @@ class ObstaclesIF:
     msg_str = 'Loading'
     active_source_topics = []
     cur_source_topic = "None"
+
+    # The active source order getProcessStatus last used to build
+    # imaging_source_topics / imaging_pub_topics. publish_status maps the two
+    # segmentation topic lists over this same list rather than re-walking
+    # sources_info_dict, so all four lists stay index-aligned even if a source
+    # is added or purged between the two calls.
+    imaging_source_topics = []
 
     get_source_topic = "None"
     got_source_topic = None
@@ -789,6 +810,23 @@ class ObstaclesIF:
         self.obstacles_status_msg.color_image_topic = self.color_image_topic
         self.obstacles_status_msg.color_image_topic_connected = self.color_image_topic_connected
 
+        # Advertise the two segmentation render topics the same way
+        # process_status.imaging_pub_topics advertises the overlay one, walking
+        # the active source list getProcessStatus just built so index i of all
+        # four lists names the same source.
+        sources_info_dict = copy.deepcopy(self.sources_info_dict)
+        ground_image_pub_topics = []
+        obstacles_image_pub_topics = []
+        for source_topic in self.imaging_source_topics:
+            # An empty entry rather than a skipped one: dropping an element
+            # would shift every later index out of step with the process_status
+            # lists, which is the one thing these lists promise.
+            info_dict = sources_info_dict.get(source_topic, dict())
+            ground_image_pub_topics.append(info_dict.get('ground_img_pub_topic', ''))
+            obstacles_image_pub_topics.append(info_dict.get('obstacles_img_pub_topic', ''))
+        self.obstacles_status_msg.ground_image_pub_topics = ground_image_pub_topics
+        self.obstacles_status_msg.obstacles_image_pub_topics = obstacles_image_pub_topics
+
         self.obstacles_status_msg.full_screen_enabled = self.image_controls_dict['full_screen_enabled']
         self.obstacles_status_msg.show_sources_enabled = self.image_controls_dict['show_sources_enabled']
         self.obstacles_status_msg.show_ground_enabled = self.image_controls_dict['show_ground_enabled']
@@ -1168,7 +1206,12 @@ class ObstaclesIF:
         info_dict['navpose_topic'] = navpose_topic
         info_dict['navpose_last_connection'] = 0
 
-        info_dict['img_pub_topic'] = os.path.join(os.path.dirname(source_topic), 'obstacles_image')
+        img_namespace = os.path.dirname(source_topic)
+        info_dict['img_pub_topic'] = os.path.join(img_namespace, OBSTACLES_IMG_PRODUCT)
+        # Where the image pub node will publish this source's two segmentation
+        # renders, beside its overlay image.
+        info_dict['ground_img_pub_topic'] = os.path.join(img_namespace, GROUND_MAP_IMG_PRODUCT)
+        info_dict['obstacles_img_pub_topic'] = os.path.join(img_namespace, OBSTACLES_MAP_IMG_PRODUCT)
 
         self.sources_info_dict[source_topic] = info_dict
 
@@ -1631,6 +1674,7 @@ class ObstaclesIF:
                 imaging_pub_topics.append(sources_info_dict[source_topic]['img_pub_topic'])
         self.process_status_msg.imaging_source_topics = imaging_source_topics
         self.process_status_msg.imaging_pub_topics = imaging_pub_topics
+        self.imaging_source_topics = imaging_source_topics
 
         #################
         self.process_status_msg.enabled = self.enabled
