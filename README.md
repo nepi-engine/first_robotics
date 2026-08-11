@@ -169,7 +169,7 @@ pushn
 
 ### If someone else pushed changes first
 
-If you're pushing your changes and someone else has updated the repo since your last pull, you'll see an error that says <span style="color:red">Push Failed</span>.
+If you're pushing your changes and someone else has updated the repo since your last pull, you'll see an error that says Push Failed.
 
 If you get this error, run:
 
@@ -185,4 +185,4 @@ Exit this window by hitting Ctrl+X. This will return you to your terminal. Then 
 pushn
 ```
 
-This will finish pushing your changes to the repo and you will see a message in your terminal saying <span style="color:green">Push Successful</span>.
+This will finish pushing your changes to the repo and you will see a message in your terminal saying Push Successful.
