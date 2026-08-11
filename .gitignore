@@ -4,3 +4,8 @@ Claude.md
 
 #pycache
 __pycache__/
+
+# editor swap files
+*.swp
+*.swo
+*~
