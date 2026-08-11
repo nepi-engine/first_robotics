@@ -143,11 +143,11 @@ rsync -avzhe "ssh -i ${NEPI_SSH_KEY} -o StrictHostKeyChecking=no -p 2222" ${RSYN
 echo ""
 if [[ $? -ne 0 ]]; then
   if [ "${NEPI_REMOTE_SETUP}" == "0" ]; then
-    host_ip="localhost"
+    local_host_ip="localhost"
   elif [ "${NEPI_REMOTE_SETUP}" == "1" ]; then
-    host_ip=$NEPI_TARGET_IP
+    local_host_ip=$NEPI_TARGET_IP
   fi
-  echo "Failed connect to a running NEPI container on host: ${host_ip}"
+  echo "Failed connect to a running NEPI container on host: ${local_host_ip}"
   echo "Live Updates Failed"
 else
   echo "Live Updates Deployed"
