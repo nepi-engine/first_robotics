@@ -34,7 +34,7 @@ from sensor_msgs.msg import Image
 from nepi_interfaces.msg import ImageStatus
 from nepi_interfaces.msg import ProcessStatus
 
-from nepi_app_obstacles.msg import Obstacles, ObstaclesStatus
+from nepi_app_obstacles.msg import Obstacles, ObstaclesDepthMap, ObstaclesStatus
 
 from nepi_api.messages_if import MsgIF
 from nepi_api.node_if import NodeClassIF
@@ -191,6 +191,19 @@ class ObstaclesImgPub:
                 'topic': 'obstacles',
                 'qsize': 10,
                 'callback': self.obstaclesCb,
+                'callback_args': ()
+            },
+            # The segmentation maps arrive on their own topic so that consumers
+            # of the obstacle list do not carry the images. This node wants
+            # both, so it subscribes to both. The parent publishes the pair back
+            # to back from one process cycle, so the maps land within one
+            # message of the obstacle list they were derived from.
+            'obstacles_depth_map_sub': {
+                'msg': ObstaclesDepthMap,
+                'namespace': self.process_namespace,
+                'topic': 'obstacles_depth_map',
+                'qsize': 1,
+                'callback': self.obstaclesDepthMapCb,
                 'callback_args': ()
             },
         }
@@ -903,8 +916,7 @@ class ObstaclesImgPub:
 
         current_time = nepi_utils.get_time()
         # msg.obstacles is an Obstacle[] array -- convert_msg2dict takes a single
-        # message, so convert per entry. Converting the whole Obstacles msg would
-        # also expand the two depth map images into python lists.
+        # message, so convert per entry.
         obstacles_list = []
         for obstacle_msg in msg.obstacles:
             obstacles_list.append(nepi_sdk.convert_msg2dict(obstacle_msg))
@@ -914,17 +926,29 @@ class ObstaclesImgPub:
         for obstacle in obstacles_list:
             overlay_obstacles_list.append(self.getBoxDict(obstacle))
 
+        self.imgs_info_lock.acquire()
+        if source_topic in self.sources_info_dict.keys():
+            self.sources_info_dict[source_topic]['obstacles_dict_list'] = overlay_obstacles_list
+            self.sources_info_dict[source_topic]['navpose_dict'] = navpose_dict
+            self.sources_info_dict[source_topic]['img_stamp'] = msg.source_timestamp
+            self.sources_info_dict[source_topic]['last_det_time'] = current_time
+        self.imgs_info_lock.release()
+
+    def obstaclesDepthMapCb(self, msg):
+        # The segmentation half of one process cycle. Kept separate from
+        # obstaclesCb because the two now arrive as separate messages; both write
+        # under imgs_info_lock, so imageCb never reads a half-updated entry.
+        source_topic = self.mapSourceTopic(msg.source_topic)
+        if source_topic not in self.sources_info_dict.keys():
+            return
+
         depth_map_ground = self.getDepthMapFromMsg(msg.depth_map_ground)
         depth_map_obstacles = self.getDepthMapFromMsg(msg.depth_map_obstacles)
 
         self.imgs_info_lock.acquire()
         if source_topic in self.sources_info_dict.keys():
-            self.sources_info_dict[source_topic]['obstacles_dict_list'] = overlay_obstacles_list
-            self.sources_info_dict[source_topic]['navpose_dict'] = navpose_dict
             self.sources_info_dict[source_topic]['depth_map_ground'] = depth_map_ground
             self.sources_info_dict[source_topic]['depth_map_obstacles'] = depth_map_obstacles
-            self.sources_info_dict[source_topic]['img_stamp'] = msg.source_timestamp
-            self.sources_info_dict[source_topic]['last_det_time'] = current_time
         self.imgs_info_lock.release()
 
     def statusCb(self, msg):

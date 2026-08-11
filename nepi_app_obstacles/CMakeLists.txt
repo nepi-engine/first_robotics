@@ -28,6 +28,7 @@ nepi_interfaces
  add_message_files(FILES
 	Obstacle.msg
 	Obstacles.msg
+	ObstaclesDepthMap.msg
 	ObstaclesStatus.msg
 
  )

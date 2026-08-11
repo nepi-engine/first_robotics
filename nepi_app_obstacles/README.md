@@ -16,7 +16,7 @@ nepi_app_obstacles/
 ├── api/obstacles_if.py                    # ObstaclesIF, installs into nepi_api
 ├── api/connect_obstacles_if.py            # ConnectObstaclesIF, for other nodes
 ├── sdk/nepi_obstacles.py                  # the algorithm, installs into nepi_sdk
-├── msg/                                   # Obstacle, Obstacles, ObstaclesStatus
+├── msg/                                   # Obstacle, Obstacles, ObstaclesDepthMap, ObstaclesStatus
 ├── params/obstacles_app_params.yaml       # app registration + RUI registration
 └── rui/NepiAppObstacles.js                # RUI page
 ```
@@ -26,7 +26,13 @@ nepi_app_obstacles/
 All names are rooted at the device namespace, `<base>/app_obstacles`.
 
 Published:
-- `<base>/app_obstacles/obstacles` — `nepi_app_obstacles/Obstacles`
+- `<base>/app_obstacles/obstacles` — `nepi_app_obstacles/Obstacles`, the obstacle
+  list only; it carries no images, so subscribing to it is cheap
+- `<base>/app_obstacles/obstacles_depth_map` — `nepi_app_obstacles/ObstaclesDepthMap`,
+  the same per-cycle header fields plus the two 32FC1 segmentation range images
+  (ground and obstacles), published back to back with the obstacle list. Pair the
+  two on `source_topic` + `source_timestamp`. Local namespace only, no `all`
+  fan-out, so the images are never broadcast to consumers that did not ask.
 - `<base>/app_obstacles/obstacles/status` — `nepi_app_obstacles/ObstaclesStatus`, latched
 - `<base>/all/obstacles` — the same `Obstacles` message, collective fan-out
 - `<image namespace>/obstacles_image` — overlay image, one per active source

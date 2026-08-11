@@ -31,7 +31,7 @@ from nepi_interfaces.msg import StringArray
 from nepi_interfaces.msg import ProcessStatus
 from nepi_interfaces.msg import NavPose
 
-from nepi_app_obstacles.msg import Obstacle, Obstacles, ObstaclesStatus
+from nepi_app_obstacles.msg import Obstacle, Obstacles, ObstaclesDepthMap, ObstaclesStatus
 
 from nepi_sdk import nepi_sdk
 from nepi_sdk import nepi_utils
@@ -50,6 +50,15 @@ SYSTEM_ALL_TOPIC = 'all'
 # Obstacles Node IF
 #########################################
 OBSTACLES_TOPIC = 'obstacles'
+
+# The depth map segmentation ships on its own topic rather than inside the
+# Obstacles message, so a consumer that only wants the obstacle list is not
+# forced to carry two full-size range images per cycle. It is published on this
+# process's own namespace only -- not on the collective 'all' namespace the
+# obstacle list fans out on -- because the only consumer is this process's own
+# image pub node and an all-namespace copy would double the image bandwidth for
+# nothing.
+OBSTACLES_DEPTH_MAP_TOPIC = 'obstacles_depth_map'
 
 # Source topics are depth maps. They are discovered by their DepthMapStatus
 # publisher rather than by string-matching an Image topic name. Matching on
@@ -350,6 +359,13 @@ class ObstaclesIF:
                 'msg': Obstacles,
                 'namespace': self.all_namespace,
                 'topic': OBSTACLES_TOPIC,
+                'qsize': 1,
+                'latch': False
+            },
+            'obstacles_depth_map_pub': {
+                'msg': ObstaclesDepthMap,
+                'namespace': self.namespace,
+                'topic': OBSTACLES_DEPTH_MAP_TOPIC,
                 'qsize': 1,
                 'latch': False
             },
@@ -1536,12 +1552,29 @@ class ObstaclesIF:
 
         obstacles_msg.obstacles = obstacle_msg_list
 
-        obstacles_msg.depth_map_ground = self.getDepthMapImgMsg(depth_map_ground)
-        obstacles_msg.depth_map_obstacles = self.getDepthMapImgMsg(depth_map_obstacles)
+        # The segmentation maps travel on their own topic, built from the same
+        # cycle's data and published immediately after the obstacle list so a
+        # consumer pairing on source_topic + source_timestamp sees the two
+        # arrive together.
+        depth_map_msg = ObstaclesDepthMap()
+        depth_map_msg.timestamp = obstacles_msg.timestamp
+
+        depth_map_msg.process_name = obstacles_msg.process_name
+        depth_map_msg.process_namespace = obstacles_msg.process_namespace
+
+        depth_map_msg.source_topic = obstacles_msg.source_topic
+        depth_map_msg.source_timestamp = obstacles_msg.source_timestamp
+
+        depth_map_msg.navpose_frame = obstacles_msg.navpose_frame
+        depth_map_msg.navpose_msg = obstacles_msg.navpose_msg
+
+        depth_map_msg.depth_map_ground = self.getDepthMapImgMsg(depth_map_ground)
+        depth_map_msg.depth_map_obstacles = self.getDepthMapImgMsg(depth_map_obstacles)
 
         if self.node_if is not None:
             self.node_if.publish_pub('obstacles_pub', obstacles_msg)
             self.node_if.publish_pub('obstacles_all_pub', obstacles_msg)
+            self.node_if.publish_pub('obstacles_depth_map_pub', depth_map_msg)
 
         self.saveObstaclesData(obstacles_msg, obstacles_timestamp)
 
@@ -1559,10 +1592,9 @@ class ObstaclesIF:
     def saveObstaclesData(self, obstacles_msg, timestamp):
         # Mirrors DetectionsIF.publish_data: gate on the rate/snapshot check
         # first, then convert to a dict, because SaveDataIF writes dicts as YAML
-        # and cannot infer a type from a ROS message. The two depth maps are
-        # dropped from the saved record -- they are raw range rasters that would
-        # dominate the YAML file, and the obstacles_image data product is the
-        # saved visual form of the same information.
+        # and cannot infer a type from a ROS message. The message no longer
+        # carries the two depth maps, so nothing has to be stripped here -- the
+        # saved visual form of that data is the obstacles_image data product.
         if self.save_data_if is None or obstacles_msg is None:
             return
         should_save = self.save_data_if.data_product_should_save('obstacles') == True
@@ -1571,8 +1603,6 @@ class ObstaclesIF:
             return
         try:
             data_dict = nepi_sdk.convert_msg2dict(obstacles_msg)
-            data_dict.pop('depth_map_ground', None)
-            data_dict.pop('depth_map_obstacles', None)
             self.save_data_if.save('obstacles', data_dict, timestamp = timestamp)
         except Exception as e:
             self.msg_if.pub_warn("Failed to save obstacles data: " + str(e), log_name_list = self.log_name_list, throttle_s = 5.0)
