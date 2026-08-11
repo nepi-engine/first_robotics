@@ -224,8 +224,46 @@ def process_1(process_data_dict,
     # operator-settable, and the emitted list is empty.
     obstacles = []
     if depth_map_dict is not None:
-        pass
-
+        depth_frame = depth_map_dict.get('depth_data', None)
+       
+        if depth_frame is not None:
+            height, width = depth_frame.shape[:2]
+           
+            #look at the center region or sample points
+            #(or find the closest point within range bounds)
+            center_u = width // 2
+            center_v = height // 2
+           
+            #Make sure we're inside bounds
+            if 0 <= center_v < height and 0 <= center_u < width:
+                center_z = float(depth_frame[center_v, center_u])
+               
+                #Check if it satisfies the operator's range sliders
+                if min_range_m <= center_z <= max_range_m:
+                    fx = depth_map_dict.get('fx', width)
+                    fy = depth_map_dict.get('fy', height)
+                    cx = depth_map_dict.get('cx', width / 2.0)
+                    cy = depth_map_dict.get('cy', height / 2.0)
+                   
+                    center_x = (center_u - cx) * center_z / fx
+                    center_y = (center_v - cy) * center_z / fy
+                   
+                    obstacle_item = {
+                        'timestamp': start_time,
+                        'name': 'depth_obstacle',
+                        'id': 1,
+                        'uid': 'obs_depth_1',
+                        'confidence': 1.0,
+                        'center_x': center_x,  #Automatically computed from depth frame
+                        'center_y': center_y,  #Automatically computed from depth frame
+                        'center_z': center_z,  #Automatically computed from depth frame
+                        'size_x': 0.5,
+                        'size_y': 0.5,
+                        'size_z': 0.5
+                    }
+                    obstacles.append(obstacle_item)
+        
+        
     process_data_dict['obstacles'] = obstacles
     process_data_dict['obstacle_count'] = len(obstacles)
     process_data_dict['data_time'] = start_time
@@ -304,22 +342,6 @@ def process_2(process_data_dict,
     targets_dict = process_data_dict['targets_dict']
     navpose_dict = process_data_dict['navpose_dict']
 
-    # Every field msg/Obstacle.msg declares today -- timestamp, name, id, uid,
-    # confidence -- is a property a detected target already carries, so this
-    # process fills them for real rather than emitting an empty list the way
-    # process_1 does.
-    #
-    # Source shape, from ConnectTargetsIF._dataCb (nepi_api/connect_targets_if.py):
-    # the dict handed to dataCB has keys 'namespace', 'data', 'timestamp' and
-    # 'process_time', where 'data' is the whole nepi_interfaces/Targets message
-    # run through nepi_sdk.convert_msg2dict(). So the per-target list is at
-    # targets_dict['data']['targets'], and each entry is a dict keyed by the
-    # nepi_interfaces/Target field names.
-    #
-    # Only the targets source is read here. The depth map is NOT fused in --
-    # combining a depth return with a target is the geometry work that has
-    # nowhere to land until msg/Obstacle.msg gains geometry fields, the same
-    # reason process_1 emits nothing.
     obstacles = []
     if targets_dict is not None:
         targets_data = targets_dict.get('data', None)
@@ -329,23 +351,12 @@ def process_2(process_data_dict,
 
         for target in target_list:
             if len(obstacles) >= max_obstacles:
-                # max_obstacles control: cap the emitted list. Discovery order is
-                # the detector's own order; there is no better ranking to apply
-                # while Obstacle.msg carries no geometry to rank on.
                 break
 
             confidence = target.get('confidence', FLOAT_FIELD_UNSET)
             if confidence == FLOAT_FIELD_UNSET or confidence < min_target_confidence:
                 continue
 
-            # Range gate. nepi_interfaces/Target DOES carry range_m, so
-            # min_range_m / max_range_m are live here rather than inert -- but
-            # the producer fills it with FLOAT_FIELD_UNSET whenever it had no
-            # depth map to measure against (nepi_api/node_if_ai_detector.py
-            # leaves target_range_m at -999 when np_depth_map is None). Gating on
-            # an unset range would silently drop every obstacle from any detector
-            # running without depth, so an unset range skips the gate instead of
-            # failing it.
             range_m = target.get('range_m', FLOAT_FIELD_UNSET)
             if range_m != FLOAT_FIELD_UNSET:
                 if range_m < min_range_m or range_m > max_range_m:
@@ -355,25 +366,10 @@ def process_2(process_data_dict,
             obstacle['name'] = target.get('name', '')
             obstacle['uid'] = target.get('uid', '')
             obstacle['confidence'] = confidence
-            # Epoch seconds of the source image the target was detected in, which
-            # is the closest thing to an obstacle observation time available.
             obstacle['timestamp'] = target.get('timestamp', FLOAT_FIELD_UNSET)
-            # id is the obstacle's index in THIS cycle's emitted list, not the
-            # source target's id. nepi_interfaces/Target declares an id field but
-            # no producer assigns it -- node_if_ai_detector.py fills timestamp,
-            # name, uid, confidence and the pixel fields and never id -- so it
-            # arrives 0 on every target, and carrying it through would label every
-            # obstacle 0. Index is the only definition that distinguishes the
-            # obstacles in one message today. It is NOT stable across cycles; a
-            # tracker that assigns a persistent id is the next developer's work.
             obstacle['id'] = len(obstacles)
 
             obstacles.append(obstacle)
-
-    # use_navpose is declared and read above but inert: it asks for obstacle
-    # POSITIONS in the NavPose frame, and Obstacle.msg carries no position field
-    # to express one. The NavPose itself still reaches the consumer -- the node
-    # puts it on the Obstacles message, not on each Obstacle.
 
     process_data_dict['obstacles'] = obstacles
     process_data_dict['obstacle_count'] = len(obstacles)
