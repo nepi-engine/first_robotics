@@ -57,7 +57,7 @@ class NepiObstaclesApp(object):
         #
         # controls_dict is the SDK module's control DEFINITION dict (the
         # nepi_controls init-dict form). ObstaclesIF hands it to a ControlsIF,
-        # and hands the ControlsIF's live controls_dict back to processData on
+        # and hands the ControlsIF's live controls_dict back to processResults on
         # every cycle. The node never reads control values itself.
         controls_dict = copy.deepcopy(nepi_obstacles.PROCESS_CONTROLS_DICT)
         data_dict = copy.deepcopy(nepi_obstacles.PROCESS_DATA_DICT)
@@ -67,7 +67,7 @@ class NepiObstaclesApp(object):
                             description = self.PROCESS_DESCRIPTION,
                             data_dict = data_dict,
                             controls_dict = controls_dict,
-                            processDataFunction = self.processData,
+                            processResultsFunction = self.processResults,
                             msg_if = self.msg_if
                             )
 
@@ -79,11 +79,11 @@ class NepiObstaclesApp(object):
         nepi_sdk.spin()
         #########################################################
 
-    def processData(self, np_depth_map, status_dict, navpose_dict, data_dict, controls_dict):
+    def processResults(self, np_depth_map, status_dict, navpose_dict, data_dict, controls_dict):
         # Called by ObstaclesIF once per accepted depth map frame. Thin
         # pass-through to the SDK module so the algorithm ships in nepi_sdk and
         # any other node can call it with the same four arguments.
-        return nepi_obstacles.process_depth_map(np_depth_map,
+        return nepi_obstacles.process_results(np_depth_map,
                                                 status_dict,
                                                 navpose_dict,
                                                 data_dict,

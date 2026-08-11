@@ -196,7 +196,7 @@ class ObstaclesIF:
                 description,
                 data_dict,
                 controls_dict,
-                processDataFunction,
+                processResultsFunction,
                 enable_image_pub = True,
                 log_name = None,
                 log_name_list = [],
@@ -235,7 +235,7 @@ class ObstaclesIF:
 
         self.enable_image_pub = enable_image_pub
         self.description = description
-        self.processData = processDataFunction
+        self.processResults = processResultsFunction
 
         ##############################
         # Get System Folders
@@ -1411,7 +1411,7 @@ class ObstaclesIF:
                 start_process_time = nepi_utils.get_time()
                 obstacles_timestamp = nepi_utils.get_time()
                 try:
-                    [obstacles_dict_list, depth_map_ground, depth_map_obstacles, self.data_dict] = self.processData(np_depth_map,
+                    [obstacles_dict_list, depth_map_ground, depth_map_obstacles, self.data_dict] = self.processResults(np_depth_map,
                                                                                                     status_dict,
                                                                                                     navpose_dict,
                                                                                                     self.data_dict,

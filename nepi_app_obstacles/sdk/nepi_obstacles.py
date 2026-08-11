@@ -123,7 +123,7 @@ INT_FIELD_UNSET = -999
 
 
 
-def process_data(np_depth_map, status_dict, navpose_dict, data_dict, controls_dict):
+def process_results(np_depth_map, status_dict, navpose_dict, data_dict, controls_dict):
     """Segment a depth map into ground and obstacles and locate each obstacle.
 
     Range-gates the depth map, converts every remaining return to a height in a
