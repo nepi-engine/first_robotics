@@ -92,6 +92,7 @@ class NepiAppWpilibIF extends Component {
     this.renderControls = this.renderControls.bind(this)
     this.getExampleControlsNamespace = this.getExampleControlsNamespace.bind(this)
     this.renderExampleControls = this.renderExampleControls.bind(this)
+    this.renderSettingLabel = this.renderSettingLabel.bind(this)
     this.renderRobotNetwork = this.renderRobotNetwork.bind(this)
     this.renderConfig = this.renderConfig.bind(this)
   }
@@ -235,21 +236,20 @@ class NepiAppWpilibIF extends Component {
         const el = document.getElementById("WpilibVehicleSubnet")
         el.style.color = Styles.vars.colors.black
         el.style.fontWeight = "normal"
-        // Push the subnet plus the three addresses derived from it in a single
+        // Push the subnet plus the two addresses derived from it in a single
         // batch update. Each address keeps its current host octet and netmask
         // and only swaps the network prefix. The disabled boxes below read the
         // new values back from the live config.
         //
         // Default host suffixes follow the FRC convention for a 10.TE.AM.0/24
-        // robot network: .1 is the radio, .2 is the roboRIO, and NEPI keeps the
-        // platform default .103 for its own address.
+        // robot network: .2 is the roboRIO, and NEPI keeps the platform default
+        // .103 for its own address. The gateway (NEPI_GATEWAY_IP) is
+        // deliberately not driven here -- it stays on the System Setup page.
         const base_namespace = this.getBaseNamespace()
         const settingsList = [
           { nameStr: 'NEPI_VEHICLE_SUBNET', typeStr: 'String', valueStr: prefix },
           { nameStr: 'NEPI_ALIAS_IP_1', typeStr: 'String',
             valueStr: this.getDerivedIp(this.getSettingValue('NEPI_ALIAS_IP_1'), prefix, '103/24') },
-          { nameStr: 'NEPI_GATEWAY_IP', typeStr: 'String',
-            valueStr: this.getDerivedIp(this.getSettingValue('NEPI_GATEWAY_IP'), prefix, '1') },
           { nameStr: 'NEPI_NTP_IP', typeStr: 'String',
             valueStr: this.getDerivedIp(this.getSettingValue('NEPI_NTP_IP'), prefix, '2') }
         ]
@@ -453,6 +453,26 @@ class NepiAppWpilibIF extends Component {
     )
   }
 
+  // Two-line Label title: the operator-facing name on top, the underlying
+  // device config setting name beneath it in small grey text, so what the box
+  // writes is visible on the page. Label renders its title inside a <label>,
+  // so this returns phrasing content (spans, not divs).
+  renderSettingLabel(title, settingName) {
+    return (
+      <span style={{ display: 'block' }}>
+        <span style={{ display: 'block' }}>{title}</span>
+        <span style={{
+          display: 'block',
+          fontSize: Styles.vars.fontSize.small,
+          color: Styles.vars.colors.grey1,
+          fontWeight: 'normal'
+        }}>
+          {settingName}
+        </span>
+      </span>
+    )
+  }
+
   // The Robot Network box. One editable box for the robot subnet, three
   // disabled boxes showing the addresses derived from it as the device config
   // currently holds them. Commit is on Enter in the top box -- there is no
@@ -461,13 +481,12 @@ class NepiAppWpilibIF extends Component {
     const vehicle_subnet = this.state.vehicle_subnet
     // Live values read from the device system config.
     const nepi_ip = this.getSettingValue('NEPI_ALIAS_IP_1')
-    const gateway_ip = this.getSettingValue('NEPI_GATEWAY_IP')
     const ntp_ip = this.getSettingValue('NEPI_NTP_IP')
 
     return (
       <Section title={"Robot Network"}>
 
-        <Label title={"Robot Subnet"}>
+        <Label title={this.renderSettingLabel("Robot Subnet", "NEPI_VEHICLE_SUBNET")}>
           <Input
             id={"WpilibVehicleSubnet"}
             value={vehicle_subnet}
@@ -477,15 +496,11 @@ class NepiAppWpilibIF extends Component {
           />
         </Label>
 
-        <Label title={"NEPI Address"}>
+        <Label title={this.renderSettingLabel("NEPI Address", "NEPI_ALIAS_IP_1")}>
           <Input disabled value={nepi_ip} />
         </Label>
 
-        <Label title={"Radio Gateway"}>
-          <Input disabled value={gateway_ip} />
-        </Label>
-
-        <Label title={"Time Source"}>
+        <Label title={this.renderSettingLabel("Time Source", "NEPI_NTP_IP")}>
           <Input disabled value={ntp_ip} />
         </Label>
 
