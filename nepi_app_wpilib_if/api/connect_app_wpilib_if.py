@@ -90,6 +90,12 @@ class ConnectAppWpilibIF:
                 'msg': Empty,
                 'qsize': 1
             },
+            'set_obstacles_namespace': {
+                'namespace': self.namespace,
+                'topic': 'set_obstacles_namespace',
+                'msg': String,
+                'qsize': 1
+            },
             'save_config': {
                 'namespace': self.namespace,
                 'topic': 'save_config',
@@ -186,6 +192,17 @@ class ConnectAppWpilibIF:
     def trigger_action(self):
         """Trigger the one-shot action."""
         self.con_node_if.publish_pub('trigger_action', Empty())
+
+    def set_obstacles_namespace(self, namespace):
+        """Select the obstacles app namespace the app connects to.
+
+        Args:
+            namespace (str): Obstacles app node namespace, or "None" to
+                disconnect the obstacles path.
+        """
+        msg = String()
+        msg.data = namespace
+        self.con_node_if.publish_pub('set_obstacles_namespace', msg)
 
     def save_config(self):
         self.con_node_if.publish_pub('save_config', Empty())

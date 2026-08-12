@@ -43,10 +43,15 @@ class ConnectObstaclesIF:
     status_msg = None
     status_connected = False
 
+    # Optional consumer callback, invoked from _statusCb with the status dict.
+    # The obstacles app publishes no data product this interface subscribes to,
+    # so the status dict IS the data dict here.
+    dataCB = None
+
     #######################
     ### IF Initialization
 
-    def __init__(self, namespace = None):
+    def __init__(self, namespace = None, dataCB = None):
         self.class_name = type(self).__name__
         self.base_namespace = nepi_sdk.get_base_namespace()
         self.node_name = nepi_sdk.get_node_name()
@@ -61,6 +66,8 @@ class ConnectObstaclesIF:
         # <app>/obstacles namespace carries the status and every command.
         self.app_namespace = nepi_sdk.get_full_namespace(namespace)
         self.namespace = nepi_sdk.create_namespace(self.app_namespace, OBSTACLES_TOPIC)
+
+        self.dataCB = dataCB
 
         # Configs Config Dict ####################
         self.CFGS_DICT = {
@@ -217,6 +224,15 @@ class ConnectObstaclesIF:
             return nepi_sdk.convert_msg2dict(self.status_msg)
         return None
 
+    def get_status_msg(self):
+        """Return the last received ObstaclesStatus message.
+
+        Returns:
+            ObstaclesStatus: The most recent status message, or None if no
+                status message has arrived yet.
+        """
+        return self.status_msg
+
     def set_enabled(self, enabled):
         """Enable or disable obstacle processing.
 
@@ -357,3 +373,6 @@ class ConnectObstaclesIF:
         self.status_connected = True
         self.connected = True
         self.status_msg = status_msg
+
+        if self.dataCB is not None:
+            self.dataCB(self.get_status_dict())

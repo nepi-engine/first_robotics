@@ -26,29 +26,51 @@ import { Columns, Column } from "./Columns"
 import Styles from "./Styles"
 import Input from "./Input"
 import Label from "./Label"
+import Select, { Option } from "./Select"
+import BooleanIndicator from "./BooleanIndicator"
 
 import NepiIFConnectDetections from "./Nepi_IF_ConnectDetections"
-import NepiIFConnectTargets from "./Nepi_IF_ConnectTargets"
-import NepiIFConnectRBX from "./Nepi_IF_ConnectRBX"
-import NepiIFConnectMotor from "./Nepi_IF_ConnectMotor"
 import NepiIFConnectNavPose from "./Nepi_IF_ConnectNavPose"
 
 import NepiIFControls from "./Nepi_IF_Controls"
 import NepiIFConfig from "./Nepi_IF_Config"
+
+// Message type every obstacles app publishes on <app>/obstacles/status. The
+// Obstacles row's option list is every topic of this type currently on the
+// system, with the trailing /obstacles/status stripped back off to give the app
+// namespace ConnectObstaclesIF takes.
+const OBSTACLES_STATUS_TYPE = "nepi_app_obstacles/ObstaclesStatus"
+const OBSTACLES_STATUS_SUFFIX = "/obstacles/status"
+
+// Unselected state of the Obstacles row, matching NONE_NAMESPACE in the node.
+const OBSTACLES_NONE = "None"
+
+// How stale the newest app status message may be before the Robot Network
+// indicator reads disconnected. The node publishes status at
+// STATUS_PUBLISH_RATE_HZ = 1.0, so this is five status periods -- long enough
+// that an ordinary scheduling hiccup or a dropped message does not flicker the
+// indicator, short enough that a dead node shows within a few seconds.
+const STATUS_TIMEOUT_MS = 5000
+
+// How often the indicator re-evaluates its staleness test. One status period,
+// so the timeout above is honoured to within one tick.
+const CONN_CHECK_INTERVAL_MS = 1000
 
 @inject("ros")
 @observer
 
 // Wpilib Application page
 //
-// The controls section is one selector per connect IF the node instantiates,
-// in node order: Detections, Targets, RBX, Motors, NavPose. Each selector is
-// the reusable Nepi_IF_Connect* component for that IF, bound to the connect
+// The Connections section is one selector per connect path the node
+// instantiates, in node order: Detections, Obstacles, NavPose. Detections and
+// NavPose are the reusable Nepi_IF_Connect* components, bound to the connect
 // namespace <app>/<connect_name> that the matching ConnectNodeIF subclass owns
-// (pattern from NepiAppStereoCam.js). Each component's selector row carries the
-// green "Connected" BooleanIndicator driven by that IF's ConnectIFStatus
-// connected flag. Data and controls panels are hidden -- this page selects
-// sources, it does not drive them.
+// (pattern from NepiAppStereoCam.js). Obstacles has no ConnectNodeIF and so no
+// connect namespace: its row is built here from the same Label/Select
+// primitives, listing the obstacles apps discovered over rosbridge and
+// publishing the operator's pick to this app's own set_obstacles_namespace
+// topic. Data and controls panels are hidden -- this page selects sources, it
+// does not drive them.
 class NepiAppWpilibIF extends Component {
 
   constructor(props) {
@@ -63,6 +85,18 @@ class NepiAppWpilibIF extends Component {
 
       statusListener: null,
       needs_update: true,
+
+      // Operator's obstacles app selection, held locally so the row shows the
+      // pick straight away in the window before the node's next status message
+      // reports it back. Once status arrives, status_msg is authoritative.
+      obstacles_namespace: OBSTACLES_NONE,
+
+      // Robot Network connection indicator inputs. last_status_time is stamped
+      // in statusListener; conn_tick is bumped by a timer so the indicator
+      // re-evaluates when status messages STOP arriving, not only when one does.
+      last_status_time: null,
+      conn_tick: 0,
+      connCheckTimer: null,
 
       // Robot Network group. team_number is the free-typed top box, held as a
       // string so a partially typed entry survives; team_initialized is the
@@ -83,6 +117,10 @@ class NepiAppWpilibIF extends Component {
     this.getConnectNamespace = this.getConnectNamespace.bind(this)
     this.statusListener = this.statusListener.bind(this)
     this.updateStatusListener = this.updateStatusListener.bind(this)
+    this.getObstaclesNamespaces = this.getObstaclesNamespaces.bind(this)
+    this.getSelectedObstaclesNamespace = this.getSelectedObstaclesNamespace.bind(this)
+    this.onObstaclesSelected = this.onObstaclesSelected.bind(this)
+    this.getRobotNetworkConnected = this.getRobotNetworkConnected.bind(this)
     this.getValidTeamNumber = this.getValidTeamNumber.bind(this)
     this.getSubnetFromTeamNumber = this.getSubnetFromTeamNumber.bind(this)
     this.getTeamNumberFromSubnet = this.getTeamNumberFromSubnet.bind(this)
@@ -139,17 +177,77 @@ class NepiAppWpilibIF extends Component {
     return (appNamespace != null) ? appNamespace + "/example_controls" : null
   }
 
+  // Live list of obstacles app namespaces, read off the topic/type lists the
+  // ros store already keeps for the whole system (the same lists Nepi_IF_Messages
+  // and NepiMgrScripts read). No new discovery mechanism: an obstacles app is
+  // any node publishing <app>/obstacles/status as an ObstaclesStatus.
+  getObstaclesNamespaces() {
+    const { topicNames, topicTypes } = this.props.ros
+    var namespaces = []
+    if (topicNames == null || topicTypes == null) {
+      return namespaces
+    }
+    for (var i = 0; i < topicNames.length; i++) {
+      if (topicTypes[i] === OBSTACLES_STATUS_TYPE &&
+          topicNames[i].endsWith(OBSTACLES_STATUS_SUFFIX)) {
+        namespaces.push(topicNames[i].slice(0, -OBSTACLES_STATUS_SUFFIX.length))
+      }
+    }
+    namespaces.sort()
+    return namespaces
+  }
+
+  // What the Obstacles row shows. The node's status is authoritative once it
+  // arrives -- the row reports the namespace the node is actually connected to,
+  // not what this page last sent -- with the local pick covering the window
+  // before the first status message.
+  getSelectedObstaclesNamespace() {
+    const status_msg = this.state.status_msg
+    if (status_msg != null && status_msg.selected_obstacles_namespace) {
+      return status_msg.selected_obstacles_namespace
+    }
+    return this.state.obstacles_namespace
+  }
+
+  onObstaclesSelected(event) {
+    const appNamespace = this.getAppNamespace()
+    const value = event.target.value
+    this.setState({ obstacles_namespace: value })
+    if (appNamespace != null) {
+      this.props.ros.sendStringMsg(appNamespace + '/set_obstacles_namespace', value)
+    }
+  }
+
+  // Robot Network connection state. Two inputs, both required: the newest app
+  // status message must be recent, AND its connected field must be true. The
+  // node currently drives that field from a placeholder that is always set True,
+  // so the staleness half is what makes a dead node read red today. When the
+  // placeholder is replaced by real NetworkTables connection detection, the
+  // field going false turns this red on its own with no change here.
+  getRobotNetworkConnected() {
+    const status_msg = this.state.status_msg
+    const last_status_time = this.state.last_status_time
+    if (status_msg == null || last_status_time == null) {
+      return false
+    }
+    if ((Date.now() - last_status_time) > STATUS_TIMEOUT_MS) {
+      return false
+    }
+    return status_msg.connected === true
+  }
+
   statusListener(message) {
     this.setState({
       status_msg: message,
       connected: true,
+      last_status_time: Date.now(),
     })
   }
 
   updateStatusListener(namespace) {
     if (this.state.statusListener) {
       this.state.statusListener.unsubscribe()
-      this.setState({ statusListener: null, status_msg: null })
+      this.setState({ statusListener: null, status_msg: null, last_status_time: null })
     }
     if (namespace != null && namespace.indexOf('null') === -1) {
       const statusNamespace = namespace + '/status'
@@ -346,7 +444,14 @@ class NepiAppWpilibIF extends Component {
 
 
   componentDidMount() {
-    this.setState({ needs_update: true })
+    // Re-render on a fixed tick so the Robot Network indicator notices status
+    // messages that stopped arriving. Nothing reads conn_tick; the render it
+    // forces is the point.
+    const connCheckTimer = setInterval(
+      () => this.setState((prevState) => ({ conn_tick: prevState.conn_tick + 1 })),
+      CONN_CHECK_INTERVAL_MS
+    )
+    this.setState({ needs_update: true, connCheckTimer: connCheckTimer })
   }
 
   componentDidUpdate(prevProps, prevState) {
@@ -367,20 +472,39 @@ class NepiAppWpilibIF extends Component {
     if (this.state.settingsListener != null) {
       this.state.settingsListener.unsubscribe()
     }
+    if (this.state.connCheckTimer != null) {
+      clearInterval(this.state.connCheckTimer)
+    }
   }
 
-  // One selector per connect IF, in node order, all inside ONE bordered Section --
-  // the connect rows are a single panel of source selections, not five unrelated
-  // blocks, so the box goes around the whole set and each row is separated from
-  // the next by the standard RUI divider. make_section={false} keeps each
-  // component from drawing a bordered box of its own inside that panel.
+  // One selector per connect path, in node order, all inside ONE bordered
+  // Section -- the connect rows are a single panel of source selections, not
+  // three unrelated blocks, so the box goes around the whole set.
+  // make_section={false} keeps each component from drawing a bordered box of its
+  // own inside that panel.
   //
-  // show_connect_header={true} is what titles each row: the component renders its
-  // title prop and its green "Connected" BooleanIndicator on one line ABOVE the
-  // Select, both driven by that connect namespace's ConnectIFStatus, so the page
-  // no longer renders a bold Label of its own.
+  // Each row is ONE line: the connect name on the left, its dropdown on the
+  // right, nothing else. show_connect_header={false} drops the bold title line
+  // the components used to draw above their Select, show_connect_status={false}
+  // drops their "Connected" BooleanIndicator, and selector_label replaces their
+  // hardcoded second word ("Detector", "NavPose Source") with the row name. No
+  // dividers -- three single lines read as one list without them.
+  //
+  // The Obstacles row is built here rather than by a shared component: there is
+  // no Nepi_IF_ConnectObstacles.js, because ConnectObstaclesIF is not a
+  // ConnectNodeIF and publishes no ConnectIFStatus for one to bind to. It uses
+  // the same Label/Select primitives so the three rows are indistinguishable.
   renderControls() {
-    const divider = <div style={{ borderTop: "1px solid #ffffff", marginTop: Styles.vars.spacing.medium, marginBottom: Styles.vars.spacing.xs }}/>
+    const obstacles_namespaces = this.getObstaclesNamespaces()
+    const obstacles_selected = this.getSelectedObstaclesNamespace()
+
+    var obstacles_items = []
+    obstacles_items.push(<Option value={OBSTACLES_NONE}>{OBSTACLES_NONE}</Option>)
+    for (var i = 0; i < obstacles_namespaces.length; i++) {
+      obstacles_items.push(
+        <Option value={obstacles_namespaces[i]}>{obstacles_namespaces[i]}</Option>
+      )
+    }
 
     return (
       <Section title={"Connections"}>
@@ -388,58 +512,39 @@ class NepiAppWpilibIF extends Component {
         <NepiIFConnectDetections
           namespace={this.getConnectNamespace("detections_connect")}
           title={"Detections"}
+          selector_label={"Detections"}
           show_selector={true}
           show_data={false}
           show_controls={false}
-          show_connect_header={true}
+          show_connect_header={false}
+          show_connect_status={false}
           make_section={false}
         />
 
-        {divider}
+        <Columns>
+          <Column>
 
-        <NepiIFConnectTargets
-          namespace={this.getConnectNamespace("targets_connect")}
-          title={"Targets"}
-          show_selector={true}
-          show_data={false}
-          show_controls={false}
-          show_connect_header={true}
-          make_section={false}
-        />
+            <Label title={"Obstacles"}>
+              <Select
+                onChange={this.onObstaclesSelected}
+                value={obstacles_selected}
+              >
+                {obstacles_items}
+              </Select>
+            </Label>
 
-        {divider}
-
-        <NepiIFConnectRBX
-          namespace={this.getConnectNamespace("rbx_connect")}
-          title={"RBX"}
-          show_selector={true}
-          show_data={false}
-          show_controls={false}
-          show_connect_header={true}
-          make_section={false}
-        />
-
-        {divider}
-
-        <NepiIFConnectMotor
-          namespace={this.getConnectNamespace("motor_connect")}
-          title={"Motors"}
-          show_selector={true}
-          show_data={false}
-          show_controls={false}
-          show_connect_header={true}
-          make_section={false}
-        />
-
-        {divider}
+          </Column>
+        </Columns>
 
         <NepiIFConnectNavPose
           namespace={this.getConnectNamespace("navpose_connect")}
           title={"NavPose"}
+          selector_label={"NavPose"}
           show_selector={true}
           show_data={false}
           show_controls={false}
-          show_connect_header={true}
+          show_connect_header={false}
+          show_connect_status={false}
           make_section={false}
         />
 
@@ -490,13 +595,19 @@ class NepiAppWpilibIF extends Component {
     )
   }
 
-  // The Robot Network box. One editable box for the team number, three disabled
-  // boxes showing the subnet derived from it and the addresses on that subnet,
-  // as the device config currently holds them. Commit is on Enter in the top box
-  // -- there is no separate apply button, matching the ocean aero group this is
-  // adapted from.
+  // The Robot Network box. A connection indicator on top, then one editable box
+  // for the team number, then three disabled boxes showing the subnet derived
+  // from it and the addresses on that subnet, as the device config currently
+  // holds them. Commit is on Enter in the team number box -- there is no
+  // separate apply button, matching the ocean aero group this is adapted from.
+  //
+  // The indicator is the first row INSIDE the box rather than beside the section
+  // title: Section renders its title as plain text and takes no element beside
+  // it, and Section.js is shared by the whole RUI, so it is left alone. The row
+  // uses the same Label-plus-BooleanIndicator layout the connect components use.
   renderRobotNetwork() {
     const team_number = this.state.team_number
+    const network_connected = this.getRobotNetworkConnected()
     // Live values read from the device system config.
     const vehicle_subnet = this.getSettingValue('NEPI_VEHICLE_SUBNET')
     const nepi_ip = this.getSettingValue('NEPI_ALIAS_IP_1')
@@ -504,6 +615,10 @@ class NepiAppWpilibIF extends Component {
 
     return (
       <Section title={"Robot Network"}>
+
+        <Label title={"Connected"}>
+          <BooleanIndicator value={network_connected} />
+        </Label>
 
         <Label title={this.renderSubLabel("Team Number", "sets the three below")}>
           <Input

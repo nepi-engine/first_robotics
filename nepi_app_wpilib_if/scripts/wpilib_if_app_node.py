@@ -29,10 +29,11 @@ from nepi_api.messages_if import MsgIF
 from nepi_api.system_if import ControlsIF
 
 from nepi_api.connect_detections_if import ConnectDetectionsIF
-from nepi_api.connect_targets_if import ConnectTargetsIF
-from nepi_api.connect_device_if_rbx import ConnectRBXDeviceIF
-from nepi_api.connect_device_if_motor import ConnectMotorsDeviceIF
 from nepi_api.connect_data_if import ConnectNavPoseIF
+# nepi_app_obstacles' CMakeLists installs its api/*.py flat into nepi_api, so at
+# runtime ConnectObstaclesIF sits beside the two above despite living in that
+# app's source tree.
+from nepi_api.connect_obstacles_if import ConnectObstaclesIF
 
 
 #########################################
@@ -41,6 +42,11 @@ FACTORY_ENABLED = False
 FACTORY_SELECTED_OPTION = "None"
 FACTORY_VALUE = 0.0
 FACTORY_OPTIONS = ["None", "Option_A", "Option_B", "Option_C"]
+
+# Unselected state of the obstacles app selector. The RUI sends this string when
+# the operator picks the blank entry, and it is what the node reports back on
+# status while nothing is connected.
+NONE_NAMESPACE = "None"
 
 STATUS_PUBLISH_RATE_HZ = 1.0
 
@@ -62,6 +68,7 @@ class NepiWpilibApp(object):
     selected_option = FACTORY_SELECTED_OPTION
     value = FACTORY_VALUE
     options = FACTORY_OPTIONS
+    connected = False
 
     node_if = None
 
@@ -72,9 +79,7 @@ class NepiWpilibApp(object):
     # Per-IF first-connection flags. Each connect IF's callback prints the first
     # data dict and status msg it receives exactly once, then sets its flag.
     got_first_detections = False
-    got_first_targets = False
-    got_first_rbx = False
-    got_first_motors = False
+    got_first_obstacles = False
     got_first_navpose = False
 
     # Latest data dict and status msg per connect IF. Each callback stores both
@@ -82,14 +87,17 @@ class NepiWpilibApp(object):
     # from here rather than re-querying the IF.
     detections_dict = None
     detections_status = None
-    targets_dict = None
-    targets_status = None
-    rbx_dict = None
-    rbx_status = None
-    motors_dict = None
-    motors_status = None
+    obstacles_dict = None
+    obstacles_status = None
     navpose_dict = None
     navpose_status = None
+
+    # Obstacles connect path. ConnectObstaclesIF is not a ConnectNodeIF: it has
+    # no selector or auto-discovery of its own, so the operator picks an
+    # obstacles app namespace in the RUI and this node builds the IF against it.
+    # obstacles_namespace is the current selection, reported back on status.
+    obstacles_if = None
+    obstacles_namespace = NONE_NAMESPACE
 
     DEFAULT_NODE_NAME = "app_wpilib"
 
@@ -181,6 +189,14 @@ class NepiWpilibApp(object):
                 'qsize': 10,
                 'callback': self.triggerActionCb,
                 'callback_args': ()
+            },
+            'set_obstacles_namespace': {
+                'namespace': self.node_namespace,
+                'topic': 'set_obstacles_namespace',
+                'msg': String,
+                'qsize': 10,
+                'callback': self.setObstaclesNamespaceCb,
+                'callback_args': ()
             }
         }
 
@@ -195,13 +211,15 @@ class NepiWpilibApp(object):
         self.node_if.wait_for_ready()
 
         ##############################
-        # Surface NEPI connect (consumer) IFs in this app's RUI. Each of the five
-        # connect IFs is built with show_selector=True (expose the source/device
-        # selector panel) and show_controls=False / show_data=False (hide the
-        # controls and data panels), plus a per-IF first-connection callback.
-        # ConnectDetectionsIF/ConnectTargetsIF/ConnectNavPoseIF consume their
-        # data products; ConnectRBXDeviceIF/ConnectMotorsDeviceIF have no
-        # separate data product, so their callback fires with the status dict.
+        # Surface NEPI connect (consumer) IFs in this app's RUI. The two
+        # nepi_api connect IFs -- ConnectDetectionsIF and ConnectNavPoseIF --
+        # are built with show_selector=True (expose the source selector panel)
+        # and show_controls=False / show_data=False (hide the controls and data
+        # panels), plus a per-IF first-connection callback that fires with the
+        # data product they consume. The third connect path, Obstacles, is not a
+        # ConnectNodeIF and has no selector of its own: ConnectObstaclesIF is
+        # built on demand against the app namespace the operator picks in the
+        # RUI. See connectObstacles().
         self.setupInterfaceIFs()
 
         ##############################
@@ -250,6 +268,11 @@ class NepiWpilibApp(object):
         if self.node_if is not None:
             self.node_if.set_param('value', self.value)
             self.node_if.save_config()
+
+    def setObstaclesNamespaceCb(self, msg):
+        self.msg_if.pub_info(str(msg))
+        self.connectObstacles(msg.data)
+        self.publish_status()
 
     def triggerActionCb(self, msg):
         # The app's action is to apply its current state: the selected option at
@@ -416,13 +439,6 @@ class NepiWpilibApp(object):
                         dataCB = self.detectionsConnectCb,
                         msg_if = self.msg_if)
 
-        self.targets_if = ConnectTargetsIF(
-                        show_selector = True,
-                        show_controls = False,
-                        show_data = False,
-                        dataCB = self.targetsConnectCb,
-                        msg_if = self.msg_if)
-
         self.navpose_if = ConnectNavPoseIF(
                         show_selector = True,
                         show_controls = False,
@@ -430,21 +446,38 @@ class NepiWpilibApp(object):
                         dataCB = self.navposeConnectCb,
                         msg_if = self.msg_if)
 
-        # RBX and Motors connect IFs have no separate data product, so their
-        # dataCB fires with their status dict on each status update.
-        self.rbx_if = ConnectRBXDeviceIF(
-                        show_selector = True,
-                        show_controls = False,
-                        show_data = False,
-                        dataCB = self.rbxConnectCb,
-                        msg_if = self.msg_if)
+    # Point the obstacles connect path at an obstacles app namespace, or tear it
+    # down. Called from setObstaclesNamespaceCb with whatever the RUI selector
+    # sent. The previous IF is always unregistered first, so a selection change
+    # does not leave the old instance's publishers and subscribers registered.
+    # An empty or 'None' selection is a disconnect: nothing is constructed and
+    # the node is left in a valid state with no obstacles connection.
+    #
+    # ConnectObstaclesIF only advertises against the namespace -- it does not
+    # require the app to be live -- but construction is guarded anyway so a stale
+    # or mistyped namespace cannot take the node down.
+    def connectObstacles(self, namespace):
+        if self.obstacles_if is not None:
+            self.obstacles_if.unregister()
+            self.obstacles_if = None
+        self.obstacles_dict = None
+        self.obstacles_status = None
+        self.got_first_obstacles = False
 
-        self.motors_if = ConnectMotorsDeviceIF(
-                        show_selector = True,
-                        show_controls = False,
-                        show_data = False,
-                        dataCB = self.motorsConnectCb,
-                        msg_if = self.msg_if)
+        if namespace is None or namespace == "" or namespace == NONE_NAMESPACE:
+            self.obstacles_namespace = NONE_NAMESPACE
+            self.msg_if.pub_info("Obstacles connection cleared")
+            return
+
+        self.obstacles_namespace = namespace
+        try:
+            self.obstacles_if = ConnectObstaclesIF(
+                            namespace = namespace,
+                            dataCB = self.obstaclesConnectCb)
+        except Exception as e:
+            self.obstacles_if = None
+            self.msg_if.pub_warn("Failed to connect obstacles app at " +
+                                 str(namespace) + ": " + str(e))
 
 
     ###################
@@ -453,9 +486,9 @@ class NepiWpilibApp(object):
     # Each connect IF invokes its dataCB with a single data dict. The
     # callback stores that dict and the IF's current status message (via
     # get_status_msg()) on every invocation. On the FIRST invocation per IF it
-    # also logs both, then sets the got_first flag so it logs only once. RBX and
-    # Motors have no separate data product, so their callback receives the
-    # status dict.
+    # also logs both, then sets the got_first flag so it logs only once. The
+    # Obstacles app publishes no data product this consumer subscribes to, so
+    # ConnectObstaclesIF fires its dataCB with the status dict instead.
 
     def detectionsConnectCb(self, data_dict):
         self.detections_dict = data_dict
@@ -466,32 +499,15 @@ class NepiWpilibApp(object):
         self.msg_if.pub_info("Detections first-connection data dict: " + str(self.detections_dict))
         self.msg_if.pub_info("Detections first-connection status message: " + str(self.detections_status))
 
-    def targetsConnectCb(self, data_dict):
-        self.targets_dict = data_dict
-        self.targets_status = self.targets_if.get_status_msg()
-        if self.got_first_targets is True:
+    def obstaclesConnectCb(self, data_dict):
+        self.obstacles_dict = data_dict
+        if self.obstacles_if is not None:
+            self.obstacles_status = self.obstacles_if.get_status_msg()
+        if self.got_first_obstacles is True:
             return
-        self.got_first_targets = True
-        self.msg_if.pub_info("Targets first-connection data dict: " + str(self.targets_dict))
-        self.msg_if.pub_info("Targets first-connection status message: " + str(self.targets_status))
-
-    def rbxConnectCb(self, data_dict):
-        self.rbx_dict = data_dict
-        self.rbx_status = self.rbx_if.get_status_msg()
-        if self.got_first_rbx is True:
-            return
-        self.got_first_rbx = True
-        self.msg_if.pub_info("RBX first-connection data dict: " + str(self.rbx_dict))
-        self.msg_if.pub_info("RBX first-connection status message: " + str(self.rbx_status))
-
-    def motorsConnectCb(self, data_dict):
-        self.motors_dict = data_dict
-        self.motors_status = self.motors_if.get_status_msg()
-        if self.got_first_motors is True:
-            return
-        self.got_first_motors = True
-        self.msg_if.pub_info("Motors first-connection data dict: " + str(self.motors_dict))
-        self.msg_if.pub_info("Motors first-connection status message: " + str(self.motors_status))
+        self.got_first_obstacles = True
+        self.msg_if.pub_info("Obstacles first-connection data dict: " + str(self.obstacles_dict))
+        self.msg_if.pub_info("Obstacles first-connection status message: " + str(self.obstacles_status))
 
     def navposeConnectCb(self, data_dict):
         self.navpose_dict = data_dict
@@ -507,7 +523,29 @@ class NepiWpilibApp(object):
     ## Status Publishers
 
     def statusPublishCb(self, timer):
+        # PLACEHOLDER HANDOFF POINT. set_connected() is driven unconditionally
+        # True here because nothing reads the real WPILib NetworkTables
+        # connection state yet. Replace this call with one made from the
+        # NetworkTables connection listener; nothing else has to change.
+        #
+        # No separate timer for it: STATUS_PUBLISH_RATE_HZ is 1.0, so this
+        # callback already runs at exactly one hertz. A second timer would
+        # either double-publish the status message or duplicate this schedule.
+        self.set_connected(True)
         self.publish_status()
+
+    def set_connected(self, connected):
+        """Set the app's reported robot network connection state.
+
+        Placeholder. The value is currently driven unconditionally True once per
+        second from statusPublishCb; another developer will later drive it from
+        the real WPILib NetworkTables connection state. No connection detection
+        is performed here.
+
+        Args:
+            connected (bool): True if the app is connected to the robot network.
+        """
+        self.connected = connected
 
     def publish_status(self):
         status_msg = NepiAppWpilibIFStatus()
@@ -515,7 +553,8 @@ class NepiWpilibApp(object):
         status_msg.options = self.options
         status_msg.selected_option = self.selected_option
         status_msg.value = self.value
-        status_msg.heartbeat = True
+        status_msg.connected = self.connected
+        status_msg.selected_obstacles_namespace = self.obstacles_namespace
         # Example controls namespace, fully qualified -- see
         # getExampleControlsNamespace() for why it is not ControlsIF.get_namespace().
         # Reported before the IF exists too: initCb() publishes status while
