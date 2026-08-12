@@ -72,6 +72,12 @@ DEFAULT_MAX_PROC_RATE = 10
 DEFAULT_MAX_IMG_RATE = 10
 DEFAULT_USE_LAST_IMAGE = True
 
+# Overlay transparency, 0.0 fully opaque through 1.0 invisible. The image pub
+# node blends at (1.0 - transparency); these defaults reproduce the blend ratios
+# that used to be hard-coded there (ground 0.4, obstacles 0.6).
+DEFAULT_GROUND_TRANSPARENCY = 0.6
+DEFAULT_OBSTACLES_TRANSPARENCY = 0.4
+
 GET_IMAGE_TIMEOUT_SEC = 1
 
 CONNECTED_TIMEOUT_SEC = 2
@@ -212,11 +218,15 @@ class ObstaclesIF:
     color_image_topic = ''
     color_image_topic_connected = False
 
+    # One param dict for every overlay view control. initCb copies key by key, so
+    # adding a key here is safe against a saved config written before it existed.
     image_controls_dict = dict(
         full_screen_enabled = False,
         show_sources_enabled = True,
         show_ground_enabled = True,
-        show_obstacles_enabled = True
+        show_obstacles_enabled = True,
+        ground_transparency = DEFAULT_GROUND_TRANSPARENCY,
+        obstacles_transparency = DEFAULT_OBSTACLES_TRANSPARENCY
     )
 
     ready = False
@@ -505,6 +515,22 @@ class ObstaclesIF:
                 'msg': Bool,
                 'qsize': 10,
                 'callback': self.setShowObstaclesCb,
+                'callback_args': ()
+            },
+            self.node_if_prefix + 'set_ground_transparency': {
+                'namespace': self.obstacles_namespace,
+                'topic': 'set_ground_transparency',
+                'msg': Float32,
+                'qsize': 10,
+                'callback': self.setGroundTransparencyCb,
+                'callback_args': ()
+            },
+            self.node_if_prefix + 'set_obstacles_transparency': {
+                'namespace': self.obstacles_namespace,
+                'topic': 'set_obstacles_transparency',
+                'msg': Float32,
+                'qsize': 10,
+                'callback': self.setObstaclesTransparencyCb,
                 'callback_args': ()
             },
             ############
@@ -848,6 +874,9 @@ class ObstaclesIF:
         self.obstacles_status_msg.show_ground_enabled = self.image_controls_dict['show_ground_enabled']
         self.obstacles_status_msg.show_obstacles_enabled = self.image_controls_dict['show_obstacles_enabled']
 
+        self.obstacles_status_msg.ground_transparency = float(self.image_controls_dict['ground_transparency'])
+        self.obstacles_status_msg.obstacles_transparency = float(self.image_controls_dict['obstacles_transparency'])
+
         if self.node_if is not None:
             self.node_if.publish_pub('obstacles_status_pub', self.obstacles_status_msg)
 
@@ -1041,10 +1070,32 @@ class ObstaclesIF:
     def setShowObstaclesCb(self, msg):
         self.setImageControl('show_obstacles_enabled', msg.data)
 
+    def setGroundTransparencyCb(self, msg):
+        self.setImageRatio('ground_transparency', msg.data)
+
+    def setObstaclesTransparencyCb(self, msg):
+        self.setImageRatio('obstacles_transparency', msg.data)
+
     def setImageControl(self, control_name, enabled):
         if control_name not in self.image_controls_dict.keys():
             return
-        self.image_controls_dict[control_name] = (enabled == True)
+        self.setImageControlValue(control_name, (enabled == True))
+
+    def setImageRatio(self, control_name, ratio):
+        if control_name not in self.image_controls_dict.keys():
+            return
+        try:
+            ratio = float(ratio)
+        except (TypeError, ValueError):
+            return
+        if ratio < 0.0:
+            ratio = 0.0
+        elif ratio > 1.0:
+            ratio = 1.0
+        self.setImageControlValue(control_name, ratio)
+
+    def setImageControlValue(self, control_name, value):
+        self.image_controls_dict[control_name] = value
         self.publish_status()
         if self.node_if is not None:
             self.node_if.set_param(self.node_if_prefix + 'image_controls', self.image_controls_dict)

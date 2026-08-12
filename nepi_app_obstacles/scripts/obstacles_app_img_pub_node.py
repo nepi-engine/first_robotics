@@ -45,10 +45,28 @@ from nepi_api.data_if import ColorImageIF
 WATCHDOG_DELAY = 60
 WATCHDOG_TIMEOUT = 3
 
+# How much source frame history the aligned-image lookup can search. Two seconds
+# is well past any observed process latency, and the count cap keeps a fast
+# source from holding more than a handful of frames. Raw ROS Image msgs are
+# buffered undecoded, so a frame that never gets published costs only its bytes.
+MAX_IMG_BUFFER_SEC = 2.0
+MAX_IMG_BUFFER_LEN = 10
+
 # Overlay colours, BGR
 OBSTACLE_BOX_COLOR = (0, 255, 0)
-GROUND_OVERLAY_RATIO = 0.4
-OBSTACLES_OVERLAY_RATIO = 0.6
+
+# The ground overlay is painted one flat colour over the whole ground segment
+# rather than colourized by range -- what the operator wants from it is where the
+# drivable surface is, and a solid fill reads that at a glance. The obstacles
+# overlay stays range-colourized, because distance to an obstacle is the point of
+# it. Set to None to colourize instead.
+GROUND_OVERLAY_COLOR = (0, 255, 0)
+OBSTACLES_OVERLAY_COLOR = None
+
+# Fallbacks for the transparency the parent reports on its status message, used
+# only until the first status arrives. 0.0 fully opaque through 1.0 invisible.
+DEFAULT_GROUND_TRANSPARENCY = 0.6
+DEFAULT_OBSTACLES_TRANSPARENCY = 0.4
 
 # Colour painted over every non-member pixel of a segmentation render, BGR.
 # The platform colorizer folds NaN onto the max-range colour, which is the same
@@ -100,6 +118,13 @@ class ObstaclesImgPub:
     sources_info_dict = dict()
     imgs_info_lock = threading.Lock()
 
+    # Recent source frames per topic, newest last, as (stamp, raw Image msg).
+    # Held outside sources_info_dict on purpose: that dict is deep-copied on a
+    # 1 Hz timer, and copying full frames on every tick would cost more than the
+    # alignment saves.
+    img_buffer_dict = dict()
+    img_buffer_lock = threading.Lock()
+
     state_str_msg = 'Loading'
 
     clear_det_time = 1.0
@@ -115,6 +140,9 @@ class ObstaclesImgPub:
     show_sources_enabled = True
     show_ground_enabled = False
     show_obstacles_enabled = False
+
+    ground_transparency = DEFAULT_GROUND_TRANSPARENCY
+    obstacles_transparency = DEFAULT_OBSTACLES_TRANSPARENCY
 
     overlay_labels = True
     overlay_range_bearing = True
@@ -301,7 +329,9 @@ class ObstaclesImgPub:
 
         # Written by obstaclesCb, read by imageCb. Every key imageCb reads has
         # to exist from the moment the topic is subscribed, because obstacle
-        # messages and image messages arrive independently.
+        # messages and image messages arrive independently. img_stamp is the
+        # source frame stamp the current obstacle data was derived from -- what
+        # imageCb aligns the published image against.
         img_info_dict['obstacles_dict_list'] = []
         img_info_dict['navpose_dict'] = None
         img_info_dict['depth_map_ground'] = None
@@ -315,8 +345,56 @@ class ObstaclesImgPub:
         for product in self.SEGMENT_IMG_PRODUCTS:
             img_info_dict['segment_img_published'][product['data_product']] = False
 
-        img_info_dict['last_img'] = None
         return img_info_dict
+
+    ###############.########################
+    # Source frame buffer
+
+    def bufferImgMsg(self, source_topic, img_msg, timestamp):
+        # Every arriving frame goes in, not just the ones a publish cycle lands
+        # on, because the aligned lookup can only find the frame the obstacle
+        # data came from if that frame was kept.
+        self.img_buffer_lock.acquire()
+        img_buffer = self.img_buffer_dict.get(source_topic, None)
+        if img_buffer is None:
+            img_buffer = []
+            self.img_buffer_dict[source_topic] = img_buffer
+        img_buffer.append((timestamp, img_msg))
+        # Age first, against the newest stamp, then the hard count cap.
+        while len(img_buffer) > 1 and (timestamp - img_buffer[0][0]) > MAX_IMG_BUFFER_SEC:
+            img_buffer.pop(0)
+        while len(img_buffer) > MAX_IMG_BUFFER_LEN:
+            img_buffer.pop(0)
+        self.img_buffer_lock.release()
+
+    def getAlignedImgMsg(self, source_topic, target_stamp):
+        # The buffered frame closest in time to the frame the obstacle data was
+        # derived from. Nearest rather than exact match because a source's colour
+        # image and depth map are separate products and their stamps are only
+        # equal when the driver publishes them from one capture -- nearest gives
+        # the exact frame when they agree and the best available frame when they
+        # do not. Returns None when there is nothing buffered or no data stamp to
+        # align to yet, and the caller falls back to the frame in hand.
+        if target_stamp is None or float(target_stamp) <= 0:
+            return None
+        target_stamp = float(target_stamp)
+        best_msg = None
+        best_delta = None
+        self.img_buffer_lock.acquire()
+        img_buffer = self.img_buffer_dict.get(source_topic, [])
+        for entry in img_buffer:
+            delta = abs(entry[0] - target_stamp)
+            if best_delta is None or delta < best_delta:
+                best_delta = delta
+                best_msg = entry[1]
+        self.img_buffer_lock.release()
+        return best_msg
+
+    def clearImgBuffer(self, source_topic):
+        self.img_buffer_lock.acquire()
+        if source_topic in self.img_buffer_dict.keys():
+            self.img_buffer_dict[source_topic] = []
+        self.img_buffer_lock.release()
 
     def updaterCb(self, timer):
         selected_source_topics = copy.deepcopy(self.selected_source_topics)
@@ -503,8 +581,11 @@ class ObstaclesImgPub:
         self.sources_info_dict[source_topic]['publishing'] = False
         self.sources_info_dict[source_topic]['img_connected'] = False
         self.sources_info_dict[source_topic]['img_published'] = False
-        self.sources_info_dict[source_topic]['last_img'] = None
         self.imgs_info_lock.release()
+
+        # Nothing in the buffer survives an unsubscribe -- on resubscribe those
+        # frames would be arbitrarily old and could win an alignment lookup.
+        self.clearImgBuffer(source_topic)
 
         return True
 
@@ -568,6 +649,9 @@ class ObstaclesImgPub:
         if self.enabled == False or self.state_str_msg != ProcessStatus.STATE_PROCESSING:
             return
 
+        timestamp = copy.deepcopy(float(image_msg.header.stamp.to_sec()))
+        self.bufferImgMsg(source_topic, image_msg, timestamp)
+
         # Check if time to publish
         delay_time = float(1) / max_image_pub_rate_hz
         last_img_time = self.sources_info_dict[source_topic]['last_img_time']
@@ -576,7 +660,6 @@ class ObstaclesImgPub:
             return
         self.sources_info_dict[source_topic]['last_img_time'] = current_time
 
-        timestamp = copy.deepcopy(float(image_msg.header.stamp.to_sec()))
         self.sources_info_dict[source_topic]['get_latency_time'] = (nepi_utils.get_time() - timestamp)
 
         obstacles_dict_list = copy.deepcopy(self.sources_info_dict[source_topic]['obstacles_dict_list'])
@@ -585,12 +668,26 @@ class ObstaclesImgPub:
 
         depth_map_ground = copy.deepcopy(self.sources_info_dict[source_topic]['depth_map_ground'])
         depth_map_obstacles = copy.deepcopy(self.sources_info_dict[source_topic]['depth_map_obstacles'])
+        obstacles_stamp = self.sources_info_dict[source_topic]['img_stamp']
 
-        if self.use_last_image == False:
-            use_cv2_img = nepi_img.rosimg_to_cv2img(image_msg)
-        else:
-            # Use last image to align with obstacle data
-            use_cv2_img = copy.deepcopy(self.sources_info_dict[source_topic]['last_img'])
+        # use_last_image is the "align the image with the obstacle data" control.
+        # It used to publish whatever frame the previous publish cycle stashed,
+        # which is one whole source frame in arrears no matter how far behind the
+        # data actually is -- so on a slow source the boxes ran seconds ahead of
+        # the image they were drawn on. Now it looks up the frame the data was
+        # derived from by stamp, which is correct at any source rate. Off means no
+        # alignment at all: newest frame, data as it stands.
+        use_img_msg = image_msg
+        if self.use_last_image == True:
+            aligned_img_msg = self.getAlignedImgMsg(source_topic, obstacles_stamp)
+            if aligned_img_msg is not None:
+                use_img_msg = aligned_img_msg
+
+        # Report the stamp of the frame actually published, not of the frame that
+        # triggered the cycle -- otherwise an aligned publish claims to be fresher
+        # than it is and every downstream latency reads low.
+        use_timestamp = copy.deepcopy(float(use_img_msg.header.stamp.to_sec()))
+        use_cv2_img = nepi_img.rosimg_to_cv2img(use_img_msg)
 
         if use_cv2_img is not None:
             self.processObstaclesImage(source_topic,
@@ -598,13 +695,9 @@ class ObstaclesImgPub:
                                         obstacles_dict_list,
                                         depth_map_ground,
                                         depth_map_obstacles,
-                                        timestamp = timestamp,
+                                        timestamp = use_timestamp,
                                         )
-            self.sources_info_dict[source_topic]['pub_latency_time'] = (nepi_utils.get_time() - timestamp)
-
-        if self.use_last_image == True:
-            # Hold this image for the next cycle
-            self.sources_info_dict[source_topic]['last_img'] = nepi_img.rosimg_to_cv2img(image_msg)
+            self.sources_info_dict[source_topic]['pub_latency_time'] = (nepi_utils.get_time() - use_timestamp)
 
     def processObstaclesImage(self, source_topic,
                                     cv2_img,
@@ -634,10 +727,14 @@ class ObstaclesImgPub:
             return False
 
         if depth_map_ground is not None and self.show_ground_enabled == True:
-            cv2_img = self.applyDepthMapOverlay(depth_map_ground, cv2_img, GROUND_OVERLAY_RATIO)
+            cv2_img = self.applyDepthMapOverlay(depth_map_ground, cv2_img,
+                                                self.getBlendRatio(self.ground_transparency),
+                                                color = GROUND_OVERLAY_COLOR)
 
         if depth_map_obstacles is not None and self.show_obstacles_enabled == True:
-            cv2_img = self.applyDepthMapOverlay(depth_map_obstacles, cv2_img, OBSTACLES_OVERLAY_RATIO)
+            cv2_img = self.applyDepthMapOverlay(depth_map_obstacles, cv2_img,
+                                                self.getBlendRatio(self.obstacles_transparency),
+                                                color = OBSTACLES_OVERLAY_COLOR)
 
         if len(obstacles_dict_list) > 0 and self.show_obstacles_enabled == True:
             cv2_img = self.applyBoxesOverlay(obstacles_dict_list, cv2_img, OBSTACLE_BOX_COLOR)
@@ -772,17 +869,35 @@ class ObstaclesImgPub:
         finally:
             self.img_node_lock.release()
 
-    def applyDepthMapOverlay(self, np_depth_map, cv2_img, blend_ratio):
-        # Colourize the segmentation raster and blend it only where the raster
-        # has a finite range value. Non-member pixels are NaN by contract, so
-        # the mask is exactly the segment.
+    def getBlendRatio(self, transparency):
+        # The wire value is transparency, the way the RUI slider labels it;
+        # addWeighted wants the overlay's share, which is its complement.
+        try:
+            transparency = float(transparency)
+        except (TypeError, ValueError):
+            return 0.5
+        if transparency < 0.0:
+            transparency = 0.0
+        elif transparency > 1.0:
+            transparency = 1.0
+        return 1.0 - transparency
+
+    def applyDepthMapOverlay(self, np_depth_map, cv2_img, blend_ratio, color = None):
+        # Blend the segmentation only where the raster has a finite range value.
+        # Non-member pixels are NaN by contract, so the mask is exactly the
+        # segment. With a color the segment is painted that one flat colour; with
+        # color None it is colourized by range.
         try:
             mask = np.isfinite(np_depth_map)
             if mask.any() == False:
                 return cv2_img
-            cv2_map = nepi_img.npDepthMap_to_cv2ColorImg(copy.deepcopy(np_depth_map),
-                                                        min_range_m = self.min_range_m,
-                                                        max_range_m = self.max_range_m)
+            if color is not None:
+                cv2_map = np.zeros((np_depth_map.shape[0], np_depth_map.shape[1], 3), dtype = np.uint8)
+                cv2_map[:, :] = color
+            else:
+                cv2_map = nepi_img.npDepthMap_to_cv2ColorImg(copy.deepcopy(np_depth_map),
+                                                            min_range_m = self.min_range_m,
+                                                            max_range_m = self.max_range_m)
             if cv2_map is None:
                 return cv2_img
             if cv2_map.shape[:2] != cv2_img.shape[:2]:
@@ -969,6 +1084,9 @@ class ObstaclesImgPub:
         self.show_sources_enabled = msg.show_sources_enabled
         self.show_ground_enabled = msg.show_ground_enabled
         self.show_obstacles_enabled = msg.show_obstacles_enabled
+
+        self.ground_transparency = msg.ground_transparency
+        self.obstacles_transparency = msg.obstacles_transparency
 
         last_sel_imgs = copy.deepcopy(self.selected_source_topics)
         selected_source_topics = []

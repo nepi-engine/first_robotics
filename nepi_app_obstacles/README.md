@@ -43,6 +43,19 @@ Subscribed (each also available under `<base>/all/obstacles/…`):
 - `set_source_topic`, `set_source_topics`, `add_source_topic(s)`, `remove_source_topic(s)`
 - `set_max_process_rate`, `set_max_image_pub_rate`, `set_image_pub`, `set_use_last_image`
 - `set_full_screen`, `set_show_sources`, `set_show_ground`, `set_show_obstacles`
+- `set_ground_transparency`, `set_obstacles_transparency` — `std_msgs/Float32`,
+  0.0 fully opaque through 1.0 invisible, clamped
+
+`set_use_last_image` is the overlay alignment control. On, the image publisher
+renders the obstacle data on the buffered source frame whose stamp matches the
+frame that data was derived from, so the boxes and the scene agree at any source
+rate. Off, it renders on the newest frame and the boxes lag by the process
+latency.
+
+The ground overlay is painted a flat green over the whole ground segment; the
+obstacles overlay stays colourized by range. Both standalone segmentation
+renders (`ground_depth_map_image`, `obstacles_depth_map_image`) stay colourized
+by range regardless — they are depth map renders, not overlays.
 
 Sources are discovered by their `nepi_interfaces/DepthMapStatus` publisher, so
 any NEPI depth map is a valid input with no configuration.

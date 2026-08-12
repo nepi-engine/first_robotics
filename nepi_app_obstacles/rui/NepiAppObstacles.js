@@ -315,6 +315,11 @@ class NepiAppObstacles extends Component {
     const show_ground_enabled = status_msg.show_ground_enabled
     const show_obstacles_enabled = status_msg.show_obstacles_enabled
 
+    // 0.0 fully opaque through 1.0 invisible on the wire; the sliders below run
+    // 0-100 with scaled 0.01, the RUI's standard ratio slider shape.
+    const ground_transparency = status_msg.ground_transparency
+    const obstacles_transparency = status_msg.obstacles_transparency
+
     return (
       <Columns>
       <Column>
@@ -478,12 +483,45 @@ class NepiAppObstacles extends Component {
               </AsyncToggle>
             </Label>
 
+            {/* Each overlay's transparency slider sits under its own show
+                toggle and is hidden while that overlay is off -- with nothing
+                drawn there is nothing for it to adjust. */}
+            <div hidden={show_ground_enabled === false}>
+              <SliderAdjustment
+                title={"Ground Transparency"}
+                msgType={"std_msgs/Float32"}
+                adjustment={ground_transparency}
+                topic={process_namespace + "/set_ground_transparency"}
+                scaled={0.01}
+                min={0}
+                max={100}
+                disabled={false}
+                tooltip={"Sets ground overlay transparency, 100% is invisible"}
+                unit={"%"}
+              />
+            </div>
+
             <Label title="Show Obstacles">
               <AsyncToggle
                 checked={show_obstacles_enabled === true}
                 onClick={() => sendBoolMsg(process_namespace + "/set_show_obstacles", show_obstacles_enabled === false)}>
               </AsyncToggle>
             </Label>
+
+            <div hidden={show_obstacles_enabled === false}>
+              <SliderAdjustment
+                title={"Obstacles Transparency"}
+                msgType={"std_msgs/Float32"}
+                adjustment={obstacles_transparency}
+                topic={process_namespace + "/set_obstacles_transparency"}
+                scaled={0.01}
+                min={0}
+                max={100}
+                disabled={false}
+                tooltip={"Sets obstacles overlay transparency, 100% is invisible"}
+                unit={"%"}
+              />
+            </div>
 
             <Label title="Full Screen">
               <AsyncToggle

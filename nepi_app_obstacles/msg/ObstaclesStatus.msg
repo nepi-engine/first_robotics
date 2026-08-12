@@ -21,10 +21,17 @@ bool show_sources_enabled
 bool show_ground_enabled
 bool show_obstacles_enabled
 
+# How transparent each segmentation overlay is drawn on the source image, 0.0
+# fully opaque through 1.0 invisible. The image pub node blends at
+# (1.0 - transparency), so these read the way the RUI slider labels them.
+# Meaningful only while the matching show_*_enabled flag is true.
+float32 ground_transparency
+float32 obstacles_transparency
+
 # Colourized renders of the per-cycle depth map segmentation, one entry per
 # active imaging source. Both lists are built from the same active source order
 # as process_status.imaging_source_topics and imaging_pub_topics, so index i of
 # all four lists describes the same source. Each topic carries a bgr8 image, not
-# range data -- the raw segmentation stays inside the Obstacles message.
+# range data -- the raw segmentation ships on the obstacles_depth_map topic.
 string[] ground_image_pub_topics
 string[] obstacles_image_pub_topics

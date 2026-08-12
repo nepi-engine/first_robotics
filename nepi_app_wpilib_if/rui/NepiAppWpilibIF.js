@@ -24,6 +24,8 @@ import { observer, inject } from "mobx-react"
 import Section from "./Section"
 import { Columns, Column } from "./Columns"
 import Styles from "./Styles"
+import Input from "./Input"
+import Label from "./Label"
 
 import NepiIFConnectDetections from "./Nepi_IF_ConnectDetections"
 import NepiIFConnectTargets from "./Nepi_IF_ConnectTargets"
@@ -61,6 +63,18 @@ class NepiAppWpilibIF extends Component {
 
       statusListener: null,
       needs_update: true,
+
+      // Robot Network group. vehicle_subnet is the free-typed top box;
+      // subnet_initialized is the one-shot guard that seeds it from the live
+      // system config. The settings* keys cache the system-config Settings
+      // status so the disabled boxes can show live values.
+      vehicle_subnet: "",
+      subnet_initialized: false,
+
+      settingsNamespace: 'None',
+      settingsListener: null,
+      settingsNamesList: [],
+      settingsValuesList: [],
     }
 
     this.getBaseNamespace = this.getBaseNamespace.bind(this)
@@ -68,9 +82,17 @@ class NepiAppWpilibIF extends Component {
     this.getConnectNamespace = this.getConnectNamespace.bind(this)
     this.statusListener = this.statusListener.bind(this)
     this.updateStatusListener = this.updateStatusListener.bind(this)
+    this.getValidSubnetPrefix = this.getValidSubnetPrefix.bind(this)
+    this.getDerivedIp = this.getDerivedIp.bind(this)
+    this.onChangeVehicleSubnet = this.onChangeVehicleSubnet.bind(this)
+    this.onKeyVehicleSubnet = this.onKeyVehicleSubnet.bind(this)
+    this.settingsListener = this.settingsListener.bind(this)
+    this.updateSettingsListener = this.updateSettingsListener.bind(this)
+    this.getSettingValue = this.getSettingValue.bind(this)
     this.renderControls = this.renderControls.bind(this)
     this.getExampleControlsNamespace = this.getExampleControlsNamespace.bind(this)
     this.renderExampleControls = this.renderExampleControls.bind(this)
+    this.renderRobotNetwork = this.renderRobotNetwork.bind(this)
     this.renderConfig = this.renderConfig.bind(this)
   }
 
@@ -138,6 +160,173 @@ class NepiAppWpilibIF extends Component {
     this.setState({ appNamespace: namespace, needs_update: false })
   }
 
+
+  ///////////////////
+  // Robot Network
+  //
+  // A copy of the vehicle subnet control group from the ocean aero system setup
+  // page, relabeled for an FRC robot network. The operator edits one box -- the
+  // 10.TE.AM subnet the robot radio hands out -- and Enter commits that subnet
+  // plus every address derived from it in a single batched updateSettings call
+  // to <base_namespace>/settings, the system config Settings IF that system_mgr
+  // owns. The derived boxes are disabled and read their values back from that
+  // IF's status message, so what they show is what the device config holds, not
+  // what this page last sent.
+
+  // Returns the "a.b.c" /24 network prefix for a valid subnet entry, or null if
+  // the entry is not a valid subnet. Accepts entries like "10.90.23",
+  // "10.90.23.0", or "10.90.23.0/24".
+  getValidSubnetPrefix(subnet) {
+    if (subnet === null || subnet === undefined) {
+      return null
+    }
+    var cleaned = subnet.trim().split("/")[0]
+    if (cleaned === "") {
+      return null
+    }
+    var octets = cleaned.split(".")
+    if (octets.length < 3) {
+      return null
+    }
+    var prefix_octets = octets.slice(0, 3)
+    for (var i = 0; i < prefix_octets.length; i++) {
+      var oct = prefix_octets[i]
+      if (!/^\d{1,3}$/.test(oct)) {
+        return null
+      }
+      var num = parseInt(oct, 10)
+      if (num < 0 || num > 255) {
+        return null
+      }
+    }
+    return prefix_octets.join(".")
+  }
+
+  // Re-prefix an IP onto a new "a.b.c" network prefix. The host octet and any
+  // /mask suffix are preserved from currentValue (e.g. "10.10.10.103/24" with a
+  // new prefix "10.90.23" becomes "10.90.23.103/24"). When currentValue is blank
+  // or not a parseable IP, defaultHostSuffix is used instead (e.g. "103/24",
+  // "1", "2").
+  getDerivedIp(currentValue, newPrefix, defaultHostSuffix) {
+    var hostSuffix = defaultHostSuffix
+    if (currentValue !== null && currentValue !== undefined && currentValue !== "") {
+      var parts = currentValue.trim().split("/")
+      var octets = parts[0].split(".")
+      if (octets.length === 4 && /^\d{1,3}$/.test(octets[3])) {
+        hostSuffix = octets[3] + (parts.length > 1 ? "/" + parts[1] : "")
+      }
+    }
+    return newPrefix + "." + hostSuffix
+  }
+
+  onChangeVehicleSubnet(event) {
+    const el = document.getElementById("WpilibVehicleSubnet")
+    el.style.color = "purple"
+    el.style.fontWeight = "bold"
+    this.setState({ vehicle_subnet: event.target.value })
+  }
+
+  onKeyVehicleSubnet(event) {
+    if (event.key === 'Enter') {
+      const prefix = this.getValidSubnetPrefix(this.state.vehicle_subnet)
+      // Only accept the entry if it is a valid subnet. An invalid entry is
+      // rejected: it is not committed and the box stays marked (purple/bold).
+      if (prefix !== null) {
+        const el = document.getElementById("WpilibVehicleSubnet")
+        el.style.color = Styles.vars.colors.black
+        el.style.fontWeight = "normal"
+        // Push the subnet plus the three addresses derived from it in a single
+        // batch update. Each address keeps its current host octet and netmask
+        // and only swaps the network prefix. The disabled boxes below read the
+        // new values back from the live config.
+        //
+        // Default host suffixes follow the FRC convention for a 10.TE.AM.0/24
+        // robot network: .1 is the radio, .2 is the roboRIO, and NEPI keeps the
+        // platform default .103 for its own address.
+        const base_namespace = this.getBaseNamespace()
+        const settingsList = [
+          { nameStr: 'NEPI_VEHICLE_SUBNET', typeStr: 'String', valueStr: prefix },
+          { nameStr: 'NEPI_ALIAS_IP_1', typeStr: 'String',
+            valueStr: this.getDerivedIp(this.getSettingValue('NEPI_ALIAS_IP_1'), prefix, '103/24') },
+          { nameStr: 'NEPI_GATEWAY_IP', typeStr: 'String',
+            valueStr: this.getDerivedIp(this.getSettingValue('NEPI_GATEWAY_IP'), prefix, '1') },
+          { nameStr: 'NEPI_NTP_IP', typeStr: 'String',
+            valueStr: this.getDerivedIp(this.getSettingValue('NEPI_NTP_IP'), prefix, '2') }
+        ]
+        this.props.ros.updateSettings(base_namespace + '/settings', settingsList)
+      }
+    }
+  }
+
+  // Callback for the system config Settings status message. Caches the setting
+  // name/value pairs so the disabled boxes can show live values.
+  settingsListener(message) {
+    if (message.settings_topic === this.state.settingsNamespace) {
+      const settings = message.settings_list
+      var namesList = []
+      var valuesList = []
+      for (let ind = 0; ind < settings.length; ind++) {
+        namesList.push(settings[ind].name_str)
+        valuesList.push(settings[ind].value_str)
+      }
+      var newState = {
+        settingsNamesList: namesList,
+        settingsValuesList: valuesList
+      }
+      // Initialize the subnet box from the config once, when the box is still
+      // empty and the config holds a real (non-NONE) subnet.
+      if (this.state.subnet_initialized === false && this.state.vehicle_subnet === "") {
+        const subnetInd = namesList.indexOf('NEPI_VEHICLE_SUBNET')
+        if (subnetInd !== -1) {
+          const subnetVal = valuesList[subnetInd]
+          if (subnetVal !== "" && subnetVal !== "NONE") {
+            newState.vehicle_subnet = subnetVal
+            newState.subnet_initialized = true
+          }
+        }
+      }
+      this.setState(newState)
+    }
+  }
+
+  // Subscribe to the system config Settings status once the base namespace is
+  // known (and resubscribe if it changes). Separate from the app status listener
+  // above: that one carries this app's own status, this one carries the device
+  // system config.
+  updateSettingsListener() {
+    const base_namespace = this.getBaseNamespace()
+    if (base_namespace === null) {
+      return
+    }
+    const settingsNamespace = base_namespace + '/settings'
+    if (this.state.settingsNamespace !== settingsNamespace) {
+      if (this.state.settingsListener != null) {
+        this.state.settingsListener.unsubscribe()
+      }
+      const listener = this.props.ros.setupSettingsStatusListener(
+        settingsNamespace + '/status',
+        this.settingsListener
+      )
+      this.setState({ settingsNamespace: settingsNamespace, settingsListener: listener })
+    }
+  }
+
+  getSettingValue(name) {
+    const namesList = this.state.settingsNamesList
+    const valuesList = this.state.settingsValuesList
+    const ind = namesList.indexOf(name)
+    if (ind !== -1) {
+      const value = valuesList[ind]
+      // Treat an unset (NONE) config value as blank.
+      if (value === "NONE") {
+        return ""
+      }
+      return value
+    }
+    return ""
+  }
+
+
   componentDidMount() {
     this.setState({ needs_update: true })
   }
@@ -147,11 +336,18 @@ class NepiAppWpilibIF extends Component {
     if ((namespace != null && namespace !== this.state.appNamespace) || this.state.needs_update === true) {
       this.updateStatusListener(namespace)
     }
+    // Self-guarding: only subscribes when <base_namespace>/settings changes, so
+    // calling it on every update settles after the first subscribe rather than
+    // looping on its own setState.
+    this.updateSettingsListener()
   }
 
   componentWillUnmount() {
     if (this.state.statusListener) {
       this.state.statusListener.unsubscribe()
+    }
+    if (this.state.settingsListener != null) {
+      this.state.settingsListener.unsubscribe()
     }
   }
 
@@ -257,6 +453,46 @@ class NepiAppWpilibIF extends Component {
     )
   }
 
+  // The Robot Network box. One editable box for the robot subnet, three
+  // disabled boxes showing the addresses derived from it as the device config
+  // currently holds them. Commit is on Enter in the top box -- there is no
+  // separate apply button, matching the ocean aero group this is copied from.
+  renderRobotNetwork() {
+    const vehicle_subnet = this.state.vehicle_subnet
+    // Live values read from the device system config.
+    const nepi_ip = this.getSettingValue('NEPI_ALIAS_IP_1')
+    const gateway_ip = this.getSettingValue('NEPI_GATEWAY_IP')
+    const ntp_ip = this.getSettingValue('NEPI_NTP_IP')
+
+    return (
+      <Section title={"Robot Network"}>
+
+        <Label title={"Robot Subnet"}>
+          <Input
+            id={"WpilibVehicleSubnet"}
+            value={vehicle_subnet}
+            onChange={this.onChangeVehicleSubnet}
+            onKeyDown={this.onKeyVehicleSubnet}
+            placeholder={"e.g. 10.90.23"}
+          />
+        </Label>
+
+        <Label title={"NEPI Address"}>
+          <Input disabled value={nepi_ip} />
+        </Label>
+
+        <Label title={"Radio Gateway"}>
+          <Input disabled value={gateway_ip} />
+        </Label>
+
+        <Label title={"Time Source"}>
+          <Input disabled value={ntp_ip} />
+        </Label>
+
+      </Section>
+    )
+  }
+
   renderConfig() {
     const appNamespace = this.getAppNamespace()
     return (
@@ -286,6 +522,7 @@ class NepiAppWpilibIF extends Component {
 
         <div style={{ width: "23%" }}>
           {this.renderControls()}
+          {this.renderRobotNetwork()}
           {this.renderConfig()}
           {this.renderExampleControls()}
         </div>
