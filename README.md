@@ -45,11 +45,17 @@ git clone git@github.com:nepi-engine/first_robotics.git
 
 After running this command, there is a local copy of the first_robotics repo on your computer that you can edit.
 
-## Deploying
+## Deploying and Building
 
 While you are working on your app, it's important to deploy your changes so you can see them running on the NEPI system.
 
 There are two ways to deploy: deploying just the app you're working on, or deploying the entire repo.
+
+Before you deploy, pull the NEPI engine workspace repo — this is separate from the `git pull` you run on your own `first_robotics` repo in the [Pulling](#pulling) section below, and brings your container up to date with all the changes the team is making to the underlying apps framework. To do this run:
+
+```
+pulln
+```
 
 ### Deploying a single app
 
@@ -75,7 +81,7 @@ Then run:
 
 This copies your app's code to the NEPI build location and pushes the updated scripts to the running NEPI system, so your changes take effect right away.
 
-**NOTE:** Every app has its own `deploy_app.sh` (nepi_app_auto_move, nepi_app_obstacles, nepi_app_stereo_cam, nepi_app_wpilib_if, nepi_app_controls_sandbox) — you must run it from inside that app's own folder.
+**NOTE:** Every app has its own `deploy_app.sh` (nepi_app_auto_move, nepi_app_controls_sandbox, nepi_app_obstacles, nepi_app_stereo_cam, nepi_app_wpilib_if) — you must run it from inside that app's own folder.
 
 ### Deploying the entire repo
 
@@ -93,9 +99,35 @@ Then run:
 ./deploy_repo_complete.sh
 ```
 
-This deploys the NEPI engine overrides, all of the apps (nepi_app_auto_move, nepi_app_obstacles, nepi_app_stereo_cam, nepi_app_wpilib_if, nepi_app_controls_sandbox), and the test data to the NEPI system in one go.
+This deploys the NEPI engine overrides, all of the apps (nepi_app_auto_move, nepi_app_controls_sandbox, nepi_app_obstacles, nepi_app_stereo_cam, nepi_app_wpilib_if), and the test data to the NEPI system in one go.
 
 **NOTE:** Deploying the whole repo takes longer than deploying a single app, since it syncs everything.
+
+### Building
+
+Once you have deployed either your app or the entire repo, you need to run a build script from within the container to bring the container up to date with the deployed changes.
+
+First, go into your running container:
+
+```
+sshn
+```
+
+Then, from inside the container, run the build command:
+
+```
+nepibld
+```
+
+This rebuilds the container with your deployed changes and stops the NEPI process that was running inside it.
+
+Once the build finishes, start the process back up:
+
+```
+nepistart
+```
+
+**NOTE:** You need to run `nepibld` and `nepistart` every time you deploy new changes — deploying alone does not rebuild or restart the running process.
 
 ## Pulling
 
@@ -123,7 +155,6 @@ Once you have made changes to your local repo that you're happy with, you can pu
 
 First, make sure you're in the first_robotics folder (run this from your home directory):
 
-
 ```
 cd first_robotics/
 ```
@@ -138,7 +169,7 @@ pushn
 
 ### If someone else pushed changes first
 
-If you're pushing your changes and someone else has updated the repo since your last pull, you'll see an error that says $\color{red}\textsf{Push Failed}$.
+If you're pushing your changes and someone else has updated the repo since your last pull, you'll see an error that says Push Failed.
 
 If you get this error, run:
 
@@ -146,7 +177,7 @@ If you get this error, run:
 git pull
 ```
 
-This will bring up a window with blue text showing that the branches have merged:
+This will bring up a text editor (usually nano) with a default merge commit message, shown with blue highlighting.
 
 Exit this window by hitting Ctrl+X. This will return you to your terminal. Then run:
 
@@ -154,4 +185,4 @@ Exit this window by hitting Ctrl+X. This will return you to your terminal. Then 
 pushn
 ```
 
-This will finish pushing your changes to the repo and you will see a message in your terminal saying $\color{green}\textsf{Push Successfully}$.
+This will finish pushing your changes to the repo and you will see a message in your terminal saying Push Successful.
