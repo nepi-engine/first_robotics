@@ -64,12 +64,13 @@ class NepiAppWpilibIF extends Component {
       statusListener: null,
       needs_update: true,
 
-      // Robot Network group. vehicle_subnet is the free-typed top box;
-      // subnet_initialized is the one-shot guard that seeds it from the live
-      // system config. The settings* keys cache the system-config Settings
-      // status so the disabled boxes can show live values.
-      vehicle_subnet: "",
-      subnet_initialized: false,
+      // Robot Network group. team_number is the free-typed top box, held as a
+      // string so a partially typed entry survives; team_initialized is the
+      // one-shot guard that seeds it by reverse-deriving the team number from
+      // the subnet the live system config holds. The settings* keys cache the
+      // system-config Settings status so the disabled boxes can show live values.
+      team_number: "",
+      team_initialized: false,
 
       settingsNamespace: 'None',
       settingsListener: null,
@@ -82,17 +83,18 @@ class NepiAppWpilibIF extends Component {
     this.getConnectNamespace = this.getConnectNamespace.bind(this)
     this.statusListener = this.statusListener.bind(this)
     this.updateStatusListener = this.updateStatusListener.bind(this)
-    this.getValidSubnetPrefix = this.getValidSubnetPrefix.bind(this)
-    this.getDerivedIp = this.getDerivedIp.bind(this)
-    this.onChangeVehicleSubnet = this.onChangeVehicleSubnet.bind(this)
-    this.onKeyVehicleSubnet = this.onKeyVehicleSubnet.bind(this)
+    this.getValidTeamNumber = this.getValidTeamNumber.bind(this)
+    this.getSubnetFromTeamNumber = this.getSubnetFromTeamNumber.bind(this)
+    this.getTeamNumberFromSubnet = this.getTeamNumberFromSubnet.bind(this)
+    this.onChangeTeamNumber = this.onChangeTeamNumber.bind(this)
+    this.onKeyTeamNumber = this.onKeyTeamNumber.bind(this)
     this.settingsListener = this.settingsListener.bind(this)
     this.updateSettingsListener = this.updateSettingsListener.bind(this)
     this.getSettingValue = this.getSettingValue.bind(this)
     this.renderControls = this.renderControls.bind(this)
     this.getExampleControlsNamespace = this.getExampleControlsNamespace.bind(this)
     this.renderExampleControls = this.renderExampleControls.bind(this)
-    this.renderSettingLabel = this.renderSettingLabel.bind(this)
+    this.renderSubLabel = this.renderSubLabel.bind(this)
     this.renderRobotNetwork = this.renderRobotNetwork.bind(this)
     this.renderConfig = this.renderConfig.bind(this)
   }
@@ -165,93 +167,103 @@ class NepiAppWpilibIF extends Component {
   ///////////////////
   // Robot Network
   //
-  // A copy of the vehicle subnet control group from the ocean aero system setup
-  // page, relabeled for an FRC robot network. The operator edits one box -- the
-  // 10.TE.AM subnet the robot radio hands out -- and Enter commits that subnet
-  // plus every address derived from it in a single batched updateSettings call
-  // to <base_namespace>/settings, the system config Settings IF that system_mgr
-  // owns. The derived boxes are disabled and read their values back from that
-  // IF's status message, so what they show is what the device config holds, not
-  // what this page last sent.
+  // Adapted from the vehicle subnet control group on the ocean aero system setup
+  // page. The operator edits one box -- the FRC team number -- and Enter derives
+  // the 10.TE.AM robot subnet from it, then commits that subnet plus every
+  // address on it in a single batched updateSettings call to
+  // <base_namespace>/settings, the system config Settings IF that system_mgr
+  // owns. Every other box, the subnet included, is disabled and reads its value
+  // back from that IF's status message, so what they show is what the device
+  // config holds, not what this page last sent.
 
-  // Returns the "a.b.c" /24 network prefix for a valid subnet entry, or null if
-  // the entry is not a valid subnet. Accepts entries like "10.90.23",
-  // "10.90.23.0", or "10.90.23.0/24".
-  getValidSubnetPrefix(subnet) {
-    if (subnet === null || subnet === undefined) {
+  // Returns the team number as an integer for a valid entry, or null. A valid
+  // entry is 1 to 5 digits, non-zero, and lands on a legal 10.TE.AM prefix.
+  // The TE octet is the team number over 100, so the prefix stops being a legal
+  // IP above team 25599 (which would need octet 256). Entries above that are
+  // rejected rather than silently written as an invalid address that
+  // system_mgr's IP validator would then refuse.
+  getValidTeamNumber(text) {
+    if (text === null || text === undefined) {
       return null
     }
-    var cleaned = subnet.trim().split("/")[0]
-    if (cleaned === "") {
+    var cleaned = text.trim()
+    if (!/^\d{1,5}$/.test(cleaned)) {
       return null
     }
-    var octets = cleaned.split(".")
-    if (octets.length < 3) {
+    var team = parseInt(cleaned, 10)
+    if (team < 1) {
       return null
     }
-    var prefix_octets = octets.slice(0, 3)
-    for (var i = 0; i < prefix_octets.length; i++) {
-      var oct = prefix_octets[i]
-      if (!/^\d{1,3}$/.test(oct)) {
-        return null
-      }
-      var num = parseInt(oct, 10)
-      if (num < 0 || num > 255) {
-        return null
-      }
+    if (Math.floor(team / 100) > 255) {
+      return null
     }
-    return prefix_octets.join(".")
+    return team
   }
 
-  // Re-prefix an IP onto a new "a.b.c" network prefix. The host octet and any
-  // /mask suffix are preserved from currentValue (e.g. "10.10.10.103/24" with a
-  // new prefix "10.90.23" becomes "10.90.23.103/24"). When currentValue is blank
-  // or not a parseable IP, defaultHostSuffix is used instead (e.g. "103/24",
-  // "1", "2").
-  getDerivedIp(currentValue, newPrefix, defaultHostSuffix) {
-    var hostSuffix = defaultHostSuffix
-    if (currentValue !== null && currentValue !== undefined && currentValue !== "") {
-      var parts = currentValue.trim().split("/")
-      var octets = parts[0].split(".")
-      if (octets.length === 4 && /^\d{1,3}$/.test(octets[3])) {
-        hostSuffix = octets[3] + (parts.length > 1 ? "/" + parts[1] : "")
-      }
-    }
-    return newPrefix + "." + hostSuffix
+  // Build the "10.TE.AM" /24 network prefix from a team number, per the FRC
+  // addressing scheme: the last two digits are the AM octet, everything above
+  // them is the TE octet, with leading zeros dropped. Team 1 -> 10.0.1,
+  // team 122 -> 10.1.22, team 3456 -> 10.34.56, team 12345 -> 10.123.45.
+  getSubnetFromTeamNumber(team) {
+    return "10." + Math.floor(team / 100) + "." + (team % 100)
   }
 
-  onChangeVehicleSubnet(event) {
-    const el = document.getElementById("WpilibVehicleSubnet")
+  // Inverse of getSubnetFromTeamNumber, used once to seed the box from the
+  // subnet already in the config. Returns the team number as a string, or "" if
+  // the subnet is not a 10.TE.AM prefix this scheme could have produced.
+  getTeamNumberFromSubnet(subnet) {
+    if (subnet === null || subnet === undefined || subnet === "") {
+      return ""
+    }
+    var octets = subnet.trim().split("/")[0].split(".")
+    if (octets.length < 3 || octets[0] !== "10") {
+      return ""
+    }
+    if (!/^\d{1,3}$/.test(octets[1]) || !/^\d{1,3}$/.test(octets[2])) {
+      return ""
+    }
+    var team = parseInt(octets[1], 10) * 100 + parseInt(octets[2], 10)
+    if (team < 1) {
+      return ""
+    }
+    return String(team)
+  }
+
+  onChangeTeamNumber(event) {
+    const el = document.getElementById("WpilibTeamNumber")
     el.style.color = "purple"
     el.style.fontWeight = "bold"
-    this.setState({ vehicle_subnet: event.target.value })
+    this.setState({ team_number: event.target.value })
   }
 
-  onKeyVehicleSubnet(event) {
+  onKeyTeamNumber(event) {
     if (event.key === 'Enter') {
-      const prefix = this.getValidSubnetPrefix(this.state.vehicle_subnet)
-      // Only accept the entry if it is a valid subnet. An invalid entry is
+      const team = this.getValidTeamNumber(this.state.team_number)
+      const prefix = (team !== null) ? this.getSubnetFromTeamNumber(team) : null
+      // Only accept the entry if it is a valid team number. An invalid entry is
       // rejected: it is not committed and the box stays marked (purple/bold).
       if (prefix !== null) {
-        const el = document.getElementById("WpilibVehicleSubnet")
+        const el = document.getElementById("WpilibTeamNumber")
         el.style.color = Styles.vars.colors.black
         el.style.fontWeight = "normal"
-        // Push the subnet plus the two addresses derived from it in a single
-        // batch update. Each address keeps its current host octet and netmask
-        // and only swaps the network prefix. The disabled boxes below read the
-        // new values back from the live config.
+        // Push the subnet plus every address on it in a single batch update. The
+        // disabled boxes below read the new values back from the live config.
         //
-        // Default host suffixes follow the FRC convention for a 10.TE.AM.0/24
-        // robot network: .2 is the roboRIO, and NEPI keeps the platform default
-        // .103 for its own address. The gateway (NEPI_GATEWAY_IP) is
-        // deliberately not driven here -- it stays on the System Setup page.
+        // Both host octets are pinned rather than carried over from whatever the
+        // config held, because on an FRC robot network neither is the operator's
+        // to choose. .2 is the roboRIO, fixed by the addressing convention, and
+        // it is NEPI's time source. .13 puts NEPI in the .6 to .19 band the FRC
+        // static addressing rules leave free for other devices -- .1, .3, .4 and
+        // .5 are the radio, the field network and the driver station, and .20 and
+        // up may be handed out by DHCP. The gateway (NEPI_GATEWAY_IP) is not
+        // driven here at all -- it stays on the System Setup page.
         const base_namespace = this.getBaseNamespace()
         const settingsList = [
           { nameStr: 'NEPI_VEHICLE_SUBNET', typeStr: 'String', valueStr: prefix },
           { nameStr: 'NEPI_ALIAS_IP_1', typeStr: 'String',
-            valueStr: this.getDerivedIp(this.getSettingValue('NEPI_ALIAS_IP_1'), prefix, '103/24') },
+            valueStr: prefix + '.13/24' },
           { nameStr: 'NEPI_NTP_IP', typeStr: 'String',
-            valueStr: this.getDerivedIp(this.getSettingValue('NEPI_NTP_IP'), prefix, '2') }
+            valueStr: prefix + '.2' }
         ]
         this.props.ros.updateSettings(base_namespace + '/settings', settingsList)
       }
@@ -273,15 +285,21 @@ class NepiAppWpilibIF extends Component {
         settingsNamesList: namesList,
         settingsValuesList: valuesList
       }
-      // Initialize the subnet box from the config once, when the box is still
-      // empty and the config holds a real (non-NONE) subnet.
-      if (this.state.subnet_initialized === false && this.state.vehicle_subnet === "") {
+      // Initialize the team number box once, when the box is still empty and the
+      // config holds a real (non-NONE) subnet, by reverse-deriving the team
+      // number from that subnet. A subnet that is not a 10.TE.AM prefix (a
+      // factory 192.168.x, say) yields no team number and leaves the box empty
+      // for the operator to fill.
+      if (this.state.team_initialized === false && this.state.team_number === "") {
         const subnetInd = namesList.indexOf('NEPI_VEHICLE_SUBNET')
         if (subnetInd !== -1) {
           const subnetVal = valuesList[subnetInd]
           if (subnetVal !== "" && subnetVal !== "NONE") {
-            newState.vehicle_subnet = subnetVal
-            newState.subnet_initialized = true
+            const teamStr = this.getTeamNumberFromSubnet(subnetVal)
+            if (teamStr !== "") {
+              newState.team_number = teamStr
+              newState.team_initialized = true
+            }
           }
         }
       }
@@ -453,11 +471,10 @@ class NepiAppWpilibIF extends Component {
     )
   }
 
-  // Two-line Label title: the operator-facing name on top, the underlying
-  // device config setting name beneath it in small grey text, so what the box
-  // writes is visible on the page. Label renders its title inside a <label>,
-  // so this returns phrasing content (spans, not divs).
-  renderSettingLabel(title, settingName) {
+  // Two-line Label title: the operator-facing name on top, a note beneath it in
+  // small grey text. Label renders its title inside a <label>, so this returns
+  // phrasing content (spans, not divs).
+  renderSubLabel(title, note) {
     return (
       <span style={{ display: 'block' }}>
         <span style={{ display: 'block' }}>{title}</span>
@@ -467,40 +484,46 @@ class NepiAppWpilibIF extends Component {
           color: Styles.vars.colors.grey1,
           fontWeight: 'normal'
         }}>
-          {settingName}
+          {note}
         </span>
       </span>
     )
   }
 
-  // The Robot Network box. One editable box for the robot subnet, three
-  // disabled boxes showing the addresses derived from it as the device config
-  // currently holds them. Commit is on Enter in the top box -- there is no
-  // separate apply button, matching the ocean aero group this is copied from.
+  // The Robot Network box. One editable box for the team number, three disabled
+  // boxes showing the subnet derived from it and the addresses on that subnet,
+  // as the device config currently holds them. Commit is on Enter in the top box
+  // -- there is no separate apply button, matching the ocean aero group this is
+  // adapted from.
   renderRobotNetwork() {
-    const vehicle_subnet = this.state.vehicle_subnet
+    const team_number = this.state.team_number
     // Live values read from the device system config.
+    const vehicle_subnet = this.getSettingValue('NEPI_VEHICLE_SUBNET')
     const nepi_ip = this.getSettingValue('NEPI_ALIAS_IP_1')
     const ntp_ip = this.getSettingValue('NEPI_NTP_IP')
 
     return (
       <Section title={"Robot Network"}>
 
-        <Label title={this.renderSettingLabel("Robot Subnet", "NEPI_VEHICLE_SUBNET")}>
+        <Label title={this.renderSubLabel("Team Number", "sets the three below")}>
           <Input
-            id={"WpilibVehicleSubnet"}
-            value={vehicle_subnet}
-            onChange={this.onChangeVehicleSubnet}
-            onKeyDown={this.onKeyVehicleSubnet}
-            placeholder={"e.g. 10.90.23"}
+            id={"WpilibTeamNumber"}
+            value={team_number}
+            onChange={this.onChangeTeamNumber}
+            onKeyDown={this.onKeyTeamNumber}
+            placeholder={"e.g. 9023"}
           />
         </Label>
 
-        <Label title={this.renderSettingLabel("NEPI Address", "NEPI_ALIAS_IP_1")}>
+        <Label title={"Robot Subnet"}>
+          <Input disabled value={vehicle_subnet} />
+        </Label>
+
+        <Label title={"NEPI Address"}>
           <Input disabled value={nepi_ip} />
         </Label>
 
-        <Label title={this.renderSettingLabel("Time Source", "NEPI_NTP_IP")}>
+        <Label title={"Time Source"}>
           <Input disabled value={ntp_ip} />
         </Label>
 
