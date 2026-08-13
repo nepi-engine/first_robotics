@@ -55,6 +55,18 @@ MAX_IMG_BUFFER_LEN = 10
 # Overlay colours, BGR
 OBSTACLE_BOX_COLOR = (0, 255, 0)
 
+# Label font, hoisted out of the draw loop. Nothing about it varies per frame.
+OVERLAY_FONT = cv2.FONT_HERSHEY_DUPLEX
+OVERLAY_FONT_COLOR = (255, 255, 255)
+OVERLAY_LABEL_BOX_COLOR = (0, 0, 0)
+OVERLAY_LINE_TYPE = cv2.LINE_AA
+
+# How many distinct frame sizes the per-size render caches keep before they are
+# dropped and rebuilt. A source's resolution changes rarely -- the cap only
+# exists so a source that walks its resolution control cannot grow them without
+# bound.
+MAX_RENDER_CACHE_LEN = 8
+
 # The ground overlay is painted one flat colour over the whole ground segment
 # rather than colourized by range -- what the operator wants from it is where the
 # drivable surface is, and a solid fill reads that at a glance. The obstacles
@@ -74,6 +86,7 @@ DEFAULT_OBSTACLES_TRANSPARENCY = 0.4
 # "at the far end of the range". Black is outside the jet colormap entirely, so
 # the segment boundary is unambiguous.
 SEGMENT_NONE_COLOR = (0, 0, 0)
+SEGMENT_NONE_COLOR_ARR = np.array(SEGMENT_NONE_COLOR, dtype = np.uint8)
 
 
 class ObstaclesImgPub:
@@ -124,6 +137,30 @@ class ObstaclesImgPub:
     # alignment saves.
     img_buffer_dict = dict()
     img_buffer_lock = threading.Lock()
+
+    # One process cycle's worth of drawable data per source topic, as a whole
+    # entry that is replaced and never mutated after it is stored. The render
+    # path takes one reference and gets the obstacle list, both segmentation
+    # maps and the source stamp they were all derived from -- reading those four
+    # fields separately is what used to let a cycle boundary land in the middle
+    # of a render and pair one cycle's boxes with another cycle's frame. Held
+    # outside sources_info_dict for the same reason the frame buffer is: the
+    # segmentation maps are full-size float rasters and that dict gets
+    # deep-copied on a timer.
+    results_dict = dict()
+    results_lock = threading.Lock()
+
+    # Newest arrived frame per source topic, as (stamp, raw Image msg). One slot
+    # per source, overwritten rather than appended: a frame the render never got
+    # to is dropped here, so the render can only ever be one frame behind the
+    # source instead of falling progressively further behind.
+    render_slot_dict = dict()
+    render_slot_lock = threading.Lock()
+
+    # Per-frame-size render constants, built once per size instead of once per
+    # frame. Written and read only by the single render thread.
+    font_dims_cache = dict()
+    flat_color_cache = dict()
 
     state_str_msg = 'Loading'
 
@@ -271,6 +308,7 @@ class ObstaclesImgPub:
 
         # Start Timer Processes
         nepi_sdk.start_timer_process((1.0), self.updaterCb, oneshot = True)
+        nepi_sdk.start_timer_process((1.0), self.renderCb, oneshot = True)
         self.last_status_time = nepi_utils.get_time()
         nepi_sdk.start_timer_process(1, self.watchdogCb, oneshot = True)
         nepi_sdk.on_shutdown(self.shutdownCb)
@@ -325,18 +363,19 @@ class ObstaclesImgPub:
         img_info_dict['pub_latency_time'] = 0
         img_info_dict['process_time'] = 0
         img_info_dict['last_img_time'] = 0
-        img_info_dict['last_det_time'] = 0
 
-        # Written by obstaclesCb, read by imageCb. Every key imageCb reads has
-        # to exist from the moment the topic is subscribed, because obstacle
-        # messages and image messages arrive independently. img_stamp is the
-        # source frame stamp the current obstacle data was derived from -- what
-        # imageCb aligns the published image against.
-        img_info_dict['obstacles_dict_list'] = []
-        img_info_dict['navpose_dict'] = None
-        img_info_dict['depth_map_ground'] = None
-        img_info_dict['depth_map_obstacles'] = None
-        img_info_dict['img_stamp'] = 0
+        # Cached answer to "does any published product still want data", refreshed
+        # by updaterCb. imageCb reads this instead of calling needsImgCheck,
+        # because that takes img_node_lock and the render path holds that lock --
+        # a subscriber callback that can block on a render is a subscriber
+        # callback that loses the frames the alignment lookup needs. The
+        # underlying IF flag is itself only refreshed once a second, so a cached
+        # copy loses nothing.
+        img_info_dict['needs_img'] = False
+
+        # The drawable per-cycle data lives in results_dict, not here. It is
+        # written whole by obstaclesCb and obstaclesDepthMapCb and read as one
+        # snapshot by the render path.
 
         # One "first publish logged" flag per segmentation product, keyed by
         # data product name, so each new topic announces itself once the way
@@ -396,6 +435,71 @@ class ObstaclesImgPub:
             self.img_buffer_dict[source_topic] = []
         self.img_buffer_lock.release()
 
+    ###############.########################
+    # Per-cycle result snapshots
+
+    def createResultDict(self):
+        return {
+            # The source frame stamp the obstacle data was derived from -- what
+            # the render aligns the published image against.
+            'source_stamp': 0,
+            'obstacles_dict_list': [],
+            'navpose_dict': None,
+            'depth_map_ground': None,
+            'depth_map_obstacles': None,
+            'maps_stamp': 0,
+            'last_det_time': 0,
+        }
+
+    def getSourceResult(self, source_topic):
+        # One reference, one read, no copy. Entries are immutable once stored, so
+        # the maps do not have to be copied out of the way of the next cycle's
+        # writer the way they did when the render read them field by field.
+        result_dict = self.results_dict.get(source_topic, None)
+        if result_dict is None:
+            return self.createResultDict()
+        return result_dict
+
+    def setSourceResult(self, source_topic, result_dict):
+        self.results_lock.acquire()
+        self.results_dict[source_topic] = result_dict
+        self.results_lock.release()
+
+    def clearSourceResult(self, source_topic):
+        self.results_lock.acquire()
+        if source_topic in self.results_dict.keys():
+            self.results_dict[source_topic] = self.createResultDict()
+        self.results_lock.release()
+
+    ###############.########################
+    # Render handoff
+
+    def setRenderSlot(self, source_topic, timestamp, img_msg):
+        self.render_slot_lock.acquire()
+        self.render_slot_dict[source_topic] = (timestamp, img_msg)
+        self.render_slot_lock.release()
+
+    def getRenderSlotTopics(self):
+        self.render_slot_lock.acquire()
+        source_topics = list(self.render_slot_dict.keys())
+        self.render_slot_lock.release()
+        return source_topics
+
+    def popRenderSlot(self, source_topic):
+        # Taking the frame out is what makes this a slot and not a queue: if the
+        # render is slower than the source, the frames that arrive in between
+        # overwrite each other and only the newest is ever drawn.
+        self.render_slot_lock.acquire()
+        slot = self.render_slot_dict.pop(source_topic, None)
+        self.render_slot_lock.release()
+        return slot
+
+    def clearRenderSlot(self, source_topic):
+        self.render_slot_lock.acquire()
+        if source_topic in self.render_slot_dict.keys():
+            del self.render_slot_dict[source_topic]
+        self.render_slot_lock.release()
+
     def updaterCb(self, timer):
         selected_source_topics = copy.deepcopy(self.selected_source_topics)
         active_source_topics = self.getActiveImgTopics()
@@ -429,6 +533,14 @@ class ObstaclesImgPub:
                 continue
             self.msg_if.pub_info('Will unsubscribe from image topic: ' + source_topic)
             self.unsubscribeImgTopic(source_topic)
+
+        # Refresh the cached needs-data answer imageCb reads. Done here, on a
+        # timer, because the IF flag it comes from is itself refreshed once a
+        # second, and because reading it takes img_node_lock.
+        for source_topic in self.getActiveImgTopics():
+            needs_img = self.needsImgCheck(source_topic)
+            if source_topic in self.sources_info_dict.keys():
+                self.sources_info_dict[source_topic]['needs_img'] = needs_img
 
         nepi_sdk.start_timer_process((1), self.updaterCb, oneshot = True)
 
@@ -584,8 +696,12 @@ class ObstaclesImgPub:
         self.imgs_info_lock.release()
 
         # Nothing in the buffer survives an unsubscribe -- on resubscribe those
-        # frames would be arbitrarily old and could win an alignment lookup.
+        # frames would be arbitrarily old and could win an alignment lookup. The
+        # pending render frame and the last result snapshot go for the same
+        # reason: both describe a stream this node is no longer following.
         self.clearImgBuffer(source_topic)
+        self.clearRenderSlot(source_topic)
+        self.clearSourceResult(source_topic)
 
         return True
 
@@ -629,16 +745,23 @@ class ObstaclesImgPub:
             self.msg_if.pub_info('Connected to image topic: ' + source_topic)
         self.sources_info_dict[source_topic]['img_connected'] = True
 
-        # Any of the three published products wanting data is enough to run the
-        # cycle; publishImgData then skips the individual products nobody is
-        # watching, so an unwatched product still costs nothing.
-        needs_img = self.needsImgCheck(source_topic)
-
-        if needs_img == False or self.imaging_enabled == False:
+        # This callback is deliberately cheap. The overlay render used to run
+        # here, on this topic's subscriber thread, and the transport drops every
+        # frame that arrives while a callback is busy (qsize 1) -- so the frames
+        # captured during a render never reached the alignment buffer, and the
+        # frame the obstacle data was actually computed from was usually not
+        # there to be found. renderCb owns the render now; all this has to do is
+        # keep the buffer complete and post the newest frame.
+        #
+        # Any of the three published products wanting data is enough to buffer;
+        # the render then skips the individual products nobody is watching.
+        if self.sources_info_dict[source_topic]['needs_img'] == False or self.imaging_enabled == False:
             return
 
-        sel_imgs = copy.deepcopy(self.selected_source_topics)
-        max_image_pub_rate_hz = copy.deepcopy(self.max_image_pub_rate_hz)
+        # Both are replaced whole by statusCb and never mutated in place, so a
+        # plain read is a consistent read.
+        sel_imgs = self.selected_source_topics
+        max_image_pub_rate_hz = self.max_image_pub_rate_hz
         if source_topic not in sel_imgs or max_image_pub_rate_hz <= 0.01:
             return
 
@@ -649,67 +772,118 @@ class ObstaclesImgPub:
         if self.enabled == False or self.state_str_msg != ProcessStatus.STATE_PROCESSING:
             return
 
-        timestamp = copy.deepcopy(float(image_msg.header.stamp.to_sec()))
+        timestamp = float(image_msg.header.stamp.to_sec())
         self.bufferImgMsg(source_topic, image_msg, timestamp)
-
-        # Check if time to publish
-        delay_time = float(1) / max_image_pub_rate_hz
-        last_img_time = self.sources_info_dict[source_topic]['last_img_time']
-        current_time = nepi_utils.get_time()
-        if round((current_time - last_img_time), 3) <= delay_time:
-            return
-        self.sources_info_dict[source_topic]['last_img_time'] = current_time
-
         self.sources_info_dict[source_topic]['get_latency_time'] = (nepi_utils.get_time() - timestamp)
+        self.setRenderSlot(source_topic, timestamp, image_msg)
 
-        obstacles_dict_list = copy.deepcopy(self.sources_info_dict[source_topic]['obstacles_dict_list'])
+    def renderCb(self, timer):
+        start_time = nepi_utils.get_time()
+        max_image_pub_rate_hz = self.max_image_pub_rate_hz
+        if max_image_pub_rate_hz <= 0.01:
+            max_image_pub_rate_hz = 0.01
+        delay_time = float(1) / max_image_pub_rate_hz
+
+        if self.imaging_enabled == False:
+            # Drop the pending frames rather than holding one per source for as
+            # long as imaging stays off. imageCb posts nothing while it is off,
+            # so there is nothing to preserve.
+            for source_topic in self.getRenderSlotTopics():
+                self.clearRenderSlot(source_topic)
+        else:
+            for source_topic in self.getRenderSlotTopics():
+                if source_topic not in self.sources_info_dict.keys():
+                    self.clearRenderSlot(source_topic)
+                    continue
+                # Rate gate before the slot is emptied, not after: a source
+                # slower than this timer would otherwise have its only frame
+                # thrown away by a tick that was not allowed to publish it.
+                last_img_time = self.sources_info_dict[source_topic]['last_img_time']
+                current_time = nepi_utils.get_time()
+                if round((current_time - last_img_time), 3) <= delay_time:
+                    continue
+                slot = self.popRenderSlot(source_topic)
+                if slot is None:
+                    continue
+                self.sources_info_dict[source_topic]['last_img_time'] = current_time
+                self.renderSourceFrame(source_topic, slot[1])
+
+        # Ticks at half the publish period so jitter cannot cost every other
+        # publish, minus whatever this pass already spent, floored the way the
+        # parent's process loop floors its own oneshot chain.
+        cycle_time = nepi_utils.get_time() - start_time
+        next_delay = (delay_time / 2.0) - cycle_time
+        if next_delay < 0.01:
+            next_delay = 0.01
+        nepi_sdk.start_timer_process((next_delay), self.renderCb, oneshot = True)
+
+    def renderSourceFrame(self, source_topic, img_msg):
+        start_time = nepi_utils.get_time()
+
+        # One snapshot of one process cycle: the obstacle list, both segmentation
+        # maps and the source stamp all came from the same call to the process
+        # function, and nothing can replace them underneath this render.
+        result_dict = self.getSourceResult(source_topic)
+        obstacles_dict_list = result_dict['obstacles_dict_list']
         if obstacles_dict_list is None:
             obstacles_dict_list = []
 
-        depth_map_ground = copy.deepcopy(self.sources_info_dict[source_topic]['depth_map_ground'])
-        depth_map_obstacles = copy.deepcopy(self.sources_info_dict[source_topic]['depth_map_obstacles'])
-        obstacles_stamp = self.sources_info_dict[source_topic]['img_stamp']
-
         # use_last_image is the "align the image with the obstacle data" control.
-        # It used to publish whatever frame the previous publish cycle stashed,
-        # which is one whole source frame in arrears no matter how far behind the
-        # data actually is -- so on a slow source the boxes ran seconds ahead of
-        # the image they were drawn on. Now it looks up the frame the data was
-        # derived from by stamp, which is correct at any source rate. Off means no
-        # alignment at all: newest frame, data as it stands.
-        use_img_msg = image_msg
+        # It looks up the frame the data was derived from by stamp, so the image
+        # and the drawing on it belong to the same instant at any source rate.
+        # Off means no alignment at all: newest frame, data as it stands.
+        use_img_msg = img_msg
         if self.use_last_image == True:
-            aligned_img_msg = self.getAlignedImgMsg(source_topic, obstacles_stamp)
+            aligned_img_msg = self.getAlignedImgMsg(source_topic, result_dict['source_stamp'])
             if aligned_img_msg is not None:
                 use_img_msg = aligned_img_msg
 
-        # Report the stamp of the frame actually published, not of the frame that
-        # triggered the cycle -- otherwise an aligned publish claims to be fresher
-        # than it is and every downstream latency reads low.
-        use_timestamp = copy.deepcopy(float(use_img_msg.header.stamp.to_sec()))
+        # The stamp and frame of the frame actually drawn on, not of the frame
+        # that triggered the cycle -- otherwise an aligned publish claims to be
+        # fresher than it is and every downstream latency reads low.
+        use_timestamp = float(use_img_msg.header.stamp.to_sec())
+        use_frame_id = use_img_msg.header.frame_id
         use_cv2_img = nepi_img.rosimg_to_cv2img(use_img_msg)
 
-        if use_cv2_img is not None:
-            self.processObstaclesImage(source_topic,
-                                        use_cv2_img,
-                                        obstacles_dict_list,
-                                        depth_map_ground,
-                                        depth_map_obstacles,
-                                        timestamp = use_timestamp,
-                                        )
-            self.sources_info_dict[source_topic]['pub_latency_time'] = (nepi_utils.get_time() - use_timestamp)
+        self.processObstaclesImage(source_topic,
+                                    use_cv2_img,
+                                    obstacles_dict_list,
+                                    result_dict['depth_map_ground'],
+                                    result_dict['depth_map_obstacles'],
+                                    timestamp = use_timestamp,
+                                    frame_id = use_frame_id,
+                                    )
+        # pub_latency_time is how old the published pixels are; process_time is
+        # what this render cost. They were the same number before, which hid the
+        # render cost behind the alignment offset.
+        self.sources_info_dict[source_topic]['pub_latency_time'] = (nepi_utils.get_time() - use_timestamp)
+        self.sources_info_dict[source_topic]['process_time'] = (nepi_utils.get_time() - start_time)
 
     def processObstaclesImage(self, source_topic,
                                     cv2_img,
                                     obstacles_dict_list,
                                     depth_map_ground,
                                     depth_map_obstacles,
-                                    timestamp = None):
+                                    timestamp = None,
+                                    frame_id = ''):
         if source_topic not in self.sources_info_dict.keys():
             return False
 
+        # Which products actually have a consumer this cycle, asked once. A
+        # subscriber on one segmentation render used to pay for the whole overlay
+        # pipeline -- both blends, every box, the label text -- and then throw the
+        # result away at the per-product gate in publishImgData.
+        needs_overlay = self.needsImgCheck(source_topic, if_key = 'img_if')
+        needs_segments = dict()
+        for product in self.SEGMENT_IMG_PRODUCTS:
+            needs_segments[product['map_key']] = self.needsImgCheck(source_topic, if_key = product['if_key'])
+        if needs_overlay == False and True not in needs_segments.values():
+            return False
+
         self.sources_info_dict[source_topic]['publishing'] = True
-        status_dict = copy.deepcopy(self.sources_info_dict[source_topic]['status_dict'])
+        # status_dict is replaced whole by imageStatusCb and never mutated, so
+        # the reference is safe to read without a copy.
+        status_dict = self.sources_info_dict[source_topic]['status_dict']
         if status_dict is not None:
             width_pixel = status_dict['width_px']
             height_pixel = status_dict['height_px']
@@ -721,72 +895,112 @@ class ObstaclesImgPub:
             width_deg = 100
             height_deg = 70
 
-        if cv2_img is None and width_pixel > 0 and height_pixel > 0:
-            cv2_img = nepi_img.create_blank_image((height_pixel, width_pixel, 3))
-        if cv2_img is None:
-            return False
+        draw_ground = (needs_overlay == True and depth_map_ground is not None
+                       and self.show_ground_enabled == True)
+        draw_obstacles = (needs_overlay == True and depth_map_obstacles is not None
+                          and self.show_obstacles_enabled == True)
+        draw_boxes = (needs_overlay == True and len(obstacles_dict_list) > 0
+                      and self.show_obstacles_enabled == True)
 
-        if depth_map_ground is not None and self.show_ground_enabled == True:
-            cv2_img = self.applyDepthMapOverlay(depth_map_ground, cv2_img,
+        # Masks and colourized renders, each built at most once per cycle and
+        # only if something this cycle consumes it. The obstacles map used to be
+        # colourized twice with identical arguments -- once for the overlay blend
+        # and once for its segmentation image.
+        ground_mask = None
+        if draw_ground == True or (needs_segments['depth_map_ground'] == True and depth_map_ground is not None):
+            ground_mask = self.getMapMask(depth_map_ground)
+
+        obstacles_mask = None
+        if draw_obstacles == True or (needs_segments['depth_map_obstacles'] == True and depth_map_obstacles is not None):
+            obstacles_mask = self.getMapMask(depth_map_obstacles)
+
+        # A flat-coloured overlay needs no colourized render, so GROUND_OVERLAY_COLOR
+        # being set means the ground colorize is paid for only by its own
+        # segmentation image.
+        ground_color_img = None
+        if ground_mask is not None:
+            if needs_segments['depth_map_ground'] == True or (draw_ground == True and GROUND_OVERLAY_COLOR is None):
+                ground_color_img = self.getMapColorImg(depth_map_ground)
+
+        obstacles_color_img = None
+        if obstacles_mask is not None:
+            if needs_segments['depth_map_obstacles'] == True or (draw_obstacles == True and OBSTACLES_OVERLAY_COLOR is None):
+                obstacles_color_img = self.getMapColorImg(depth_map_obstacles)
+
+        if needs_overlay == True:
+            overlay_img = None
+            if cv2_img is not None:
+                # cv_bridge hands back an array backed by the source message's own
+                # bytes, and that message is still in the alignment buffer, so the
+                # drawing gets its own buffer. One copy for the whole cycle
+                # instead of the one each overlay step used to make for itself.
+                overlay_img = cv2_img.copy()
+            elif width_pixel > 0 and height_pixel > 0:
+                overlay_img = nepi_img.create_blank_image((height_pixel, width_pixel, 3))
+
+            if overlay_img is not None:
+                if draw_ground == True:
+                    self.applyDepthMapOverlay(overlay_img, ground_mask, ground_color_img,
                                                 self.getBlendRatio(self.ground_transparency),
                                                 color = GROUND_OVERLAY_COLOR)
 
-        if depth_map_obstacles is not None and self.show_obstacles_enabled == True:
-            cv2_img = self.applyDepthMapOverlay(depth_map_obstacles, cv2_img,
+                if draw_obstacles == True:
+                    self.applyDepthMapOverlay(overlay_img, obstacles_mask, obstacles_color_img,
                                                 self.getBlendRatio(self.obstacles_transparency),
                                                 color = OBSTACLES_OVERLAY_COLOR)
 
-        if len(obstacles_dict_list) > 0 and self.show_obstacles_enabled == True:
-            cv2_img = self.applyBoxesOverlay(obstacles_dict_list, cv2_img, OBSTACLE_BOX_COLOR)
+                if draw_boxes == True:
+                    self.applyBoxesOverlay(obstacles_dict_list, overlay_img, OBSTACLE_BOX_COLOR)
 
-        self.publishImgData(source_topic,
-                            cv2_img,
-                            width_deg = width_deg,
-                            height_deg = height_deg,
-                            timestamp = timestamp,
-                            add_overlay_text_list = []
-                            )
+                self.publishImgData(source_topic,
+                                    overlay_img,
+                                    width_deg = width_deg,
+                                    height_deg = height_deg,
+                                    timestamp = timestamp,
+                                    frame_id = frame_id,
+                                    add_overlay_text_list = []
+                                    )
 
-        if self.sources_info_dict[source_topic]['img_published'] == False:
-            namespace = self.sources_info_dict[source_topic]['pub_namespace']
-            self.msg_if.pub_info('Published image topic: ' + os.path.join(namespace, self.OBSTACLES_IMG_DATA_PRODUCT))
-        self.sources_info_dict[source_topic]['img_published'] = True
+                if self.sources_info_dict[source_topic]['img_published'] == False:
+                    namespace = self.sources_info_dict[source_topic]['pub_namespace']
+                    self.msg_if.pub_info('Published image topic: ' + os.path.join(namespace, self.OBSTACLES_IMG_DATA_PRODUCT))
+                self.sources_info_dict[source_topic]['img_published'] = True
 
         # The two segmentation renders ride the same cycle as the overlay, so
         # they obey set_image_pub, max_image_pub_rate_hz, use_last_image and the
         # process state gate without a second rate path of their own.
+        segment_renders = dict()
+        if needs_segments['depth_map_ground'] == True:
+            segment_renders['depth_map_ground'] = self.getSegmentColorImg(ground_color_img, ground_mask)
+        if needs_segments['depth_map_obstacles'] == True:
+            segment_renders['depth_map_obstacles'] = self.getSegmentColorImg(obstacles_color_img, obstacles_mask)
+
         self.publishSegmentImgs(source_topic,
-                                depth_map_ground,
-                                depth_map_obstacles,
+                                segment_renders,
                                 width_deg = width_deg,
                                 height_deg = height_deg,
-                                timestamp = timestamp)
+                                timestamp = timestamp,
+                                frame_id = frame_id)
 
         return True
 
     def publishSegmentImgs(self, source_topic,
-                                 depth_map_ground,
-                                 depth_map_obstacles,
+                                 segment_renders,
                                  width_deg = 100,
                                  height_deg = 70,
-                                 timestamp = None):
+                                 timestamp = None,
+                                 frame_id = ''):
         if source_topic not in self.sources_info_dict.keys():
             return False
 
-        depth_maps = {
-            'depth_map_ground': depth_map_ground,
-            'depth_map_obstacles': depth_map_obstacles,
-        }
         namespace = self.sources_info_dict[source_topic]['pub_namespace']
 
         for product in self.SEGMENT_IMG_PRODUCTS:
             data_product = product['data_product']
-            if self.needsImgCheck(source_topic, if_key = product['if_key']) == False:
-                continue
             # A map the process did not produce this cycle arrives as None -- the
             # parent sends a 0x0 Image and getDepthMapFromMsg turns that back into
             # None. Skip the publish rather than putting an empty image on the wire.
-            cv2_img = self.getSegmentColorImg(depth_maps.get(product['map_key'], None))
+            cv2_img = segment_renders.get(product['map_key'], None)
             if cv2_img is None:
                 continue
             self.publishImgData(source_topic,
@@ -794,6 +1008,7 @@ class ObstaclesImgPub:
                                 width_deg = width_deg,
                                 height_deg = height_deg,
                                 timestamp = timestamp,
+                                frame_id = frame_id,
                                 add_overlay_text_list = [],
                                 img_if_key = product['if_key'],
                                 img_pub_key = product['pub_key'])
@@ -803,32 +1018,55 @@ class ObstaclesImgPub:
 
         return True
 
-    def getSegmentColorImg(self, np_depth_map):
-        # Colourize one half of the per-cycle segmentation for viewing, using the
-        # platform depth map colorizer rather than a routine of this app's own.
-        # Non-member pixels are NaN by contract, so isfinite IS the segment mask;
-        # they are painted SEGMENT_NONE_COLOR afterwards because the colorizer
-        # folds NaN onto the max-range colour, which a viewer cannot tell from a
-        # real far return. The colorizer rewrites its input in place, hence the
-        # deep copy -- the caller's map is still needed by the overlay path.
+    def getMapMask(self, np_depth_map):
+        # Non-member pixels of a segmentation raster are NaN by contract, so
+        # isfinite IS the segment mask. Computed once per map per cycle and shared
+        # by the overlay blend and the segmentation render.
         if np_depth_map is None:
             return None
         try:
             mask = np.isfinite(np_depth_map)
             if mask.any() == False:
                 return None
-            cv2_img = nepi_img.npDepthMap_to_cv2ColorImg(copy.deepcopy(np_depth_map),
+            return mask
+        except Exception as e:
+            self.msg_if.pub_warn("Failed to mask segmentation depth map: " + str(e), throttle_s = 5.0)
+            return None
+
+    def getMapColorImg(self, np_depth_map):
+        # Colourize one half of the per-cycle segmentation using the platform
+        # depth map colorizer rather than a routine of this app's own. The
+        # colorizer rewrites its input in place, hence the copy -- the map belongs
+        # to a result snapshot the next render may still read.
+        if np_depth_map is None:
+            return None
+        try:
+            return nepi_img.npDepthMap_to_cv2ColorImg(np_depth_map.copy(),
                                                         min_range_m = self.min_range_m,
                                                         max_range_m = self.max_range_m)
-            if cv2_img is None:
-                return None
-            cv2_img[np.logical_not(mask)] = SEGMENT_NONE_COLOR
-            return cv2_img
         except Exception as e:
             self.msg_if.pub_warn("Failed to colorize segmentation depth map: " + str(e), throttle_s = 5.0)
             return None
 
+    def getSegmentColorImg(self, cv2_color_img, mask):
+        # The viewable form of one segmentation: the colourized range render with
+        # every non-member pixel painted SEGMENT_NONE_COLOR, because the colorizer
+        # folds NaN onto the max-range colour, which a viewer cannot tell from a
+        # real far return. Painted on a copy because the same colourized render
+        # also feeds the overlay blend, which reads only member pixels and must
+        # not see this paint.
+        if cv2_color_img is None or mask is None:
+            return None
+        try:
+            cv2_img = cv2_color_img.copy()
+            np.copyto(cv2_img, SEGMENT_NONE_COLOR_ARR, where = np.logical_not(mask)[:, :, None])
+            return cv2_img
+        except Exception as e:
+            self.msg_if.pub_warn("Failed to render segmentation depth map: " + str(e), throttle_s = 5.0)
+            return None
+
     def publishImgData(self, source_topic, cv2_img, encoding = "bgr8", timestamp = None,
+                        frame_id = '',
                         width_deg = 100,
                         height_deg = 70,
                         add_overlay_text_list = [],
@@ -836,23 +1074,37 @@ class ObstaclesImgPub:
                         img_pub_key = 'img_pub'):
         if self.imaging_enabled == False:
             return
-        # try/finally: any raise between acquire and release (a
-        # publish_cv2_img signature drift, a missing dict key) would
-        # otherwise leave the lock held and wedge image publishing for
-        # the life of the node. Degrade to a logged error instead.
+
+        # The lock covers looking the publishers up, not publishing through them.
+        # Held across the publish it serialized the whole encode -- three products
+        # and every source behind one mutex, and any thread that so much as asked
+        # whether a product needed data waited behind that. A publisher torn down
+        # by unsubscribeImgTopic between the lookup and the publish raises, which
+        # is what the try/except below is for.
+        img_if = None
+        img_pub = None
         self.img_node_lock.acquire()
         try:
-            img_if = self.img_node_dict[source_topic][img_if_key]
-            img_pub = self.img_node_dict[source_topic][img_pub_key]
+            img_node_dict = self.img_node_dict.get(source_topic, dict())
+            img_if = img_node_dict.get(img_if_key, None)
+            img_pub = img_node_dict.get(img_pub_key, None)
+        finally:
+            self.img_node_lock.release()
 
-            # Per-product subscriber gate. imageCb runs the cycle when ANY of the
-            # three products wants data, so an unwatched product still has to opt
-            # out here or it would pay for a neighbour's subscriber.
+        try:
+            # Per-product subscriber gate. The render runs the cycle when ANY of
+            # the three products wants data, so an unwatched product still has to
+            # opt out here or it would pay for a neighbour's subscriber.
             if img_if is not None and img_if.ready == True and img_if.needs_data_check() == False:
                 return
 
             if img_if is None or img_if.ready == False:
                 img_msg = nepi_img.cv2img_to_rosimg(cv2_img, encoding = encoding)
+                # Stamp the raw fallback publish the same way the IF path stamps
+                # its own: with the source frame this image was drawn on. Left
+                # unset it went out with a zero stamp and no frame, and nothing
+                # downstream could time-align it.
+                img_msg.header = nepi_sdk.create_header_msg(time_sec = timestamp, frame_id = frame_id)
                 nepi_sdk.publish_pub(img_pub, img_msg)
             else:
                 img_if.publish_cv2_img(cv2_img,
@@ -866,8 +1118,6 @@ class ObstaclesImgPub:
                                     )
         except Exception as e:
             self.msg_if.pub_warn("Failed to publish image for source: " + str(source_topic) + " : " + str(e), throttle_s = 5.0)
-        finally:
-            self.img_node_lock.release()
 
     def getBlendRatio(self, transparency):
         # The wire value is transparency, the way the RUI slider labels it;
@@ -882,48 +1132,74 @@ class ObstaclesImgPub:
             transparency = 1.0
         return 1.0 - transparency
 
-    def applyDepthMapOverlay(self, np_depth_map, cv2_img, blend_ratio, color = None):
-        # Blend the segmentation only where the raster has a finite range value.
-        # Non-member pixels are NaN by contract, so the mask is exactly the
-        # segment. With a color the segment is painted that one flat colour; with
-        # color None it is colourized by range.
+    def getFlatColorImg(self, cv2_shape, color):
+        # The flat fill a colour-keyed overlay blends in depends only on the frame
+        # size and the colour, so it is built once per size instead of once per
+        # frame. Never written to by the blend, so one instance is shared.
+        key = (cv2_shape[0], cv2_shape[1], color)
+        cv2_map = self.flat_color_cache.get(key, None)
+        if cv2_map is None:
+            cv2_map = np.zeros((cv2_shape[0], cv2_shape[1], 3), dtype = np.uint8)
+            cv2_map[:, :] = color
+            if len(self.flat_color_cache) >= MAX_RENDER_CACHE_LEN:
+                self.flat_color_cache.clear()
+            self.flat_color_cache[key] = cv2_map
+        return cv2_map
+
+    def getOverlayFontDims(self, cv2_img):
+        # Label metrics depend only on the frame size. Same numbers as before,
+        # computed once per size rather than once per frame.
+        cv2_shape = cv2_img.shape
+        key = (cv2_shape[0], cv2_shape[1])
+        font_dims = self.font_dims_cache.get(key, None)
+        if font_dims is None:
+            img_height = cv2_shape[0]
+            img_width = cv2_shape[1]
+            scale = 1.5e-3 - 0.1e-3 * math.ceil(max([img_height, img_width]) / 700)
+            [font_scale, font_thickness] = nepi_img.optimal_font_dims(cv2_img, font_scale = scale, thickness_scale = scale)
+            line_thickness = 1 + math.ceil(max([img_height, img_width]) / 2000)
+            font_dims = [font_scale, font_thickness, line_thickness]
+            if len(self.font_dims_cache) >= MAX_RENDER_CACHE_LEN:
+                self.font_dims_cache.clear()
+            self.font_dims_cache[key] = font_dims
+        return font_dims
+
+    def applyDepthMapOverlay(self, cv2_img, mask, cv2_map, blend_ratio, color = None):
+        # Blend the segmentation into cv2_img only where the raster has a finite
+        # range value -- non-member pixels are NaN by contract, so the mask is
+        # exactly the segment. With a color the segment is painted that one flat
+        # colour; with color None the caller's colourized render is blended.
+        #
+        # Writes in place. The caller owns cv2_img for the whole cycle, so each
+        # overlay now costs one blend instead of a blend plus a full frame copy.
         try:
-            mask = np.isfinite(np_depth_map)
-            if mask.any() == False:
-                return cv2_img
+            if mask is None:
+                return
             if color is not None:
-                cv2_map = np.zeros((np_depth_map.shape[0], np_depth_map.shape[1], 3), dtype = np.uint8)
-                cv2_map[:, :] = color
-            else:
-                cv2_map = nepi_img.npDepthMap_to_cv2ColorImg(copy.deepcopy(np_depth_map),
-                                                            min_range_m = self.min_range_m,
-                                                            max_range_m = self.max_range_m)
+                cv2_map = self.getFlatColorImg(cv2_img.shape, color)
             if cv2_map is None:
-                return cv2_img
+                return
             if cv2_map.shape[:2] != cv2_img.shape[:2]:
                 cv2_map = cv2.resize(cv2_map, (cv2_img.shape[1], cv2_img.shape[0]))
                 mask = cv2.resize(mask.astype(np.uint8), (cv2_img.shape[1], cv2_img.shape[0])) > 0
             blended = cv2.addWeighted(cv2_img, (1.0 - blend_ratio), cv2_map, blend_ratio, 0)
-            cv2_out = copy.deepcopy(cv2_img)
-            cv2_out[mask] = blended[mask]
-            return cv2_out
+            # np.copyto with a broadcast mask rather than cv2_img[mask] =
+            # blended[mask]: fancy indexing builds an index array and two (N,3)
+            # temporaries per overlay, the broadcast write builds none.
+            np.copyto(cv2_img, blended, where = mask[:, :, None])
         except Exception as e:
             self.msg_if.pub_warn("Failed to apply depth map overlay: " + str(e), throttle_s = 5.0)
-            return cv2_img
 
     def applyBoxesOverlay(self, boxes_dict_list, cv2_img, default_color):
-        cv2_obstacles_img = copy.deepcopy(cv2_img)
+        # Draws in place, same as applyDepthMapOverlay and for the same reason.
+        cv2_obstacles_img = cv2_img
         cv2_shape = cv2_img.shape
-        img_width = cv2_shape[1]
-        img_height = cv2_shape[0]
         img_size = cv2_shape[:2]
 
-        font = cv2.FONT_HERSHEY_DUPLEX
-        scale = 1.5e-3 - 0.1e-3 * math.ceil(max([img_height, img_width]) / 700)
-        fontScale, fontThickness = nepi_img.optimal_font_dims(cv2_img, font_scale = scale, thickness_scale = scale)
-        fontColor = (255, 255, 255)
-        lineType = cv2.LINE_AA
-        line_thickness = 1 + math.ceil(max([img_height, img_width]) / 2000)
+        font = OVERLAY_FONT
+        [fontScale, fontThickness, line_thickness] = self.getOverlayFontDims(cv2_img)
+        fontColor = OVERLAY_FONT_COLOR
+        lineType = OVERLAY_LINE_TYPE
 
         for box_dict in boxes_dict_list:
             ###### Apply Image Overlays and Publish Image ROS Message
@@ -984,7 +1260,7 @@ class ObstaclesImgPub:
             bot_left_text = (center + x_padding, ymin - (line_thickness * 2) - y_padding)
             text_bot_left_box = (center - x_padding, bot_left_text[1] + y_padding)
             text_top_right_box = (center + line_width + x_padding, bot_left_text[1] - line_height - y_padding)
-            box_color = (0, 0, 0)
+            box_color = OVERLAY_LABEL_BOX_COLOR
 
             try:
                 cv2.rectangle(cv2_obstacles_img, text_bot_left_box, text_top_right_box, box_color, -1)
@@ -1041,18 +1317,24 @@ class ObstaclesImgPub:
         for obstacle in obstacles_list:
             overlay_obstacles_list.append(self.getBoxDict(obstacle))
 
-        self.imgs_info_lock.acquire()
-        if source_topic in self.sources_info_dict.keys():
-            self.sources_info_dict[source_topic]['obstacles_dict_list'] = overlay_obstacles_list
-            self.sources_info_dict[source_topic]['navpose_dict'] = navpose_dict
-            self.sources_info_dict[source_topic]['img_stamp'] = msg.source_timestamp
-            self.sources_info_dict[source_topic]['last_det_time'] = current_time
-        self.imgs_info_lock.release()
+        # Build the replacement entry, then store it in one assignment. Writing
+        # the fields into the live entry is what let the render path read a box
+        # list from one cycle and a source stamp from the next, and then align
+        # the published frame to the wrong one of the two.
+        result_dict = dict(self.getSourceResult(source_topic))
+        result_dict['source_stamp'] = msg.source_timestamp
+        result_dict['obstacles_dict_list'] = overlay_obstacles_list
+        result_dict['navpose_dict'] = navpose_dict
+        result_dict['last_det_time'] = current_time
+        self.setSourceResult(source_topic, result_dict)
 
     def obstaclesDepthMapCb(self, msg):
         # The segmentation half of one process cycle. Kept separate from
-        # obstaclesCb because the two now arrive as separate messages; both write
-        # under imgs_info_lock, so imageCb never reads a half-updated entry.
+        # obstaclesCb because the two arrive as separate messages; both replace
+        # the whole result entry, so the render path never reads a half-updated
+        # one. The maps carry their own stamp and persist until the next pair
+        # arrives, so a cycle that produced no segmentation keeps drawing the
+        # last one it had rather than flickering the overlay off.
         source_topic = self.mapSourceTopic(msg.source_topic)
         if source_topic not in self.sources_info_dict.keys():
             return
@@ -1060,11 +1342,11 @@ class ObstaclesImgPub:
         depth_map_ground = self.getDepthMapFromMsg(msg.depth_map_ground)
         depth_map_obstacles = self.getDepthMapFromMsg(msg.depth_map_obstacles)
 
-        self.imgs_info_lock.acquire()
-        if source_topic in self.sources_info_dict.keys():
-            self.sources_info_dict[source_topic]['depth_map_ground'] = depth_map_ground
-            self.sources_info_dict[source_topic]['depth_map_obstacles'] = depth_map_obstacles
-        self.imgs_info_lock.release()
+        result_dict = dict(self.getSourceResult(source_topic))
+        result_dict['depth_map_ground'] = depth_map_ground
+        result_dict['depth_map_obstacles'] = depth_map_obstacles
+        result_dict['maps_stamp'] = msg.source_timestamp
+        self.setSourceResult(source_topic, result_dict)
 
     def statusCb(self, msg):
         self.last_status_time = nepi_utils.get_time()

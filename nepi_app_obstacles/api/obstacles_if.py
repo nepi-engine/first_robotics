@@ -145,6 +145,17 @@ class ObstaclesIF:
     navpose_dict = dict()
     navpose_dict_lock = threading.Lock()
 
+    # Single-slot handoff for the segmentation publish. The obstacle list must
+    # never wait on image work, and the two 32FC1 encodes an ObstaclesDepthMap
+    # needs are image work, so the process cycle drops the raw maps here and
+    # publishDepthMapCb does the encoding on its own thread. One slot,
+    # overwritten rather than queued: under load the newest cycle's segmentation
+    # wins and the older one is dropped, which is the right trade -- a stale
+    # segmentation is worth less than a late one, and the obstacle list it
+    # belonged to already went out on time.
+    depth_map_slot = None
+    depth_map_slot_lock = threading.Lock()
+
     msg_str = 'Loading'
     active_source_topics = []
     cur_source_topic = "None"
@@ -720,6 +731,7 @@ class ObstaclesIF:
         nepi_sdk.start_timer_process((0.1), self.updaterCb, oneshot = True)
         nepi_sdk.start_timer_process((0.1), self.updateNextTopicCb, oneshot = True)
         nepi_sdk.start_timer_process((1.0), self.processObstaclesCb, oneshot = True)
+        nepi_sdk.start_timer_process((1.0), self.publishDepthMapCb, oneshot = True)
 
         self.msg_str = 'Loaded'
         self.ready = True
@@ -1603,29 +1615,22 @@ class ObstaclesIF:
 
         obstacles_msg.obstacles = obstacle_msg_list
 
-        # The segmentation maps travel on their own topic, built from the same
-        # cycle's data and published immediately after the obstacle list so a
-        # consumer pairing on source_topic + source_timestamp sees the two
-        # arrive together.
-        depth_map_msg = ObstaclesDepthMap()
-        depth_map_msg.timestamp = obstacles_msg.timestamp
-
-        depth_map_msg.process_name = obstacles_msg.process_name
-        depth_map_msg.process_namespace = obstacles_msg.process_namespace
-
-        depth_map_msg.source_topic = obstacles_msg.source_topic
-        depth_map_msg.source_timestamp = obstacles_msg.source_timestamp
-
-        depth_map_msg.navpose_frame = obstacles_msg.navpose_frame
-        depth_map_msg.navpose_msg = obstacles_msg.navpose_msg
-
-        depth_map_msg.depth_map_ground = self.getDepthMapImgMsg(depth_map_ground)
-        depth_map_msg.depth_map_obstacles = self.getDepthMapImgMsg(depth_map_obstacles)
-
+        # The obstacle list goes on the wire here, before anything in this
+        # method has touched an Image message. Nothing between the top of this
+        # method and this publish converts, copies or encodes an image, so the
+        # obstacle data stream cannot be held up by segmentation or overlay work
+        # no matter how expensive that work becomes.
         if self.node_if is not None:
             self.node_if.publish_pub('obstacles_pub', obstacles_msg)
             self.node_if.publish_pub('obstacles_all_pub', obstacles_msg)
-            self.node_if.publish_pub('obstacles_depth_map_pub', depth_map_msg)
+
+        # The segmentation maps travel on their own topic, built from the same
+        # cycle's data. They are handed to publishDepthMapCb through a single
+        # slot rather than encoded here, so neither this cycle's obstacle
+        # publish nor the start of the next process cycle pays for the two
+        # full-size 32FC1 conversions. A consumer still pairs the two messages
+        # on source_topic + source_timestamp.
+        self.queueDepthMapData(obstacles_msg, depth_map_ground, depth_map_obstacles)
 
         self.saveObstaclesData(obstacles_msg, obstacles_timestamp)
 
@@ -1639,6 +1644,60 @@ class ObstaclesIF:
                     pass
             self.processing_state = True
             self.process_state = True
+
+    def queueDepthMapData(self, obstacles_msg, depth_map_ground, depth_map_obstacles):
+        # Carries the header fields off the already-built Obstacles message so
+        # the two messages describe the same cycle by construction rather than by
+        # both being rebuilt from the same locals.
+        slot_dict = {
+            'timestamp': obstacles_msg.timestamp,
+            'process_name': obstacles_msg.process_name,
+            'process_namespace': obstacles_msg.process_namespace,
+            'source_topic': obstacles_msg.source_topic,
+            'source_timestamp': obstacles_msg.source_timestamp,
+            'navpose_frame': obstacles_msg.navpose_frame,
+            'navpose_msg': obstacles_msg.navpose_msg,
+            'depth_map_ground': depth_map_ground,
+            'depth_map_obstacles': depth_map_obstacles,
+        }
+        self.depth_map_slot_lock.acquire()
+        self.depth_map_slot = slot_dict
+        self.depth_map_slot_lock.release()
+
+    def publishDepthMapCb(self, timer):
+        self.depth_map_slot_lock.acquire()
+        slot_dict = self.depth_map_slot
+        self.depth_map_slot = None
+        self.depth_map_slot_lock.release()
+
+        # No subscriber means nobody is rendering the segmentation, so the two
+        # encodes are skipped outright rather than published into nothing. The
+        # obstacle list is unaffected either way -- it went out on the process
+        # thread before this slot was ever written.
+        if slot_dict is not None and self.node_if is not None:
+            if self.node_if.pub_has_subscribers('obstacles_depth_map_pub') == True:
+                depth_map_msg = ObstaclesDepthMap()
+                depth_map_msg.timestamp = slot_dict['timestamp']
+
+                depth_map_msg.process_name = slot_dict['process_name']
+                depth_map_msg.process_namespace = slot_dict['process_namespace']
+
+                depth_map_msg.source_topic = slot_dict['source_topic']
+                depth_map_msg.source_timestamp = slot_dict['source_timestamp']
+
+                depth_map_msg.navpose_frame = slot_dict['navpose_frame']
+                depth_map_msg.navpose_msg = slot_dict['navpose_msg']
+
+                depth_map_msg.depth_map_ground = self.getDepthMapImgMsg(slot_dict['depth_map_ground'])
+                depth_map_msg.depth_map_obstacles = self.getDepthMapImgMsg(slot_dict['depth_map_obstacles'])
+
+                self.node_if.publish_pub('obstacles_depth_map_pub', depth_map_msg)
+
+        # Ticks faster than the fastest process rate (MAX_MAX_RATE) so the
+        # segmentation still lands within a few milliseconds of the obstacle
+        # list it belongs to, the same oneshot-chain shape processObstaclesCb
+        # uses when it is keeping up.
+        nepi_sdk.start_timer_process((0.01), self.publishDepthMapCb, oneshot = True)
 
     def saveObstaclesData(self, obstacles_msg, timestamp):
         # Mirrors DetectionsIF.publish_data: gate on the rate/snapshot check
