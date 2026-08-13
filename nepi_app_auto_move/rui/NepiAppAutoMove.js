@@ -24,43 +24,54 @@ import { observer, inject } from "mobx-react"
 import Section from "./Section"
 import { Columns, Column } from "./Columns"
 import Label from "./Label"
+import Input from "./Input"
+import Button, { ButtonMenu } from "./Button"
 import Styles from "./Styles"
+import AsyncToggle from "./AsyncToggle"
+import BooleanIndicator from "./BooleanIndicator"
+import { SliderAdjustment } from "./AdjustmentWidgets"
 
-import NepiIFConnectMotor from "./Nepi_IF_ConnectMotor"
-import NepiIFConnectNavPose from "./Nepi_IF_ConnectNavPose"
+import NepiIFImageViewer from "./Nepi_IF_ImageViewer"
+import NepiIFConnectRBX from "./Nepi_IF_ConnectRBX"
 import NepiIFConnectData from "./Nepi_IF_ConnectData"
-
 import NepiIFControls from "./Nepi_IF_Controls"
 import NepiIFConfig from "./Nepi_IF_Config"
+
+import { setElementStyleModified, clearElementStyleModified } from "./Utilities"
+
+function round(value, decimals = 0) {
+  return Number(value).toFixed(decimals)
+}
 
 @inject("ros")
 @observer
 
-// AutoMove Application page
+// Auto Move app main panel. Left column is the overlay image viewer, right
+// column is the app panel: the robot and image selectors, a readout of which
+// companion topics were resolved, the overlay and goto controls, and the app's
+// ControlsIF box.
 //
-// Layout follows NepiAppWpilibIF.js: the selectors and config panel sit in the
-// right column, the image viewer fills the left column, and the page owns no
-// bespoke controls -- it selects sources, it does not drive them. Every connect
-// namespace is <app>/<connect_name>, owned by the matching connect IF in
-// auto_move_app_node.py:
-//   Motor 1 -> <app>/motor_1_connect  (ConnectMotorsDeviceIF)
-//   Motor 2 -> <app>/motor_2_connect  (ConnectMotorsDeviceIF)
-//   Motor 3 -> <app>/motor_3_connect  (ConnectMotorsDeviceIF)
-//   Motor 4 -> <app>/motor_4_connect  (ConnectMotorsDeviceIF)
-//   NavPose -> <app>/navpose_connect  (ConnectNavPoseIF)
-//   Image   -> <app>/image_connect    (ConnectImageIF)
-// Each connect IF is constructed with an explicit connect_name in the node so the
+// This page binds to ONE app node, not to a manager list. The status topic is
+// <app>/status carrying nepi_app_auto_move/NepiAppAutoMoveStatus, and every
+// command topic hangs off that same <app> namespace -- the namespace AutoMoveIF
+// registers its subscribers on.
+//
+// The two selectors are the standard connect components pointed at the connect
+// namespaces the node owns:
+//   Robot -> <app>/rbx_connect    (ConnectRBXDeviceIF)
+//   Image -> <app>/image_connect  (ConnectImageIF)
+// Both names are declared node-side as explicit connect_name arguments so the
 // binding is greppable from both sides; the names held in state below must match
-// those node-side names character for character.
+// those node-side names character for character. Each selector runs with
+// show_data={false} show_controls={false} -- this page renders its own viewer
+// and its own goto controls, so the connect components are used purely as
+// source selectors.
 //
-// The image row is the one place two components share a namespace. The selector
-// instance in the right column runs with show_data={false}; a SECOND
-// Nepi_IF_ConnectData on the SAME image_connect namespace runs in the left column
-// with show_selector={false} show_data={true}, and that second instance is what
-// renders Nepi_IF_ImageViewer -- Nepi_IF_ConnectData.renderData() reads the image
-// topic off ConnectIFStatus.selected_topic. The viewer topic therefore comes from
-// the connect status, not from this app's status message, so
-// NepiAppAutoMoveStatus.msg carries no image topic field.
+// The viewer in the left column is NOT mounted on the selected image. It is
+// mounted on status.overlay_image_topic, the composited frame the app's image
+// pub node publishes, and its clicks are routed to status.mouse_event_topic via
+// the viewer's existing mouse_event_topic prop -- no click handling is added to
+// Nepi_IF_ImageViewer itself.
 class NepiAppAutoMove extends Component {
 
   constructor(props) {
@@ -71,17 +82,22 @@ class NepiAppAutoMove extends Component {
       appNamespace: null,
 
       // Connect names, one per connect IF the node instantiates. Held here
-      // rather than inlined at each call site so the six strings that must match
+      // rather than inlined at each call site so the strings that must match
       // the node read as one list.
-      motor1ConnectName: "motor_1_connect",
-      motor2ConnectName: "motor_2_connect",
-      motor3ConnectName: "motor_3_connect",
-      motor4ConnectName: "motor_4_connect",
-      navposeConnectName: "navpose_connect",
+      rbxConnectName: "rbx_connect",
       imageConnectName: "image_connect",
 
       status_msg: null,
       connected: false,
+
+      // Editable goto boxes. Each mirrors the matching status field until the
+      // operator types in it, at which point the box holds the pending edit
+      // until Enter sends it. componentDidUpdate resets a box when the status
+      // value behind it moves -- which is what a new click does.
+      goto_x: "",
+      goto_y: "",
+      goto_z: "",
+      max_move: "",
 
       statusListener: null,
       needs_update: true,
@@ -90,13 +106,21 @@ class NepiAppAutoMove extends Component {
     this.getBaseNamespace = this.getBaseNamespace.bind(this)
     this.getAppNamespace = this.getAppNamespace.bind(this)
     this.getConnectNamespace = this.getConnectNamespace.bind(this)
+    this.getControlsNamespace = this.getControlsNamespace.bind(this)
+
     this.statusListener = this.statusListener.bind(this)
     this.updateStatusListener = this.updateStatusListener.bind(this)
+
+    this.onUpdateGotoText = this.onUpdateGotoText.bind(this)
+    this.onKeyGotoText = this.onKeyGotoText.bind(this)
+
+    this.renderSelectors = this.renderSelectors.bind(this)
+    this.renderSourceStatus = this.renderSourceStatus.bind(this)
     this.renderControls = this.renderControls.bind(this)
-    this.renderImageViewer = this.renderImageViewer.bind(this)
-    this.getExampleControlsNamespace = this.getExampleControlsNamespace.bind(this)
-    this.renderExampleControls = this.renderExampleControls.bind(this)
+    this.renderGoto = this.renderGoto.bind(this)
+    this.renderAppControls = this.renderAppControls.bind(this)
     this.renderConfig = this.renderConfig.bind(this)
+    this.renderImageViewer = this.renderImageViewer.bind(this)
   }
 
   getBaseNamespace() {
@@ -116,27 +140,34 @@ class NepiAppAutoMove extends Component {
   }
 
   // Connect namespace a Nepi_IF_Connect* component subscribes to, i.e.
-  // <app>/<connect_name>, matching the connect_name each connect IF in the node
-  // passes to ConnectNodeIF.
+  // <app>/<connect_name>. The node publishes both fully qualified on its status
+  // message, so those are preferred and this join is the fallback for the window
+  // before the first status arrives.
   getConnectNamespace(connectName) {
-    const appNamespace = this.getAppNamespace()
-    if (appNamespace !== null) {
-      return appNamespace + "/" + connectName
+    const status_msg = this.state.status_msg
+    if (status_msg != null) {
+      if (connectName === this.state.rbxConnectName && status_msg.rbx_connect_namespace) {
+        return status_msg.rbx_connect_namespace
+      }
+      if (connectName === this.state.imageConnectName && status_msg.image_connect_namespace) {
+        return status_msg.image_connect_namespace
+      }
     }
-    return null
+    const appNamespace = this.getAppNamespace()
+    return (appNamespace !== null) ? appNamespace + "/" + connectName : null
   }
 
-  // Namespace of this app's example ControlsIF. Taken from the app status, which
-  // publishes it fully qualified, with the conventional <app>/example_controls path
-  // as the fallback for the window before the first status message arrives. Mirrors
-  // NepiAppControlsSandbox.js getControlsNamespace().
-  getExampleControlsNamespace() {
+  // Namespace of this app's ControlsIF, taken from the status message, which
+  // publishes it fully qualified. A relative namespace would resolve at the
+  // global root once a RUI component appends '/status' and hands it to
+  // rosbridge -- see AutoMoveIF.get_controls_namespace().
+  getControlsNamespace() {
     const status_msg = this.state.status_msg
-    if (status_msg != null && status_msg.example_controls_namespace) {
-      return status_msg.example_controls_namespace
+    if (status_msg != null && status_msg.controls_namespace) {
+      return status_msg.controls_namespace
     }
     const appNamespace = this.getAppNamespace()
-    return (appNamespace != null) ? appNamespace + "/example_controls" : null
+    return (appNamespace != null) ? appNamespace + "/controls" : null
   }
 
   statusListener(message) {
@@ -172,84 +203,76 @@ class NepiAppAutoMove extends Component {
     if ((namespace != null && namespace !== this.state.appNamespace) || this.state.needs_update === true) {
       this.updateStatusListener(namespace)
     }
+
+    // Reset each editable box when the value behind it changes on the wire. A
+    // click rewrites all three goto values, and the boxes have to follow it --
+    // the whole point of click to go is that the operator sees where the click
+    // landed.
+    const status_msg = this.state.status_msg
+    const prev_status_msg = prevState.status_msg
+    if (status_msg != null) {
+      if (prev_status_msg == null || prev_status_msg.goto_x_m !== status_msg.goto_x_m) {
+        this.setState({ goto_x: round(status_msg.goto_x_m, 2) })
+      }
+      if (prev_status_msg == null || prev_status_msg.goto_y_m !== status_msg.goto_y_m) {
+        this.setState({ goto_y: round(status_msg.goto_y_m, 2) })
+      }
+      if (prev_status_msg == null || prev_status_msg.goto_z_m !== status_msg.goto_z_m) {
+        this.setState({ goto_z: round(status_msg.goto_z_m, 2) })
+      }
+      if (prev_status_msg == null || prev_status_msg.max_move_m !== status_msg.max_move_m) {
+        this.setState({ max_move: round(status_msg.max_move_m, 2) })
+      }
+    }
   }
 
   componentWillUnmount() {
     if (this.state.statusListener) {
       this.state.statusListener.unsubscribe()
     }
+    this.setState({
+      status_msg: null,
+      connected: false,
+      statusListener: null,
+    })
   }
 
-  // One selector per connect IF, in node order: the four motors, NavPose, then
-  // the image. All of them live inside ONE bordered Section -- the connect rows
-  // are a single panel of source selections, not six unrelated blocks, so the
-  // box goes around the whole set and each row is separated from the next by the
-  // standard RUI divider. make_section={false} keeps each component from drawing
-  // a bordered box of its own inside that panel.
-  //
-  // show_connect_header={true} is what titles each row: the component renders its
-  // title prop and its green "Connected" BooleanIndicator on one line ABOVE the
-  // Select, both driven by that connect namespace's ConnectIFStatus, so the page
-  // no longer renders a bold Label of its own. Nepi_IF_ConnectData reads no
-  // show_controls prop, so only show_selector and show_data are passed to the
-  // image row; Nepi_IF_ConnectMotor and Nepi_IF_ConnectNavPose read all three.
-  renderControls() {
+  //////////////////////////
+  // Editable goto boxes -- the PTX controls pattern
+
+  onUpdateGotoText(e, stateKey, elementId) {
+    const el = document.getElementById(elementId)
+    setElementStyleModified(el)
+    var update = {}
+    update[stateKey] = e.target.value
+    this.setState(update)
+  }
+
+  onKeyGotoText(e, elementId, topic) {
+    if (e.key !== 'Enter') {
+      return
+    }
+    const el = document.getElementById(elementId)
+    clearElementStyleModified(el)
+    const value = parseFloat(el.value)
+    if (isNaN(value)) {
+      return
+    }
+    this.props.ros.sendFloatMsg(topic, value)
+  }
+
+  //////////////////////////
+  // Right column
+
+  renderSelectors() {
     const divider = <div style={{ borderTop: "1px solid #ffffff", marginTop: Styles.vars.spacing.medium, marginBottom: Styles.vars.spacing.xs }}/>
 
     return (
       <Section title={"Connections"}>
 
-        <NepiIFConnectMotor
-          namespace={this.getConnectNamespace(this.state.motor1ConnectName)}
-          title={"Motor 1"}
-          show_selector={true}
-          show_data={false}
-          show_controls={false}
-          show_connect_header={true}
-          make_section={false}
-        />
-
-        {divider}
-
-        <NepiIFConnectMotor
-          namespace={this.getConnectNamespace(this.state.motor2ConnectName)}
-          title={"Motor 2"}
-          show_selector={true}
-          show_data={false}
-          show_controls={false}
-          show_connect_header={true}
-          make_section={false}
-        />
-
-        {divider}
-
-        <NepiIFConnectMotor
-          namespace={this.getConnectNamespace(this.state.motor3ConnectName)}
-          title={"Motor 3"}
-          show_selector={true}
-          show_data={false}
-          show_controls={false}
-          show_connect_header={true}
-          make_section={false}
-        />
-
-        {divider}
-
-        <NepiIFConnectMotor
-          namespace={this.getConnectNamespace(this.state.motor4ConnectName)}
-          title={"Motor 4"}
-          show_selector={true}
-          show_data={false}
-          show_controls={false}
-          show_connect_header={true}
-          make_section={false}
-        />
-
-        {divider}
-
-        <NepiIFConnectNavPose
-          namespace={this.getConnectNamespace(this.state.navposeConnectName)}
-          title={"NavPose"}
+        <NepiIFConnectRBX
+          namespace={this.getConnectNamespace(this.state.rbxConnectName)}
+          title={"Robot"}
           show_selector={true}
           show_data={false}
           show_controls={false}
@@ -267,55 +290,235 @@ class NepiAppAutoMove extends Component {
           show_connect_header={true}
           make_section={false}
         />
-        <Label title={"Its stream feeds the viewer"}/>
 
       </Section>
     )
   }
 
-  // The image viewer for the left column: a second Nepi_IF_ConnectData on the
-  // SAME image_connect namespace as the selector row, this one carrying only the
-  // data panel (show_selector={false} show_data={true}). Its renderData() reads
-  // the image topic off ConnectIFStatus.selected_topic and mounts
-  // Nepi_IF_ImageViewer on it, and it already handles the unselected case --
-  // renderData() returns an empty Columns/Column when selected_topic is null or
-  // 'None', so no viewer is mounted on a topic that does not exist. Sharing the
-  // namespace rather than adding a second connect IF keeps one selection driving
-  // both halves of the row: whatever the operator picks on the right is what
-  // streams on the left.
-  renderImageViewer() {
+  // What the app resolved from the selected image, and whether each companion
+  // is live. A false flag is not an error -- the app keeps running and the
+  // feature that needed that topic goes inert -- so each row reports the topic
+  // it looked for alongside its indicator.
+  renderSourceStatus() {
+    const status_msg = this.state.status_msg
+    if (status_msg == null) {
+      return null
+    }
+
+    const rows = [
+      { title: "Depth Map", topic: status_msg.depth_map_topic, found: status_msg.depth_map_found },
+      { title: "Depth Map Image", topic: status_msg.depth_map_image_topic, found: status_msg.depth_map_image_found },
+      { title: "Objects", topic: status_msg.objects_topic, found: status_msg.objects_found },
+      { title: "Targets", topic: status_msg.targets_topic, found: status_msg.targets_found },
+      { title: "Obstacles", topic: status_msg.obstacles_topic, found: status_msg.obstacles_found },
+    ]
+
     return (
-      <Columns>
-        <Column>
-          <NepiIFConnectData
-            namespace={this.getConnectNamespace(this.state.imageConnectName)}
-            title={"Image"}
-            show_selector={false}
-            show_data={true}
-            make_section={false}
-          />
-        </Column>
-      </Columns>
+      <Section title={"Sources"}>
+
+        <div style={{ display: 'flex' }}>
+          <div style={{ width: '50%' }}>
+            <Label title={"Robot Connected"}>
+              <BooleanIndicator value={status_msg.rbx_connected} />
+            </Label>
+          </div>
+          <div style={{ width: '50%' }}>
+            <Label title={"Robot Ready"}>
+              <BooleanIndicator value={status_msg.rbx_ready} />
+            </Label>
+          </div>
+        </div>
+
+        <Label title={"Image Connected"}>
+          <BooleanIndicator value={status_msg.image_connected} />
+        </Label>
+
+        <div style={{ borderTop: "1px solid #ffffff", marginTop: Styles.vars.spacing.medium, marginBottom: Styles.vars.spacing.xs }} />
+
+        {rows.map((row) =>
+          <Label title={row.title}>
+            <BooleanIndicator value={row.found === true} />
+          </Label>
+        )}
+
+        <pre style={{ height: "100px", overflowY: "auto" }} align={"left"} textAlign={"left"}>
+        {rows.map((row) => row.title + ": " + ((row.topic !== '') ? row.topic : "not resolved") + "\n").join('')}
+        </pre>
+
+      </Section>
     )
   }
 
-  // A copy of the controls sandbox app's Controls box, bound to this app's own
-  // example ControlsIF rather than the sandbox app's. Same component, mounted the
-  // same way the sandbox page mounts it -- make_section={false} inside a Section of
-  // its own -- so it looks and behaves identically; the "Show Controls" toggle at
-  // the top of the box is Nepi_IF_Controls' own, not something this page adds. Only
-  // the Section title differs.
-  //
-  // The sandbox page also mounts NepiAppControlsSandbox-Settings below the box in
-  // develop/admin mode. That component is deliberately NOT copied: it lives in the
-  // sandbox app's rui/ directory, so importing it would make this app's RUI build
-  // depend on nepi_app_controls_sandbox being installed.
-  renderExampleControls() {
+  renderControls() {
+    const { sendBoolMsg } = this.props.ros
+    const status_msg = this.state.status_msg
+    if (status_msg == null) {
+      return null
+    }
+    const appNamespace = this.getAppNamespace()
+
+    const show_depth_map = status_msg.show_depth_map_enabled
+    const show_objects = status_msg.show_objects_enabled
+    const show_targets = status_msg.show_targets_enabled
+    const show_obstacles = status_msg.show_obstacles_enabled
+    const show_crosshair = status_msg.show_crosshair_enabled
+
+    // 0.0 fully opaque through 1.0 invisible on the wire; the slider below runs
+    // 0-100 with scaled 0.01, the RUI's standard ratio slider shape.
+    const depth_map_transparency = status_msg.depth_map_transparency
+
     return (
-      <Section title={"Example Controls"}>
+      <Section title={"Overlay"}>
+
+        <Label title="Show Depth Map">
+          <AsyncToggle
+            checked={show_depth_map === true}
+            onClick={() => sendBoolMsg(appNamespace + "/set_show_depth_map", show_depth_map === false)}>
+          </AsyncToggle>
+        </Label>
+
+        {/* The transparency slider sits under its own show toggle and is hidden
+            while the layer is off -- with nothing drawn there is nothing for it
+            to adjust. */}
+        <div hidden={show_depth_map === false}>
+          <SliderAdjustment
+            title={"Depth Map Transparency"}
+            msgType={"std_msgs/Float32"}
+            adjustment={depth_map_transparency}
+            topic={appNamespace + "/set_depth_map_transparency"}
+            scaled={0.01}
+            min={0}
+            max={100}
+            disabled={false}
+            tooltip={"Sets depth map overlay transparency, 100% is invisible"}
+            unit={"%"}
+          />
+        </div>
+
+        <Label title="Show Objects">
+          <AsyncToggle
+            checked={show_objects === true}
+            onClick={() => sendBoolMsg(appNamespace + "/set_show_objects", show_objects === false)}>
+          </AsyncToggle>
+        </Label>
+
+        <Label title="Show Targets">
+          <AsyncToggle
+            checked={show_targets === true}
+            onClick={() => sendBoolMsg(appNamespace + "/set_show_targets", show_targets === false)}>
+          </AsyncToggle>
+        </Label>
+
+        <Label title="Show Obstacles">
+          <AsyncToggle
+            checked={show_obstacles === true}
+            onClick={() => sendBoolMsg(appNamespace + "/set_show_obstacles", show_obstacles === false)}>
+          </AsyncToggle>
+        </Label>
+
+        <Label title="Show Crosshair">
+          <AsyncToggle
+            checked={show_crosshair === true}
+            onClick={() => sendBoolMsg(appNamespace + "/set_show_crosshair", show_crosshair === false)}>
+          </AsyncToggle>
+        </Label>
+
+      </Section>
+    )
+  }
+
+  // The goto section. The three offset boxes display what the node computed
+  // from the last click and are directly editable -- an operator can nudge a
+  // value the click got nearly right instead of hunting for a better pixel.
+  renderGoto() {
+    const { sendTriggerMsg } = this.props.ros
+    const status_msg = this.state.status_msg
+    if (status_msg == null) {
+      return null
+    }
+    const appNamespace = this.getAppNamespace()
+
+    const goto_state = status_msg.goto_state
+    const goto_running = (goto_state === 'planning' || goto_state === 'moving')
+
+    return (
+      <Section title={"Goto"}>
+
+        <Label title={"Click the image to set a destination"} />
+
+        <Label title={"X Forward (m)"}>
+          <Input
+            id={"AutoMoveGotoX"}
+            value={this.state.goto_x}
+            onChange={(e) => this.onUpdateGotoText(e, 'goto_x', 'AutoMoveGotoX')}
+            onKeyDown={(e) => this.onKeyGotoText(e, 'AutoMoveGotoX', appNamespace + "/set_goto_x")}
+          />
+        </Label>
+
+        <Label title={"Y Left (m)"}>
+          <Input
+            id={"AutoMoveGotoY"}
+            value={this.state.goto_y}
+            onChange={(e) => this.onUpdateGotoText(e, 'goto_y', 'AutoMoveGotoY')}
+            onKeyDown={(e) => this.onKeyGotoText(e, 'AutoMoveGotoY', appNamespace + "/set_goto_y")}
+          />
+        </Label>
+
+        <Label title={"Z Up (m)"}>
+          <Input
+            id={"AutoMoveGotoZ"}
+            value={this.state.goto_z}
+            onChange={(e) => this.onUpdateGotoText(e, 'goto_z', 'AutoMoveGotoZ')}
+            onKeyDown={(e) => this.onKeyGotoText(e, 'AutoMoveGotoZ', appNamespace + "/set_goto_z")}
+          />
+        </Label>
+
+        <Label title={"Max Move (m)"}>
+          <Input
+            id={"AutoMoveMaxMove"}
+            value={this.state.max_move}
+            onChange={(e) => this.onUpdateGotoText(e, 'max_move', 'AutoMoveMaxMove')}
+            onKeyDown={(e) => this.onKeyGotoText(e, 'AutoMoveMaxMove', appNamespace + "/set_max_move")}
+          />
+        </Label>
+
+        <Label title={"Clamped to Max Move"}>
+          <BooleanIndicator value={status_msg.goto_clamped === true} />
+        </Label>
+
+        <ButtonMenu>
+          <Button onClick={() => sendTriggerMsg(appNamespace + "/goto_trigger")}>
+            {"Goto"}
+          </Button>
+          <Button onClick={() => sendTriggerMsg(appNamespace + "/goto_cancel")}>
+            {"Cancel"}
+          </Button>
+        </ButtonMenu>
+
+        <pre style={{ height: "80px", overflowY: "auto" }} align={"left"} textAlign={"left"}>
+        {"State: " + goto_state +
+         ((goto_running === true && status_msg.goto_step_count > 0) ?
+            "  (step " + (status_msg.goto_step + 1) + " of " + status_msg.goto_step_count + ")" : "") +
+         "\n" + status_msg.goto_msg +
+         "\n" + status_msg.click_msg}
+        </pre>
+
+      </Section>
+    )
+  }
+
+  // The app's own control set, rendered by the shared Nepi_IF_Controls against
+  // the fully-qualified namespace the status message reports.
+  renderAppControls() {
+    const controls_namespace = this.getControlsNamespace()
+    if (controls_namespace == null) {
+      return null
+    }
+    return (
+      <Section title={"Move Controls"}>
 
         <NepiIFControls
-          namespace={this.getExampleControlsNamespace()}
+          namespace={controls_namespace}
           make_section={false}
         />
 
@@ -324,20 +527,55 @@ class NepiAppAutoMove extends Component {
   }
 
   renderConfig() {
-    const appNamespace = this.getAppNamespace()
     return (
-      <React.Fragment>
-        <NepiIFConfig
-          namespace={appNamespace}
-          title={"Nepi_IF_Config"}
-        />
-      </React.Fragment>
+      <NepiIFConfig
+        namespace={this.getAppNamespace()}
+        title={"Nepi_IF_Config"}
+      />
     )
   }
 
-  // Standard NEPI device-panel split: the image viewer in the left ~75%, a small
-  // gutter, and the selectors/config in the right ~23% column. Mirrors
-  // NepiDeviceIDX.js render().
+  //////////////////////////
+  // Left column
+
+  // The composited overlay the app's image pub node publishes -- source frame,
+  // depth map blend, obstacles, objects, targets and the click crosshair, in
+  // that order. Mounted only once the topic is actually advertised, so the
+  // viewer shows a waiting title instead of a broken image.
+  //
+  // mouse_event_topic is what routes clicks to the app node. Without it the
+  // viewer would publish to <image topic>/mouse_event, which belongs to the
+  // image source, not to this app.
+  renderImageViewer() {
+    const { imageTopics } = this.props.ros
+    const status_msg = this.state.status_msg
+
+    const overlay_topic = (status_msg != null && status_msg.overlay_image_topic) ? status_msg.overlay_image_topic : 'None'
+    const mouse_event_topic = (status_msg != null && status_msg.mouse_event_topic) ? status_msg.mouse_event_topic : null
+
+    const publishing = imageTopics.indexOf(overlay_topic) !== -1
+    const image_topic = (publishing === true && this.state.connected === true) ? overlay_topic : 'None'
+    const image_topic_text = (overlay_topic === 'None') ? 'No Image Selected' :
+      publishing ? 'Auto Move' : 'Waiting for image to publish'
+
+    return (
+      <Columns>
+        <Column>
+
+          <NepiIFImageViewer
+            image_topic={image_topic}
+            title={image_topic_text}
+            mouse_event_topic={mouse_event_topic}
+            show_res_orient={false}
+          />
+
+        </Column>
+      </Columns>
+    )
+  }
+
+  // Standard NEPI device-panel split: the viewer in the left ~75%, a small
+  // gutter, and the app panel in the right ~23% column.
   renderBody() {
     return (
       <div style={{ display: 'flex' }}>
@@ -351,9 +589,12 @@ class NepiAppAutoMove extends Component {
         </div>
 
         <div style={{ width: "23%" }}>
+          {this.renderSelectors()}
+          {this.renderSourceStatus()}
           {this.renderControls()}
+          {this.renderGoto()}
+          {this.renderAppControls()}
           {this.renderConfig()}
-          {this.renderExampleControls()}
         </div>
 
       </div>

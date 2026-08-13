@@ -1,6 +1,6 @@
 APP_DICT:
-  display_name: Auto Move App
-  description: Auto move with obstacle avoidance application
+  display_name: Auto Move
+  description: Click a point in an image to move the robot there
   pkg_name: nepi_app_auto_move
   group_name: AUTOMATION
   config_file: app_auto_move.yaml
