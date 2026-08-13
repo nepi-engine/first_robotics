@@ -18,6 +18,7 @@ import NepiIFConnectData from "./Nepi_IF_ConnectData"
 import NepiAppControlsSandboxControls from "./NepiAppControlsSandbox-Controls"
 import NepiAppControlsSandboxData from "./NepiAppControlsSandbox-Data"
 import NepiAppControlsSandboxSettings from "./NepiAppControlsSandbox-Settings"
+import NepiAppControlsSandboxTabs from "./NepiAppControlsSandbox-Tabs"
 
 
 @inject("ros")
@@ -66,6 +67,7 @@ class NepiAppControlsSandbox extends Component {
     this.statusListener = this.statusListener.bind(this)
     this.renderImageViewer = this.renderImageViewer.bind(this)
     this.renderConnections = this.renderConnections.bind(this)
+    this.renderControlsDataTabs = this.renderControlsDataTabs.bind(this)
   }
 
   getAppNamespace() {
@@ -203,9 +205,84 @@ class NepiAppControlsSandbox extends Component {
     )
   }
 
-  render() {
+  // The CONTROLS SANDBOX and DATA SANDBOX boxes, presented as four tabs
+  // (Choices, Actions, Values, Data) instead of two stacked Sections. Purely a
+  // RUI-side regrouping: createControlsInitDict() / createDataInitDict() in
+  // controls_sandbox_app_node.py are unchanged, and every control keeps
+  // exactly its current wiring -- each tab mounts the same
+  // NepiAppControlsSandboxControls / -Data components used before, just with a
+  // type_filter prop so only that tab's control types render. Choices holds
+  // the pick-from-a-set controls (Menu, Selection, Selections); Actions holds
+  // the toggle and fire controls (Bool, Trigger); Values holds the free-form
+  // and numeric value controls (String, Int, Float, FloatSlider,
+  // FloatSliders); Data holds the entire read-only Data Sandbox box
+  // unfiltered. show_visibility_toggle={false} on every instance suppresses
+  // the per-box "Show Controls"/"Show Data" toggle so it does not repeat once
+  // per tab -- concept_3_tabbed_groups.html has no such toggle at all.
+  renderControlsDataTabs() {
     const controlsNamespace = this.getControlsNamespace()
     const dataNamespace = this.getDataNamespace()
+
+    const tabs = [
+      {
+        title: "Choices",
+        content: (
+          <NepiAppControlsSandboxControls
+            key={controlsNamespace + "_choices"}
+            namespace={controlsNamespace}
+            make_section={false}
+            show_visibility_toggle={false}
+            type_filter={["Menu", "Selection", "Selections"]}
+          />
+        )
+      },
+      {
+        title: "Actions",
+        content: (
+          <NepiAppControlsSandboxControls
+            key={controlsNamespace + "_actions"}
+            namespace={controlsNamespace}
+            make_section={false}
+            show_visibility_toggle={false}
+            type_filter={["Bool", "Trigger"]}
+          />
+        )
+      },
+      {
+        title: "Values",
+        content: (
+          <NepiAppControlsSandboxControls
+            key={controlsNamespace + "_values"}
+            namespace={controlsNamespace}
+            make_section={false}
+            show_visibility_toggle={false}
+            type_filter={["String", "Int", "Float", "FloatSlider", "FloatSliders"]}
+          />
+        )
+      },
+      {
+        title: "Data",
+        content: (
+          <NepiAppControlsSandboxData
+            key={dataNamespace + "_data"}
+            namespace={dataNamespace}
+            make_section={false}
+            show_visibility_toggle={false}
+          />
+        )
+      }
+    ]
+
+    // No Section wrapper here: concept_3_tabbed_groups.html's tab bar sits at
+    // the top of its own bordered panel with no titled header above it, unlike
+    // the stacked "CONTROLS SANDBOX" / "DATA SANDBOX" Sections it replaces.
+    return (
+      <NepiAppControlsSandboxTabs tabs={tabs} />
+    )
+  }
+
+  render() {
+    const controlsNamespace = this.getControlsNamespace()
 
     // Settings box is shown only in develop run mode or when admin mode is set.
     const { systemRunMode, systemAdminModeSet } = this.props.ros
@@ -230,25 +307,7 @@ class NepiAppControlsSandbox extends Component {
 
                 {this.renderConnections()}
 
-                <Section title={"CONTROLS SANDBOX"}>
-
-                  <NepiAppControlsSandboxControls
-                    key={controlsNamespace}
-                    namespace={controlsNamespace}
-                    make_section={false}
-                  />
-
-                </Section>
-
-                <Section title={"DATA SANDBOX"}>
-
-                  <NepiAppControlsSandboxData
-                    key={dataNamespace}
-                    namespace={dataNamespace}
-                    make_section={false}
-                  />
-
-                </Section>
+                {this.renderControlsDataTabs()}
 
                 { (show_settings === true) ?
                   <NepiAppControlsSandboxSettings

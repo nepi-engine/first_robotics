@@ -221,7 +221,12 @@ class NepiAppControlsSandboxData extends Component {
     const has_show_control = (status_msg != null) ? (status_msg.has_show_control === true) : false
     const show_data = (allways_show_data === true) ? true : (this.state.show_data && status_show_data)
 
-    const show_data_toggle = (allways_show_data === false && has_show_control === true) ? (
+    // show_visibility_toggle lets a parent that mounts this box inside a tab
+    // suppress the "Show Data" toggle so it does not appear alongside the tab
+    // bar (the mockup's Data tab has no such toggle).
+    const show_visibility_toggle = (this.props.show_visibility_toggle !== undefined) ? this.props.show_visibility_toggle : true
+
+    const show_data_toggle = (allways_show_data === false && has_show_control === true && show_visibility_toggle === true) ? (
       <Columns>
         <Column>
           <Label title="Show Data">

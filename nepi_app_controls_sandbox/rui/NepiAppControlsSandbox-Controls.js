@@ -438,7 +438,12 @@ class NepiAppControlsSandboxControls extends Component {
     const allways_show_controls = (this.props.allways_show_controls !== undefined) ? this.props.allways_show_controls : false
     const show_controls = (allways_show_controls === true) ? true : this.state.show_controls
 
-    const show_controls_toggle = (allways_show_controls === false) ? (
+    // show_visibility_toggle lets a parent that already mounts several
+    // instances of this box (e.g. one per tab) suppress the per-instance
+    // "Show Controls" toggle so it does not appear multiple times on one page.
+    const show_visibility_toggle = (this.props.show_visibility_toggle !== undefined) ? this.props.show_visibility_toggle : true
+
+    const show_controls_toggle = (allways_show_controls === false && show_visibility_toggle === true) ? (
       <Columns>
         <Column>
           <Label title="Show Controls">
@@ -456,6 +461,11 @@ class NepiAppControlsSandboxControls extends Component {
 
     // Controls widgets, one per non-hidden control. Only built when the section
     // is expanded and a status has arrived.
+    // type_filter optionally restricts this box to only the listed control
+    // types (e.g. one tab showing only Menu/Selection/Selections). Undefined
+    // means show every type, which is today's behavior.
+    const type_filter = this.props.type_filter
+
     var controls_body = null
     if (show_controls === true && status_msg != null) {
       const names = status_msg.controls_name_list || []
@@ -470,6 +480,7 @@ class NepiAppControlsSandboxControls extends Component {
               // Hidden controls are not shown in the Controls box (they remain
               // manageable from the Controls Settings box).
               if (control_msg.hidden === true) { return null }
+              if (type_filter !== undefined && type_filter.indexOf(types[i]) === -1) { return null }
               return this.renderControl(name, types[i], control_msg, i)
             })}
           </Column>
