@@ -484,11 +484,12 @@ class NepiAppWpilibIF extends Component {
   // own inside that panel.
   //
   // Each row is ONE line: the connect name on the left, its dropdown on the
-  // right, nothing else. show_connect_header={false} drops the bold title line
-  // the components used to draw above their Select, show_connect_status={false}
-  // drops their "Connected" BooleanIndicator, and selector_label replaces their
-  // hardcoded second word ("Detector", "NavPose Source") with the row name. No
-  // dividers -- three single lines read as one list without them.
+  // right, nothing else. That is the whole of what shortened={true} means to the
+  // shared components -- no header line, no "Connected" BooleanIndicator, and
+  // the title prop used as the row's only label in place of their hardcoded
+  // second word ("Detector", "NavPose Source"). The prop defaults to false, so
+  // this page asking for a compact row changes nothing for any other consumer.
+  // No dividers -- three single lines read as one list without them.
   //
   // The Obstacles row is built here rather than by a shared component: there is
   // no Nepi_IF_ConnectObstacles.js, because ConnectObstaclesIF is not a
@@ -512,12 +513,10 @@ class NepiAppWpilibIF extends Component {
         <NepiIFConnectDetections
           namespace={this.getConnectNamespace("detections_connect")}
           title={"Detections"}
-          selector_label={"Detections"}
           show_selector={true}
           show_data={false}
           show_controls={false}
-          show_connect_header={false}
-          show_connect_status={false}
+          shortened={true}
           make_section={false}
         />
 
@@ -539,12 +538,10 @@ class NepiAppWpilibIF extends Component {
         <NepiIFConnectNavPose
           namespace={this.getConnectNamespace("navpose_connect")}
           title={"NavPose"}
-          selector_label={"NavPose"}
           show_selector={true}
           show_data={false}
           show_controls={false}
-          show_connect_header={false}
-          show_connect_status={false}
+          shortened={true}
           make_section={false}
         />
 
@@ -601,10 +598,11 @@ class NepiAppWpilibIF extends Component {
   // holds them. Commit is on Enter in the team number box -- there is no
   // separate apply button, matching the ocean aero group this is adapted from.
   //
-  // The indicator is the first row INSIDE the box rather than beside the section
-  // title: Section renders its title as plain text and takes no element beside
-  // it, and Section.js is shared by the whole RUI, so it is left alone. The row
-  // uses the same Label-plus-BooleanIndicator layout the connect components use.
+  // The connection indicator sits on the title line rather than in a row of its
+  // own. Section renders its title prop as a child node ({title}), not as a
+  // string, so an element passed there lays out beside the heading text with no
+  // change to the shared Section.js. The heading div supplies the uppercase bold
+  // styling; the flex wrapper only pins the indicator to the same baseline.
   renderRobotNetwork() {
     const team_number = this.state.team_number
     const network_connected = this.getRobotNetworkConnected()
@@ -613,12 +611,20 @@ class NepiAppWpilibIF extends Component {
     const nepi_ip = this.getSettingValue('NEPI_ALIAS_IP_1')
     const ntp_ip = this.getSettingValue('NEPI_NTP_IP')
 
-    return (
-      <Section title={"Robot Network"}>
+    const section_title = (
+      <div style={{ display: 'flex', alignItems: 'center' }}>
 
-        <Label title={"Connected"}>
+        <div>{"Robot Network"}</div>
+
+        <div style={{ marginLeft: Styles.vars.spacing.regular }}>
           <BooleanIndicator value={network_connected} />
-        </Label>
+        </div>
+
+      </div>
+    )
+
+    return (
+      <Section title={section_title}>
 
         <Label title={this.renderSubLabel("Team Number", "sets the three below")}>
           <Input
@@ -674,8 +680,8 @@ class NepiAppWpilibIF extends Component {
         </div>
 
         <div style={{ width: "23%" }}>
-          {this.renderControls()}
           {this.renderRobotNetwork()}
+          {this.renderControls()}
           {this.renderConfig()}
           {this.renderExampleControls()}
         </div>
