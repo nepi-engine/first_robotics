@@ -2,8 +2,8 @@
 #
 # Copyright (c) 2024 Numurus <https://www.numurus.com>.
 #
-# This file is part of nepi rui (nepi_apps) repo
-# (see https://github.com/nepi-engine/nepi_apps)
+# This file is part of nepi rui (nepi_rui) repo
+# (see https://github.com/nepi-engine/nepi_rui)
 #
 # License: NEPI RUI repo source-code and NEPI Images that use this source-code
 # are licensed under the "Numurus Software License",
@@ -17,101 +17,42 @@
 # - mailto:nepi@numurus.com
 #
  */
-
 import React, { Component } from "react"
 import { observer, inject } from "mobx-react"
 
 import Section from "./Section"
-import { Columns, Column } from "./Columns"
+import Label from "./Label"
+import { Column, Columns } from "./Columns"
+import Select, { Option } from "./Select"
+import Styles from "./Styles"
+import AsyncToggle from "./AsyncToggle"
+import BooleanIndicator from "./BooleanIndicator"
+import { SliderAdjustment } from "./AdjustmentWidgets"
 
+import NepiIFImageViewer from "./Nepi_IF_ImageViewer"
+import NepiIFControls from "./Nepi_IF_Controls"
+import NepiIFSaveData from "./Nepi_IF_SaveData"
 import NepiIFConfig from "./Nepi_IF_Config"
 
-import NepiAppObstaclesImages from "./NepiAppObstacles-Images"
-import NepiAppObstaclesData from "./NepiAppObstacles-Data"
-import NepiAppObstaclesControls from "./NepiAppObstacles-Controls"
+import { createMenuFirstLastNames } from "./Utilities"
+
+function round(value, decimals = 0) {
+  return Number(value).toFixed(decimals)
+}
 
 @inject("ros")
 @observer
 
-// Obstacles Application page.
+// Obstacles app main panel. Left column is the overlay image viewer, right
+// column is the app panel: depth map source selection, process controls, the
+// algorithm's ControlsIF box, overlay toggles and status.
 //
-// Layout follows NepiAppWpilibIF.js: image viewers fill the left column, the
-// selector column and config panel sit on the right, and the page owns no
-// bespoke controls. Every connect namespace is <app>/<connect_name>, owned by the
-// matching connect IF in obstacles_app_node.py:
-//   Depth Map     -> <app>/depth_map_connect     (ConnectDepthMapIF, the ONE selector)
-//   Color Image   -> <app>/color_image_connect   (ConnectColorImageIF, no selector, node-driven)
-//   Targets       -> <app>/targets_connect       (ConnectTargetsIF, no selector, node-driven)
-//   Targets Image -> <app>/targets_image_connect (ConnectColorImageIF, no selector, node-driven)
-//   NavPose       -> <app>/navpose_connect       (ConnectNavPoseIF, no selector, node-driven)
-// Each connect IF is constructed with an explicit connect_name in the node so the
-// binding is greppable from both sides; the names above must match those
-// node-side names character for character.
-//
-// ONE rule governs this page: the operator selects a DEPTH MAP, and everything
-// else -- the targets source, the NavPose source, and all three images -- is
-// derived from it node-side and rendered read-only here. The chain is spelled out
-// in obstacles_app_node.py; in short, the selected depth map's DepthMapStatus
-// names its sibling color image (image_topic) and its NavPose (navpose_topic), the
-// targets source is whichever discovered AI detector reports that color image
-// among the images it is running on (a detector publishes targets under its OWN
-// node namespace, never under the image's -- getTargetsTopic() searches rather
-// than joins), and each image is named by the status of the source it belongs to.
-// A selector on any of those could only offer the operator a way to disagree with
-// the depth map they just picked, and a targets source belonging to a different
-// camera than the depth map is not a configuration worth being able to express.
-//
-// So this page renders exactly one <Select> for a source: the Depth Map one, which
-// Nepi_IF_ConnectData owns, mounted by NepiAppObstacles-Data.js. The Targets and
-// NavPose rows are read-only text plus the same Connected indicator they carried as
-// selectors, and every viewer in NepiAppObstacles-Images.js reads its topic off
-// this app's status message (depth_map_image_topic / image_topic /
-// targets_image_topic), the NepiAppStereoCam pattern.
-//
-// Two ConnectIFStatus subscriptions of this page's own back the read-only rows --
-// the same subscription the removed Nepi_IF_Connect* components made, on the same
-// namespaces, for the same field. They are needed because those components render
-// their title and Connected indicator INSIDE renderSelector(), so mounting one
-// with show_selector={false} renders nothing at all. A third, on the depth map
-// connect, is what makes requirement "clear before re-deriving" hold across the
-// window between an operator moving the Depth Map selector and the node
-// republishing: while that connect's live selected_topic disagrees with the
-// depth_map_topic in the app status message, every derived value on this page is
-// rendered CLEARED rather than at its previous depth map's value. Node-side the
-// clear is automatic -- publish_status() recomputes every derived topic from the
-// current selection in one pass, and each derivation's ownership gate forces
-// 'None' the instant the selection changes.
-//
-// STATE OWNERSHIP -- a deliberate departure from Nepi_IF_ConnectPTX. Do not "fix"
-// this back to child-owned subscriptions.
-//
-// This page is split into three children the way Nepi_IF_ConnectPTX splits into
-// Nepi_IF_PTX-Data and Nepi_IF_PTX-Controls, with ONE difference: in ConnectPTX
-// each child owns its own device status subscription, and here they own none. This
-// page is the SOLE owner of every ROS subscription on the page -- the app's own
-// NepiAppObstaclesStatus, and the three ConnectIFStatus subscriptions on
-// depth_map_connect, targets_connect and navpose_connect -- and the sole owner of
-// the derivation helpers getDerivedAreCurrent(), getDerivedTopic(),
-// getDerivedConnected() and isTopic(). The three children take already-derived
-// values as PROPS and are presentational.
-//
-// The reason is the "clear before re-deriving" guard documented above. It requires
-// that every derived value on the page agree about whether the current derivation
-// is stale, and staleness is decided by ONE comparison: the depth map connect's
-// live selected_topic against the depth_map_topic in the app status message. Two or
-// three components each computing that comparison from their own independently
-// batched subscriptions can disagree within a render pass -- which is exactly the
-// split-brain the guard exists to prevent: one viewer clearing while another keeps
-// streaming the previous depth map's image, or a read-only row naming one depth
-// map's targets source beside another depth map's picture. One owner, one answer,
-// passed down. A depth map change clears all three image viewers, the NavPose
-// viewer and both derived rows in the same render pass, and each child receives
-// 'None Available' rather than a stale topic for the duration of that window.
-//
-// Each child carries its own copy of isTopic() because each needs the mount gate;
-// that is safe where a second derivation would not be, because isTopic() is a pure
-// string predicate over a value this page already decided -- the same arrangement
-// NepiAppStereoCam-Controls.js has with NepiAppStereoCam.js.
+// This page binds to ONE app node, not to a manager list. The status topic is
+// <app>/obstacles/status carrying nepi_app_obstacles/ObstaclesStatus, and every
+// command topic hangs off the namespace that message reports in
+// process_status.namespace -- which is <app>/obstacles, the namespace
+// ObstaclesIF registers its subscribers on. The algorithm's own controls are
+// rendered by the shared Nepi_IF_Controls against status_msg.controls_topic.
 class NepiAppObstacles extends Component {
 
   constructor(props) {
@@ -121,259 +62,129 @@ class NepiAppObstacles extends Component {
       appName: "app_obstacles",
       appNamespace: null,
 
-      // Connect names of the three source connect IFs this page binds to. Only
-      // the first still carries a selector; the other two back read-only rows.
-      // The node's two image connect IFs are absent here on purpose -- nothing on
-      // this page binds to them; their viewers read the app status message.
-      depthMapConnectName: "depth_map_connect",
-      targetsConnectName: "targets_connect",
-      navposeConnectName: "navpose_connect",
-
       status_msg: null,
+      process_status_msg: null,
       connected: false,
 
-      statusListener: null,
-      needs_update: true,
+      sources_list_viewable: true,
 
-      // ConnectIFStatus of each source connect namespace, keyed by connect name.
-      // Only 'connected' and 'selected_topic' are read: the derived TOPIC always
-      // comes from the app status message, never from the IF's own selection --
-      // see connectStatusListener().
-      connect_status_msgs: {},
-      connectStatusListeners: {},
-      connectListenerNamespaces: {},
+      selected_display_topic: "None",
+      selected_display_text: "None",
+
+      statusListener: null,
+      needs_update: false
     }
 
     this.getBaseNamespace = this.getBaseNamespace.bind(this)
     this.getAppNamespace = this.getAppNamespace.bind(this)
-    this.getConnectNamespace = this.getConnectNamespace.bind(this)
+    this.getProcessNamespace = this.getProcessNamespace.bind(this)
+    this.getControlsNamespace = this.getControlsNamespace.bind(this)
+    this.getSaveNamespace = this.getSaveNamespace.bind(this)
+
     this.statusListener = this.statusListener.bind(this)
     this.updateStatusListener = this.updateStatusListener.bind(this)
-    this.connectStatusListener = this.connectStatusListener.bind(this)
-    this.updateConnectStatusListener = this.updateConnectStatusListener.bind(this)
-    this.updateConnectStatusListeners = this.updateConnectStatusListeners.bind(this)
-    this.getConnectStatusMsg = this.getConnectStatusMsg.bind(this)
-    this.getDerivedAreCurrent = this.getDerivedAreCurrent.bind(this)
-    this.getDerivedTopic = this.getDerivedTopic.bind(this)
-    this.getDerivedConnected = this.getDerivedConnected.bind(this)
-    this.isTopic = this.isTopic.bind(this)
-    this.renderConfig = this.renderConfig.bind(this)
-    this.renderBody = this.renderBody.bind(this)
+
+    this.createSourceTopicsOptions = this.createSourceTopicsOptions.bind(this)
+    this.toggleSourcesListViewable = this.toggleSourcesListViewable.bind(this)
+    this.onSourceTopicSelected = this.onSourceTopicSelected.bind(this)
+
+    this.getDisplayImgOptions = this.getDisplayImgOptions.bind(this)
+    this.onDisplayImgSelected = this.onDisplayImgSelected.bind(this)
+    this.getSegmentImgTopics = this.getSegmentImgTopics.bind(this)
+
+    this.renderApp = this.renderApp.bind(this)
+    this.renderAppSettings = this.renderAppSettings.bind(this)
   }
 
   getBaseNamespace() {
     const { namespacePrefix, deviceId } = this.props.ros
+    var baseNamespace = null
     if (namespacePrefix !== null && deviceId !== null) {
-      return "/" + namespacePrefix + "/" + deviceId
+      baseNamespace = "/" + namespacePrefix + "/" + deviceId
     }
-    return null
+    return baseNamespace
   }
 
   getAppNamespace() {
-    const base = this.getBaseNamespace()
-    if (base !== null) {
-      return base + "/" + this.state.appName
+    const { namespacePrefix, deviceId } = this.props.ros
+    var appNamespace = null
+    if (namespacePrefix !== null && deviceId !== null) {
+      if (this.props.namespace !== undefined) {
+        appNamespace = this.props.namespace
+      } else {
+        appNamespace = "/" + namespacePrefix + "/" + deviceId + "/" + this.state.appName
+      }
     }
-    return null
+    return appNamespace
   }
 
-  // Connect namespace a Nepi_IF_Connect* component subscribes to, i.e.
-  // <app>/<connect_name>, matching the connect_name each connect IF in the node
-  // passes to ConnectNodeIF.
-  getConnectNamespace(connectName) {
+  // Namespace every obstacles command topic hangs off. Prefer what the node
+  // reports so the two can never drift; fall back to the conventional path.
+  getProcessNamespace() {
+    const process_status_msg = this.state.process_status_msg
+    if (process_status_msg != null && process_status_msg.namespace) {
+      return process_status_msg.namespace
+    }
     const appNamespace = this.getAppNamespace()
-    if (appNamespace !== null) {
-      return appNamespace + "/" + connectName
-    }
-    return null
+    return (appNamespace != null) ? appNamespace + "/obstacles" : null
   }
 
+  getControlsNamespace() {
+    const status_msg = this.state.status_msg
+    if (status_msg != null && status_msg.controls_topic) {
+      return status_msg.controls_topic
+    }
+    const appNamespace = this.getAppNamespace()
+    return (appNamespace != null) ? appNamespace + "/controls" : null
+  }
+
+  getSaveNamespace() {
+    const process_status_msg = this.state.process_status_msg
+    if (process_status_msg != null && process_status_msg.save_data_topic) {
+      return process_status_msg.save_data_topic
+    }
+    const appNamespace = this.getAppNamespace()
+    return (appNamespace != null) ? appNamespace + "/save_data" : "None"
+  }
+
+  // Callback for handling ROS Status messages
   statusListener(message) {
     this.setState({
       status_msg: message,
-      connected: true,
+      process_status_msg: message.process_status,
+      connected: true
     })
   }
 
+  // Function for configuring and subscribing to Status
   updateStatusListener(namespace) {
+    const statusNamespace = namespace + "/obstacles/status"
     if (this.state.statusListener) {
       this.state.statusListener.unsubscribe()
-      this.setState({ statusListener: null, status_msg: null })
     }
-    if (namespace != null && namespace.indexOf('null') === -1) {
-      const statusNamespace = namespace + '/status'
-      var statusListener = this.props.ros.setupStatusListener(
-        statusNamespace,
-        "nepi_app_obstacles/NepiAppObstaclesStatus",
-        this.statusListener
-      )
-      this.setState({ statusListener: statusListener })
-    }
-    this.setState({ appNamespace: namespace, needs_update: false })
-    this.updateConnectStatusListeners(namespace)
-  }
-
-  // Callback for a source connect namespace's ConnectIFStatus, stored under the
-  // connect name it came from.
-  //
-  // NOTE what is NOT taken from here: the derived source topic. ConnectNodeIF's
-  // discovery tick auto-selects available_topics[0] whenever the current
-  // selection is 'None' -- unconditionally, ignoring auto_select_enabled
-  // (connect_node_if.py _updaterCb) -- so within a second of selecting a depth
-  // map that has no targets source of its own, this message's selected_topic
-  // names some unrelated detector. The app status message reports the DERIVATION
-  // instead, and that is the only field this page displays. See
-  // getDerivedConnected() for what that means for the indicator.
-  // The functional setState form is load-bearing: three connect namespaces publish
-  // into this one map from three independent subscriptions, and reading
-  // this.state.connect_status_msgs to build the replacement would drop a sibling's
-  // message whenever two callbacks land in the same React batch.
-  connectStatusListener(connectName, message) {
-    this.setState((prevState) => {
-      var connect_status_msgs = Object.assign({}, prevState.connect_status_msgs)
-      connect_status_msgs[connectName] = message
-      return { connect_status_msgs: connect_status_msgs }
-    })
-  }
-
-  // Release any listener held for one connect name and subscribe the new
-  // namespace, returning the new listener handle (or null). Sets no state itself --
-  // updateConnectStatusListeners() below collects all three and commits them in one
-  // setState, because three setState calls in a row inside one lifecycle pass would
-  // each read the same pre-batch state and only the last would survive, leaking the
-  // other two subscriptions.
-  updateConnectStatusListener(connectName, namespace) {
-    const connectStatusListeners = this.state.connectStatusListeners
-    const listener = (connectStatusListeners != null) ? connectStatusListeners[connectName] : null
-    if (listener != null) {
-      listener.unsubscribe()
-    }
-    if (namespace != null && namespace !== 'None' && namespace.indexOf('null') === -1) {
-      return this.props.ros.setupStatusListener(
-        namespace + '/status',
-        "nepi_interfaces/ConnectIFStatus",
-        (message) => this.connectStatusListener(connectName, message)
-      )
-    }
-    return null
-  }
-
-  // Re-point all three source connect listeners at the given app namespace. Called
-  // from updateStatusListener() so the connect subscriptions move with the app
-  // status subscription and can never be left pointed at a previous device.
-  updateConnectStatusListeners(appNamespace) {
-    const connectNames = [
-      this.state.depthMapConnectName,
-      this.state.targetsConnectName,
-      this.state.navposeConnectName,
-    ]
-    var connectStatusListeners = {}
-    var connectListenerNamespaces = {}
-    var connect_status_msgs = {}
-    for (var i = 0; i < connectNames.length; i++) {
-      const connectName = connectNames[i]
-      const namespace = (appNamespace != null) ? appNamespace + "/" + connectName : null
-      connectStatusListeners[connectName] = this.updateConnectStatusListener(connectName, namespace)
-      connectListenerNamespaces[connectName] = namespace
-      connect_status_msgs[connectName] = null
-    }
+    var statusListener = this.props.ros.setupStatusListener(
+          statusNamespace,
+          "nepi_app_obstacles/ObstaclesStatus",
+          this.statusListener
+        )
     this.setState({
-      connectStatusListeners: connectStatusListeners,
-      connectListenerNamespaces: connectListenerNamespaces,
-      connect_status_msgs: connect_status_msgs,
+      appNamespace: namespace,
+      statusListener: statusListener,
     })
-  }
-
-  getConnectStatusMsg(connectName) {
-    const connect_status_msgs = this.state.connect_status_msgs
-    if (connect_status_msgs == null) {
-      return null
-    }
-    const message = connect_status_msgs[connectName]
-    return (message !== undefined) ? message : null
-  }
-
-  // True when the derived values in the app status message belong to the depth
-  // map that is selected RIGHT NOW.
-  //
-  // This is the "clear before re-deriving" guard. The operator changes the depth
-  // map through Nepi_IF_ConnectData, which publishes select_topic straight to the
-  // connect namespace; the node then re-derives and republishes. Between those two
-  // moments this page still holds a status message whose targets and NavPose
-  // belong to the PREVIOUS depth map, and rendering it would put one depth map's
-  // label next to another's for as long as that window lasts. Comparing the depth
-  // map connect's live selected_topic against the depth_map_topic the status
-  // message was computed from closes it: every derived slot renders cleared until
-  // the two agree again.
-  //
-  // Returns false until both messages exist, which also covers page load.
-  getDerivedAreCurrent() {
-    const status_msg = this.state.status_msg
-    if (status_msg == null) {
-      return false
-    }
-    const connect_status_msg = this.getConnectStatusMsg(this.state.depthMapConnectName)
-    if (connect_status_msg == null) {
-      return false
-    }
-    return (connect_status_msg.selected_topic === status_msg.depth_map_topic)
-  }
-
-  // A derived topic off the app status message, or 'None Available' when there is
-  // none to show -- either because the node could not derive one for the selected
-  // depth map, or because the derivation is stale per getDerivedAreCurrent().
-  // 'None Available' is already a not-a-topic value to isTopic(), so a caller can
-  // hand the result straight to a child as a topic prop: the isTopic() gate in
-  // NepiAppObstacles-Images.renderImageViewer() rejects it and leaves that viewer
-  // unmounted.
-  getDerivedTopic(field) {
-    if (this.getDerivedAreCurrent() === false) {
-      return 'None Available'
-    }
-    const topic = this.state.status_msg[field]
-    return (this.isTopic(topic) === true) ? topic : 'None Available'
-  }
-
-  // Connection state of a derived source, for its Connected indicator in
-  // NepiAppObstacles-Data.js.
-  //
-  // ConnectIFStatus.connected alone is not the answer here the way it was for a
-  // selector: the connect IF auto-selects an unrelated source when the derivation
-  // is 'None' (see connectStatusListener()), and it reports itself connected to
-  // that one. So connected is reported only while the IF is actually subscribed to
-  // the topic this page is displaying -- which is what the operator reads the
-  // indicator to mean.
-  getDerivedConnected(connectName, derivedTopic) {
-    if (this.isTopic(derivedTopic) === false) {
-      return false
-    }
-    const connect_status_msg = this.getConnectStatusMsg(connectName)
-    if (connect_status_msg == null) {
-      return false
-    }
-    if (connect_status_msg.selected_topic !== derivedTopic) {
-      return false
-    }
-    return (connect_status_msg.connected === true)
-  }
-
-  // True when a topic string off the status message names a real topic. The node
-  // reports 'None' for an unselected source and for a selected depth map that has
-  // no depth map image, and an un-set ROS string field arrives as ''. Each child
-  // carries its own copy for its mount gate -- see the STATE OWNERSHIP note above
-  // for why duplicating this predicate is safe and duplicating a derivation is not.
-  isTopic(topic) {
-    return (topic != null && topic !== '' && topic !== 'None' && topic !== 'None Available')
   }
 
   componentDidMount() {
     this.setState({ needs_update: true })
   }
 
-  componentDidUpdate(prevProps, prevState) {
+  componentDidUpdate(prevProps, prevState, snapshot) {
     const namespace = this.getAppNamespace()
-    if ((namespace != null && namespace !== this.state.appNamespace) || this.state.needs_update === true) {
-      this.updateStatusListener(namespace)
+    const namespace_updated = (this.state.appNamespace !== namespace && namespace !== null)
+    if (namespace_updated || this.state.needs_update === true) {
+      if (namespace !== null && namespace.indexOf('null') === -1) {
+        this.setState({ needs_update: false })
+        this.updateStatusListener(namespace)
+      }
     }
   }
 
@@ -381,100 +192,555 @@ class NepiAppObstacles extends Component {
     if (this.state.statusListener) {
       this.state.statusListener.unsubscribe()
     }
-    const connectStatusListeners = this.state.connectStatusListeners
-    if (connectStatusListeners != null) {
-      const connectNames = Object.keys(connectStatusListeners)
-      for (var i = 0; i < connectNames.length; i++) {
-        const listener = connectStatusListeners[connectNames[i]]
-        if (listener != null) {
-          listener.unsubscribe()
+    this.setState({
+      status_msg: null,
+      process_status_msg: null,
+      connected: false,
+      statusListener: null,
+      selected_display_topic: "None",
+      selected_display_text: "None"
+    })
+  }
+
+  //////////////////////////
+  // Source selection
+
+  // Options come from the app's own available_source_topics, which ObstaclesIF
+  // fills by discovering DepthMapStatus publishers. The RUI does not do its own
+  // topic filtering -- the node is the single source of truth for what this
+  // process can consume.
+  createSourceTopicsOptions() {
+    const process_status_msg = this.state.process_status_msg
+    var items = []
+    items.push(<Option value={'None'}>{'None'}</Option>)
+    if (process_status_msg == null) {
+      return items
+    }
+    const source_options = process_status_msg.available_source_topics
+    if (source_options.length === 0) {
+      return items
+    }
+    items.push(<Option value={'All'}>{'All'}</Option>)
+    const sourceShortnames = createMenuFirstLastNames(source_options)
+    for (var i = 0; i < source_options.length; i++) {
+      items.push(<Option value={source_options[i]}>{sourceShortnames[i]}</Option>)
+    }
+    return items
+  }
+
+  toggleSourcesListViewable() {
+    const set = !this.state.sources_list_viewable
+    this.setState({ sources_list_viewable: set })
+  }
+
+  onSourceTopicSelected(event) {
+    const { sendStringMsg, sendStringArrayMsg } = this.props.ros
+    const process_namespace = this.getProcessNamespace()
+    const process_status_msg = this.state.process_status_msg
+    if (process_namespace == null || process_status_msg == null) {
+      return
+    }
+    const source_options = process_status_msg.available_source_topics
+    const selected_sources = process_status_msg.selected_sources
+    const source_topic = event.target.value
+
+    if (source_topic === "None") {
+      sendStringArrayMsg(process_namespace + "/remove_source_topics", source_options)
+    }
+    else if (source_topic === "All") {
+      sendStringArrayMsg(process_namespace + "/add_source_topics", source_options)
+    }
+    else if (selected_sources.indexOf(source_topic) === -1) {
+      sendStringMsg(process_namespace + "/add_source_topic", source_topic)
+    }
+    else {
+      sendStringMsg(process_namespace + "/remove_source_topic", source_topic)
+    }
+  }
+
+  //////////////////////////
+  // App panel
+
+  renderApp() {
+    const status_msg = this.state.status_msg
+
+    return (
+      <Section title={"Obstacles"}>
+
+        <div hidden={(status_msg != null)}>
+          <pre style={{ height: "50px", overflowY: "auto" }} align={"left"} textAlign={"left"}>
+            {"Loading..."}
+          </pre>
+        </div>
+
+        {(status_msg != null) ? this.renderAppSettings() : null}
+
+      </Section>
+    )
+  }
+
+  renderAppSettings() {
+    const { sendBoolMsg } = this.props.ros
+
+    const status_msg = this.state.status_msg
+    const process_status_msg = this.state.process_status_msg
+    const process_namespace = this.getProcessNamespace()
+    const controls_namespace = this.getControlsNamespace()
+
+    const enabled = process_status_msg.enabled
+    const running = process_status_msg.running
+    const processing = process_status_msg.state
+
+    const max_process_rate_hz = process_status_msg.max_process_rate_hz
+    const max_image_pub_rate_hz = process_status_msg.max_image_pub_rate_hz
+
+    const imaging_enabled = process_status_msg.image_pub_enabled
+    const use_last_image = process_status_msg.use_last_image
+
+    const auto_select_active = process_status_msg.auto_select_active
+
+    const selected_sources = process_status_msg.selected_sources
+
+    const source_selected = process_status_msg.source_selected
+    const source_connected = process_status_msg.source_connected
+
+    const avg_process_latency = round(process_status_msg.avg_process_latency, 3)
+    const avg_process_rate = round(process_status_msg.avg_process_rate, 3)
+
+    const source_options = this.createSourceTopicsOptions()
+
+    const navpose_connected = status_msg.navpose_topic_connected
+
+    const full_screen_enabled = status_msg.full_screen_enabled
+    const show_ground_enabled = status_msg.show_ground_enabled
+    const show_obstacles_enabled = status_msg.show_obstacles_enabled
+
+    // 0.0 fully opaque through 1.0 invisible on the wire; the sliders below run
+    // 0-100 with scaled 0.01, the RUI's standard ratio slider shape.
+    const ground_transparency = status_msg.ground_transparency
+    const obstacles_transparency = status_msg.obstacles_transparency
+
+    return (
+      <Columns>
+      <Column>
+
+        <Columns>
+        <Column>
+
+          <Label title="Auto Select Source">
+            <AsyncToggle
+              checked={auto_select_active === true}
+              onClick={() => sendBoolMsg(process_namespace + "/set_auto_select_enable", !auto_select_active)}>
+            </AsyncToggle>
+          </Label>
+
+          <Label title={"Select Depth Maps"} />
+
+        </Column>
+        <Column>
+
+          <div style={{ marginTop: Styles.vars.spacing.medium, marginBottom: Styles.vars.spacing.xs }} />
+
+          <div onClick={this.toggleSourcesListViewable} style={{ backgroundColor: Styles.vars.colors.grey0 }}>
+            <Select style={{ width: "10px" }} />
+          </div>
+          <div hidden={this.state.sources_list_viewable === false}>
+          {source_options.map((source) =>
+            <div onClick={this.onSourceTopicSelected}
+              style={{
+                textAlign: "center",
+                padding: `${Styles.vars.spacing.xs}`,
+                color: Styles.vars.colors.black,
+                backgroundColor: (selected_sources.indexOf(source.props.value) !== -1) ?
+                  Styles.vars.colors.blue : Styles.vars.colors.grey0,
+                cursor: "pointer",
+              }}>
+              <body source-topic={source} style={{ color: Styles.vars.colors.black }}>{source}</body>
+            </div>
+          )}
+          </div>
+
+        </Column>
+        </Columns>
+
+        <Columns>
+        <Column>
+
+          <Label title="Enable">
+            <AsyncToggle
+              checked={enabled === true}
+              onClick={() => sendBoolMsg(process_namespace + "/enable", !enabled)}>
+            </AsyncToggle>
+          </Label>
+
+        </Column>
+        <Column>
+        </Column>
+        </Columns>
+
+        <div style={{ borderTop: "1px solid #ffffff", marginTop: Styles.vars.spacing.medium, marginBottom: Styles.vars.spacing.xs }} />
+
+        <Label title={"STATUS"}></Label>
+
+        <div style={{ display: 'flex' }}>
+          <div style={{ width: '40%' }}>
+            <Label title={"Source Selected"}>
+              <BooleanIndicator value={source_selected} />
+            </Label>
+            <Label title={"NavPose"}>
+              <BooleanIndicator value={navpose_connected} />
+            </Label>
+          </div>
+
+          <div style={{ width: '20%' }}>
+            {}
+          </div>
+
+          <div style={{ width: '40%' }}>
+            <Label title={"Source Connected"}>
+              <BooleanIndicator value={source_connected} />
+            </Label>
+          </div>
+        </div>
+
+        <div style={{ display: 'flex' }}>
+          <div style={{ width: '40%' }}>
+            <Label title={"Running"}>
+              <BooleanIndicator value={running} />
+            </Label>
+          </div>
+
+          <div style={{ width: '20%' }}>
+            {}
+          </div>
+
+          <div style={{ width: '40%' }}>
+            <Label title={"Detect State"}>
+              <BooleanIndicator value={processing} />
+            </Label>
+          </div>
+        </div>
+
+        <pre style={{ height: "60px" }} align={"left"} textAlign={"left"}>
+        {"\n Avg Process Rate: " + avg_process_rate +
+         "\n Avg Process Latency: " + avg_process_latency}
+        </pre>
+
+        <div style={{ borderTop: "1px solid #ffffff", marginTop: Styles.vars.spacing.medium, marginBottom: Styles.vars.spacing.xs }} />
+
+        <label style={{ fontWeight: 'bold' }} align={"left"} textAlign={"left"}>
+          {"Process Settings"}
+        </label>
+
+        <SliderAdjustment
+          title={"Max Process Rate"}
+          msgType={"std_msgs/Float32"}
+          adjustment={max_process_rate_hz}
+          topic={process_namespace + "/set_max_process_rate"}
+          scaled={1.0}
+          min={1}
+          max={20}
+          disabled={false}
+          tooltip={"Sets obstacle process max rate in hz"}
+          unit={"Hz"}
+        />
+
+        <SliderAdjustment
+          title={"Max Image Publish Rate"}
+          msgType={"std_msgs/Float32"}
+          adjustment={max_image_pub_rate_hz}
+          topic={process_namespace + "/set_max_image_pub_rate"}
+          scaled={1.0}
+          min={1}
+          max={20}
+          disabled={false}
+          tooltip={"Sets overlay image max publish rate in hz"}
+          unit={"Hz"}
+        />
+
+        <Columns>
+        <Column>
+
+          <Label title="Publish Image">
+            <AsyncToggle
+              checked={imaging_enabled === true}
+              onClick={() => sendBoolMsg(process_namespace + "/set_image_pub", imaging_enabled === false)}>
+            </AsyncToggle>
+          </Label>
+
+          <div hidden={imaging_enabled === false}>
+            <Label title="Use Last Image">
+              <AsyncToggle
+                checked={use_last_image === true}
+                onClick={() => sendBoolMsg(process_namespace + "/set_use_last_image", use_last_image === false)}>
+              </AsyncToggle>
+            </Label>
+
+            <Label title="Show Ground">
+              <AsyncToggle
+                checked={show_ground_enabled === true}
+                onClick={() => sendBoolMsg(process_namespace + "/set_show_ground", show_ground_enabled === false)}>
+              </AsyncToggle>
+            </Label>
+
+            {/* Each overlay's transparency slider sits under its own show
+                toggle and is hidden while that overlay is off -- with nothing
+                drawn there is nothing for it to adjust. */}
+            <div hidden={show_ground_enabled === false}>
+              <SliderAdjustment
+                title={"Ground Transparency"}
+                msgType={"std_msgs/Float32"}
+                adjustment={ground_transparency}
+                topic={process_namespace + "/set_ground_transparency"}
+                scaled={0.01}
+                min={0}
+                max={100}
+                disabled={false}
+                tooltip={"Sets ground overlay transparency, 100% is invisible"}
+                unit={"%"}
+              />
+            </div>
+
+            <Label title="Show Obstacles">
+              <AsyncToggle
+                checked={show_obstacles_enabled === true}
+                onClick={() => sendBoolMsg(process_namespace + "/set_show_obstacles", show_obstacles_enabled === false)}>
+              </AsyncToggle>
+            </Label>
+
+            <div hidden={show_obstacles_enabled === false}>
+              <SliderAdjustment
+                title={"Obstacles Transparency"}
+                msgType={"std_msgs/Float32"}
+                adjustment={obstacles_transparency}
+                topic={process_namespace + "/set_obstacles_transparency"}
+                scaled={0.01}
+                min={0}
+                max={100}
+                disabled={false}
+                tooltip={"Sets obstacles overlay transparency, 100% is invisible"}
+                unit={"%"}
+              />
+            </div>
+
+            <Label title="Full Screen">
+              <AsyncToggle
+                checked={full_screen_enabled === true}
+                onClick={() => sendBoolMsg(process_namespace + "/set_full_screen", full_screen_enabled === false)}>
+              </AsyncToggle>
+            </Label>
+          </div>
+
+        </Column>
+        <Column>
+        </Column>
+        </Columns>
+
+        <div style={{ borderTop: "1px solid #ffffff", marginTop: Styles.vars.spacing.medium, marginBottom: Styles.vars.spacing.xs }} />
+
+        {(controls_namespace != null) ?
+          <NepiIFControls
+            namespace={controls_namespace}
+            title={"Obstacle Detection Controls"}
+          />
+        : null}
+
+        <NepiIFConfig
+          namespace={this.getAppNamespace()}
+          title={"Nepi_IF_Config"}
+        />
+
+      </Column>
+      </Columns>
+    )
+  }
+
+  //////////////////////////
+  // Image viewer
+
+  // The overlay image topics are reported by the node in
+  // process_status.imaging_pub_topics, one per active source.
+  getDisplayImgOptions() {
+    const { imageTopics } = this.props.ros
+    var items = []
+    const process_status_msg = this.state.process_status_msg
+
+    var selected_image_topic = this.state.selected_display_topic
+    const selected_image_topic_found = (imageTopics.indexOf(selected_image_topic)) !== -1
+
+    if (process_status_msg == null) {
+      items.push(<Option value={"None"}>{"None"}</Option>)
+      return items
+    }
+
+    const image_pub_topics = process_status_msg.imaging_pub_topics
+    const image_names = createMenuFirstLastNames(image_pub_topics)
+    if (image_pub_topics.length === 0) {
+      items.push(<Option value={"None"}>{"None"}</Option>)
+      if (selected_image_topic !== 'None') {
+        this.setState({ selected_display_topic: "None", selected_display_text: "None" })
+      }
+      return items
+    }
+
+    if (selected_image_topic_found === false) {
+      selected_image_topic = image_pub_topics[0]
+      if (imageTopics.indexOf(selected_image_topic) !== -1) {
+        this.setState({ selected_display_topic: selected_image_topic, selected_display_text: image_names[0] })
+      }
+    }
+    for (var i = 0; i < image_pub_topics.length; i++) {
+      if (imageTopics.indexOf(image_pub_topics[i]) !== -1) {
+        items.push(<Option value={image_pub_topics[i]}>{image_names[i]}</Option>)
+        if ((selected_image_topic === "None" || selected_image_topic === '') && i === 0) {
+          this.setState({ selected_display_topic: image_pub_topics[i], selected_display_text: image_names[i] })
         }
       }
     }
+    return items
   }
 
-  renderConfig() {
-    const appNamespace = this.getAppNamespace()
-    return (
-      <React.Fragment>
-        <NepiIFConfig
-          namespace={appNamespace}
-          title={"Nepi_IF_Config"}
-        />
-      </React.Fragment>
-    )
+  onDisplayImgSelected(event) {
+    const source_topic = event.target.value
+    const names = createMenuFirstLastNames([source_topic])
+    this.setState({
+      selected_display_topic: source_topic,
+      selected_display_text: names[0]
+    })
   }
 
-  // Standard NEPI device-panel split: image viewers in the left ~75%, a small
-  // gutter, and the selectors/config in the right ~23% column.
-  //
-  // Every derived value the children render is computed HERE, in one pass, so all
-  // of them see the same answer from getDerivedAreCurrent() -- see the STATE
-  // OWNERSHIP note above. NepiAppObstacles-Controls.js takes the app namespace and
-  // the raw status message instead, because nothing it renders is derived from the
-  // selected depth map; its Example Controls box is the last thing in the right
-  // column, below everything else the page puts there.
-  renderBody() {
-    const depth_map_image_topic = this.getDerivedTopic('depth_map_image_topic')
-    const image_topic = this.getDerivedTopic('image_topic')
-    const targets_image_topic = this.getDerivedTopic('targets_image_topic')
-    const targets_topic = this.getDerivedTopic('targets_topic')
-    const navpose_topic = this.getDerivedTopic('navpose_topic')
-
-    return (
-      <div style={{ display: 'flex' }}>
-
-        <div style={{ width: "75%" }}>
-          <NepiAppObstaclesImages
-            depth_map_image_topic={depth_map_image_topic}
-            image_topic={image_topic}
-            targets_image_topic={targets_image_topic}
-            navpose_topic={navpose_topic}
-          />
-        </div>
-
-        <div style={{ width: '2%' }}>
-          {}
-        </div>
-
-        <div style={{ width: "23%" }}>
-          <NepiAppObstaclesData
-            depthMapConnectNamespace={this.getConnectNamespace(this.state.depthMapConnectName)}
-            targets_topic={targets_topic}
-            navpose_topic={navpose_topic}
-            targets_connected={this.getDerivedConnected(this.state.targetsConnectName, targets_topic)}
-            navpose_connected={this.getDerivedConnected(this.state.navposeConnectName, navpose_topic)}
-          />
-          {this.renderConfig()}
-          <NepiAppObstaclesControls
-            appNamespace={this.getAppNamespace()}
-            status_msg={this.state.status_msg}
-          />
-        </div>
-
-      </div>
-    )
+  // The two segmentation viewers follow whatever source the main viewer is on,
+  // so the operator picks a source once. The node builds imaging_pub_topics and
+  // the two segmentation lists from the same active source order, so the index
+  // of the selected overlay topic indexes both pairs. A selection that is not in
+  // the list yet -- first render, or a source that has just been purged --
+  // falls back to the first available pair.
+  getSegmentImgTopics() {
+    const status_msg = this.state.status_msg
+    const process_status_msg = this.state.process_status_msg
+    if (status_msg == null || process_status_msg == null) {
+      return ["None", "None"]
+    }
+    const image_pub_topics = process_status_msg.imaging_pub_topics
+    const ground_topics = status_msg.ground_image_pub_topics
+    const obstacles_topics = status_msg.obstacles_image_pub_topics
+    var index = image_pub_topics.indexOf(this.state.selected_display_topic)
+    if (index === -1) {
+      index = 0
+    }
+    const ground_topic = (ground_topics.length > index && ground_topics[index] !== '') ? ground_topics[index] : "None"
+    const obstacles_topic = (obstacles_topics.length > index && obstacles_topics[index] !== '') ? obstacles_topics[index] : "None"
+    return [ground_topic, obstacles_topic]
   }
 
   render() {
-    const make_section = (this.props.make_section !== undefined) ? this.props.make_section : true
+    const { imageTopics } = this.props.ros
+    const img_options = this.getDisplayImgOptions()
+    const selected_image_topic_topic = this.state.selected_display_topic
+    const img_publishing = imageTopics.indexOf(selected_image_topic_topic) !== -1
 
-    if (make_section === false) {
-      return (
+    const selected_image_topic = (img_publishing === true && this.state.connected === true) ? selected_image_topic_topic : "None"
+    const selected_image_topic_text = (selected_image_topic_topic === 'None') ? 'No Image Selected' :
+      img_publishing ? this.state.selected_display_text : 'Waiting for image to publish'
+
+    // Same publishing/connected gate as the main viewer above, so each
+    // segmentation viewer shows a waiting title instead of a broken image
+    // before its topic is advertised.
+    const segment_img_topics = this.getSegmentImgTopics()
+    const ground_img_topic = segment_img_topics[0]
+    const obstacles_img_topic = segment_img_topics[1]
+
+    const ground_publishing = imageTopics.indexOf(ground_img_topic) !== -1
+    const ground_image_topic = (ground_publishing === true && this.state.connected === true) ? ground_img_topic : "None"
+    const ground_image_topic_text = (ground_img_topic === 'None') ? 'No Ground Map Available' :
+      ground_publishing ? 'Ground Depth Map' : 'Waiting for image to publish'
+
+    const obstacles_publishing = imageTopics.indexOf(obstacles_img_topic) !== -1
+    const obstacles_image_topic = (obstacles_publishing === true && this.state.connected === true) ? obstacles_img_topic : "None"
+    const obstacles_image_topic_text = (obstacles_img_topic === 'None') ? 'No Obstacles Map Available' :
+      obstacles_publishing ? 'Obstacles Depth Map' : 'Waiting for image to publish'
+
+    const save_data_topic = this.getSaveNamespace()
+
+    return (
+      <Columns>
+      <Column equalWidth={false}>
+
         <Columns>
-          <Column>
-            {this.renderBody()}
-          </Column>
+        <Column>
+
+          <Label title="Select Image">
+            <Select id="ImgSelect" onChange={this.onDisplayImgSelected}
+              value={selected_image_topic}
+              disabled={false}>
+              {img_options}
+            </Select>
+          </Label>
+
+        </Column>
+        <Column>
+        </Column>
         </Columns>
-      )
-    } else {
-      return (
-        <Section>
-          {this.renderBody()}
-        </Section>
-      )
-    }
+
+        <NepiIFImageViewer
+          image_topic={selected_image_topic}
+          title={selected_image_topic_text}
+          show_res_orient={false}
+          save_data_topic={save_data_topic}
+        />
+
+        {(save_data_topic !== 'None' && this.state.connected === true) ?
+          <NepiIFSaveData
+            saveNamespace={save_data_topic}
+            title={"Nepi_IF_SaveData"}
+          />
+        : null}
+
+        <div style={{ borderTop: "1px solid #ffffff", marginTop: Styles.vars.spacing.medium, marginBottom: Styles.vars.spacing.xs }} />
+
+        {/* The two segmentation renders for the source the main viewer is on.
+            Their per-image save and render control rows are hidden so they fit
+            the narrow side-by-side columns -- the same choice the stereo cam
+            page makes for its two input previews. */}
+        <Columns>
+        <Column>
+
+          <Label title={"Ground Depth Map"} />
+
+          <NepiIFImageViewer
+            image_topic={ground_image_topic}
+            title={ground_image_topic_text}
+            show_res_orient={false}
+            show_save_controls={false}
+            show_image_controls={false}
+          />
+
+        </Column>
+        <Column>
+
+          <Label title={"Obstacles Depth Map"} />
+
+          <NepiIFImageViewer
+            image_topic={obstacles_image_topic}
+            title={obstacles_image_topic_text}
+            show_res_orient={false}
+            show_save_controls={false}
+            show_image_controls={false}
+          />
+
+        </Column>
+        </Columns>
+
+      </Column>
+      <Column>
+
+        {this.renderApp()}
+
+      </Column>
+      </Columns>
+    )
   }
+
 }
 
 export default NepiAppObstacles

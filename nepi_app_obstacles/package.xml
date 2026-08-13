@@ -2,7 +2,7 @@
 <package format="2">
   <name>nepi_app_obstacles</name>
   <version>0.0.0</version>
-  <description>Obstacle Localization App</description>
+  <description>Obstacle localization app: segments a depth map into ground and obstacles and publishes located obstacles</description>
 
   <maintainer email="nepi@numurus.com">numurus</maintainer>
 
@@ -10,32 +10,32 @@
 
   <buildtool_depend>catkin</buildtool_depend>
 
+
   <build_depend>rospy</build_depend>
   <build_depend>std_msgs</build_depend>
-  <build_depend>message_generation</build_depend>
-  <!-- Obstacles.msg carries a nepi_interfaces/NavPose field. The dependency is
-       declared here as well as in CMakeLists.txt because catkin orders the
-       workspace build from package.xml: without it nepi_interfaces is not
-       guaranteed to be generated before this package's messages are. -->
-  <build_depend>nepi_interfaces</build_depend>
-  <!-- nepi_interfaces' own MSG_DEP_SET, required by find_package in
-       CMakeLists.txt so genmsg can resolve it. See the note there. -->
   <build_depend>sensor_msgs</build_depend>
   <build_depend>geometry_msgs</build_depend>
   <build_depend>nav_msgs</build_depend>
+  <build_depend>nepi_interfaces</build_depend>
+  <build_depend>message_generation</build_depend>
 
   <build_export_depend>rospy</build_export_depend>
   <build_export_depend>std_msgs</build_export_depend>
+  <build_export_depend>sensor_msgs</build_export_depend>
+  <build_export_depend>geometry_msgs</build_export_depend>
+  <build_export_depend>nav_msgs</build_export_depend>
   <build_export_depend>nepi_interfaces</build_export_depend>
 
   <exec_depend>rospy</exec_depend>
   <exec_depend>std_msgs</exec_depend>
-  <exec_depend>message_runtime</exec_depend>
-  <exec_depend>nepi_interfaces</exec_depend>
   <exec_depend>sensor_msgs</exec_depend>
   <exec_depend>geometry_msgs</exec_depend>
   <exec_depend>nav_msgs</exec_depend>
+  <exec_depend>nepi_interfaces</exec_depend>
+  <exec_depend>message_runtime</exec_depend>
+
 
   <export>
+
   </export>
 </package>

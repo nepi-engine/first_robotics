@@ -1,6 +1,6 @@
 APP_DICT:
-  display_name: Obstacle App
-  description: Obstacle Localization App
+  display_name: Obstacles
+  description: Obstacle localization from a depth map source
   pkg_name: nepi_app_obstacles
   group_name: PROCESS
   config_file: app_obstacles.yaml
@@ -11,8 +11,5 @@ APP_DICT:
 RUI_DICT:
   rui_files:
   - NepiAppObstacles.js
-  - NepiAppObstacles-Data.js
-  - NepiAppObstacles-Controls.js
-  - NepiAppObstacles-Images.js
   rui_main_file: NepiAppObstacles.js
   rui_main_class: NepiAppObstacles

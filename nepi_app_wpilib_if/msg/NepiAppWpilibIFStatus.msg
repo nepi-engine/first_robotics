@@ -9,8 +9,13 @@ string selected_option
 # Current value setting
 float32 value
 
-# Liveness heartbeat: always published True on every status update
-bool heartbeat
+# App connection state to the robot network (WPILib NetworkTables)
+bool connected
+
+# Obstacles app namespace the node is currently connected to, or "None". The RUI
+# Obstacles selector reads this back so the row shows the node's actual
+# selection rather than only what the page last sent.
+string selected_obstacles_namespace
 
 #################
 # Example Controls
