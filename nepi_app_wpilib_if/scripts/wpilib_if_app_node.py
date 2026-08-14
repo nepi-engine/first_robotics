@@ -99,7 +99,7 @@ class NepiWpilibApp(object):
     obstacles_if = None
     obstacles_namespace = NONE_NAMESPACE
 
-    DEFAULT_NODE_NAME = "app_wpilib"
+    DEFAULT_NODE_NAME = "app_wpilib_if"
 
     def __init__(self):
         #### APP NODE INIT SETUP ####
