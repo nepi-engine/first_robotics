@@ -38,19 +38,19 @@ import React, { Component } from "react"
 import Styles from "./Styles"
 
 const styles = Styles.Create({
-  // Matches Section.js's own bordered-box look (border: 1px solid grey1,
-  // marginTop + padding regular) so the tab group reads as one panel, the
-  // same way concept_3_tabbed_groups.html's .panel wraps its .tabbar.
+  // Matches concept_3_tabbed_groups.html's .panel: bordered box (border: 1px
+  // solid grey1), but no padding of its own -- the mockup's .tabbar sits flush
+  // against the panel's top/left/right edges and only .tabpage carries the
+  // 16px padding (applied via tabPage below), so the tab bar spans edge to
+  // edge exactly as in the mockup screenshot.
   panel: {
     textAlign: "left",
     marginTop: Styles.vars.spacing.regular,
-    padding: Styles.vars.spacing.regular,
     border: `1px solid ${Styles.vars.colors.grey1}`
   },
   bar: {
     display: "flex",
-    borderBottom: `1px solid ${Styles.vars.colors.grey1}`,
-    marginBottom: Styles.vars.spacing.regular
+    borderBottom: `1px solid ${Styles.vars.colors.grey1}`
   },
   tab: {
     flex: 1,
@@ -70,6 +70,11 @@ const styles = Styles.Create({
     background: Styles.vars.colors.blue,
     color: Styles.vars.colors.white,
     fontWeight: "bold"
+  },
+  // The mockup's .tabpage padding: 16px, applied to the content area below
+  // the tab bar only, so tab rows still line up with Section's own padding.
+  tabPage: {
+    padding: Styles.vars.spacing.regular
   }
 })
 
@@ -109,7 +114,9 @@ class NepiAppControlsSandboxTabs extends Component {
             )
           })}
         </div>
-        {(tabs[activeIndex] !== undefined) ? tabs[activeIndex].content : null}
+        <div style={styles.tabPage}>
+          {(tabs[activeIndex] !== undefined) ? tabs[activeIndex].content : null}
+        </div>
       </div>
     )
   }

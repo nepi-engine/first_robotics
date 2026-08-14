@@ -11,7 +11,7 @@
   header h1 { font-size: 17px; margin: 0; }
   header .badge { font-size: 12px; color: var(--green); border: 1px solid var(--green); border-radius: 12px; padding: 3px 10px; }
   .layout { display: flex; gap: 20px; padding: 20px; align-items: flex-start; }
-  .viewer { flex: 3; background: repeating-linear-gradient(45deg,#dfe3e6,#dfe3e6 10px,#d3d7da 10px,#d3d7da 20px); border-radius: 10px; aspect-ratio: 16/9; display: flex; align-items: center; justify-content: center; color: #777; }
+  .viewer { background: repeating-linear-gradient(45deg,#dfe3e6,#dfe3e6 10px,#d3d7da 10px,#d3d7da 20px); border-radius: 10px; aspect-ratio: 16/9; display: flex; align-items: center; justify-content: center; color: #777; margin-top: 10px; }
   .panel { flex: 2; }
   .group-title { font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--sub); margin: 18px 0 10px; }
   .group-title:first-child { margin-top: 0; }
@@ -36,6 +36,10 @@
   input[type=range] { width: 100%; }
   .readout { font-size: 12px; color: var(--sub); text-align: right; }
   .note { grid-column: 1/-1; font-size: 12px; color: var(--sub); background: #fff8e1; border: 1px solid var(--orange); border-radius: 8px; padding: 8px 10px; }
+  .conn-card { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+  .conn-card .conn-label { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+  .conn-card select { width: auto; min-width: 220px; }
+  .conn-card .hint { font-size: 11px; color: var(--sub); margin-top: 4px; }
 </style>
 
 <header>
@@ -44,7 +48,14 @@
 </header>
 
 <div class="layout">
-  <div class="viewer">Image Viewer</div>
+  <div class="panel" style="flex:3">
+    <div class="card conn-card">
+      <div class="conn-label"><span class="dot on"></span>Image</div>
+      <select><option>/nepi/device_0/idx/color_2d_image</option></select>
+    </div>
+    <div class="viewer">Image Viewer</div>
+    <div class="hint">Its stream feeds the viewer above.</div>
+  </div>
 
   <div class="panel">
 

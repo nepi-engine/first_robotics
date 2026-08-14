@@ -26,7 +26,7 @@ from nepi_sdk import nepi_sdk
 from nepi_api.messages_if import MsgIF
 from nepi_api.connect_node_if import ConnectNodeClassIF
 
-APP_NODE_NAME = 'app_wpilib'
+APP_NODE_NAME = 'app_wpilib_if'
 
 
 class ConnectAppWpilibIF:

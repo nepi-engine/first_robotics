@@ -35,12 +35,21 @@
   .toggle.on .thumb { left: 18px; }
   .btn { background: var(--blue); color: #001018; border: none; border-radius: 4px; padding: 6px 14px; font-weight: 600; font-size: 12px; }
   .note { font-size: 12px; color: var(--sub); padding: 0 20px 16px; }
+  .imgcol { flex: 3; display: flex; flex-direction: column; gap: 8px; }
+  .conn-row { display: flex; align-items: center; justify-content: space-between; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 8px 12px; font-size: 12px; }
+  .conn-row .conn-label { display: flex; align-items: center; gap: 8px; text-transform: uppercase; letter-spacing: .04em; color: var(--sub); }
+  .conn-row .conn-label::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--green); display: inline-block; }
+  .conn-row select { width: auto; min-width: 220px; }
+  .conn-row .hint { color: var(--sub); }
 </style>
 
 <header><h1>app_controls_sandbox — telemetry console</h1><span class="status">● connected · 1 Hz</span></header>
 
 <div class="layout">
-  <div class="viewer">Image Viewer</div>
+  <div class="imgcol">
+    <div class="conn-row"><span class="conn-label">Image</span><select><option>/nepi/device_0/idx/color_2d_image</option></select><span class="hint">feeds viewer</span></div>
+    <div class="viewer" style="flex:none">Image Viewer</div>
+  </div>
 
   <div class="side">
     <div class="telemetry">

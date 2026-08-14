@@ -512,7 +512,7 @@ class NepiAppWpilibIF extends Component {
 
         <NepiIFConnectDetections
           namespace={this.getConnectNamespace("detections_connect")}
-          title={"Detections"}
+          title={"Dete"}
           show_selector={true}
           show_data={false}
           show_controls={false}
