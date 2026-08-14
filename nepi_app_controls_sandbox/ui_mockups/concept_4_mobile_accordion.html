@@ -29,10 +29,16 @@
   .dot.on { background: var(--green); }
   .btn { border: none; background: var(--blue); color: #fff; border-radius: 8px; padding: 8px 16px; font-size: 14px; }
   .note { font-size: 12px; color: #777; padding: 12px 16px; }
+  .conn-row { display: flex; align-items: center; justify-content: space-between; padding: 10px 16px; border-bottom: 1px solid var(--grey1); }
+  .conn-row .conn-label { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; }
+  .conn-row select { width: auto; max-width: 60%; }
+  .conn-hint { font-size: 12px; color: #777; padding: 8px 16px; border-bottom: 1px solid var(--grey1); }
 </style>
 
 <div class="frame">
+  <div class="conn-row"><span class="conn-label"><span class="dot on"></span>Image</span><select><option>/nepi/device_0/idx/color_2d_image</option></select></div>
   <div class="viewer">Image Viewer</div>
+  <div class="conn-hint">Its stream feeds the viewer above.</div>
 
   <div class="group open" onclick="this.classList.toggle('open')">
     <div class="group-head"><span class="name">Choices</span><span class="chip">Low · Bravo · 2 sel</span><span class="arrow">›</span></div>

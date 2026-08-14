@@ -65,6 +65,18 @@ a confirmed value from the node"), carried over into a dashboard-tile idiom inst
 The overall look (dark background, large numerals, sparklines) follows the general
 mission-control/telemetry-dashboard convention, which is not present elsewhere in this codebase.
 
+## Connections + Image Viewer section
+
+After these mockups were first drawn, the real RUI (`NepiAppControlsSandbox.js`) grew a
+"CONNECTIONS" section (an image-source `Select` plus a "Connected" indicator, via
+`Nepi_IF_ConnectData`) feeding the image viewer, matching `nepi_app_auto_move`'s pattern. Only
+concept 3 was promoted to a live component, so `baseline_current.html` already reflected this;
+all five concept mockups (1 through 5) have since been updated to show the same image-source
+selector + "feeds the viewer" hint next to their own viewer placeholder, styled to match each
+concept's own visual language (card row, table strip, tab-panel row, accordion row, dark
+telemetry row respectively). This keeps all mockups on equal footing for comparison — none of
+them add a data selector beyond the one image connect namespace the live app actually has.
+
 ## Known gaps carried over from the real app
 
 Two things visible in these mockups are faithful to bugs documented in the app's own README

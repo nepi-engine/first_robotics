@@ -5,7 +5,7 @@
   * { box-sizing: border-box; }
   body { margin: 0; font-family: Arial, Helvetica, sans-serif; color: var(--ink); background: #fff; font-size: 14px; }
   .page { display: flex; padding: 16px; gap: 16px; }
-  .viewer { flex: 3; aspect-ratio: 16/9; background: repeating-linear-gradient(45deg,#d8d8d8,#d8d8d8 10px,#cfcfcf 10px,#cfcfcf 20px); display: flex; align-items: center; justify-content: center; color: #666; }
+  .viewer { aspect-ratio: 16/9; background: repeating-linear-gradient(45deg,#d8d8d8,#d8d8d8 10px,#cfcfcf 10px,#cfcfcf 20px); display: flex; align-items: center; justify-content: center; color: #666; }
   .panel { flex: 2; border: 1px solid var(--grey1); }
   .tabbar { display: flex; border-bottom: 1px solid var(--grey1); }
   .tab { flex: 1; text-align: center; padding: 10px 4px; cursor: pointer; font-size: 12px; text-transform: uppercase; letter-spacing: .03em; color: #666; border-right: 1px solid var(--grey1); }
@@ -29,10 +29,19 @@
   .multi { display: flex; gap: 12px; }
   .multi > div { text-align: center; font-size: 11px; }
   .note { font-size: 12px; color: #666; margin-top: 14px; border-top: 1px dashed var(--grey1); padding-top: 10px; }
+  .imgcol { flex: 3; display: flex; flex-direction: column; }
+  .conn-row { display: flex; align-items: center; justify-content: space-between; border: 1px solid var(--grey1); border-bottom: none; padding: 8px 10px; font-size: 12px; }
+  .conn-row .conn-label { display: flex; align-items: center; gap: 8px; }
+  .conn-row select { width: auto; min-width: 220px; }
+  .conn-hint { font-size: 11px; color: #666; border: 1px solid var(--grey1); border-top: none; padding: 6px 10px; }
 </style>
 
 <div class="page">
-  <div class="viewer">Image Viewer</div>
+  <div class="imgcol">
+    <div class="conn-row"><span class="conn-label"><span class="dot on"></span>Image</span><select><option>/nepi/device_0/idx/color_2d_image</option></select></div>
+    <div class="viewer">Image Viewer</div>
+    <div class="conn-hint">Its stream feeds the viewer above.</div>
+  </div>
 
   <div class="panel">
     <div class="tabbar">

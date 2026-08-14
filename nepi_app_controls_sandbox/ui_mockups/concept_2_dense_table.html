@@ -7,7 +7,7 @@
   header { padding: 10px 16px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; }
   header h1 { font-size: 13px; margin: 0; font-weight: normal; color: var(--sub); text-transform: uppercase; letter-spacing: .04em; }
   .layout { display: flex; }
-  .viewer { width: 55%; aspect-ratio: 16/9; background: repeating-linear-gradient(45deg,#1f2327,#1f2327 10px,#24282c 10px,#24282c 20px); display: flex; align-items: center; justify-content: center; color: var(--sub); margin: 12px; }
+  .viewer { width: 100%; aspect-ratio: 16/9; background: repeating-linear-gradient(45deg,#1f2327,#1f2327 10px,#24282c 10px,#24282c 20px); display: flex; align-items: center; justify-content: center; color: var(--sub); }
   .tables { flex: 1; padding: 12px; }
   table { width: 100%; border-collapse: collapse; margin-bottom: 18px; }
   caption { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--sub); padding-bottom: 6px; }
@@ -23,12 +23,21 @@
   .btn { background: none; border: 1px solid var(--line); color: var(--ink); font-family: inherit; font-size: 11px; padding: 1px 8px; cursor: pointer; }
   .flag { color: var(--red); font-size: 11px; }
   .foot { font-size: 11px; color: var(--sub); padding: 0 12px 12px; }
+  .imgcol { width: 55%; margin: 12px; }
+  .conn-row { display: flex; align-items: center; justify-content: space-between; font-size: 12px; padding: 4px 2px 8px; }
+  .conn-row select { width: auto; min-width: 220px; }
+  .conn-row .sw { display: flex; align-items: center; gap: 6px; }
+  .conn-row .sw::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--green); display: inline-block; }
 </style>
 
 <header><h1>app_controls_sandbox — parameter table</h1><span class="foot" style="padding:0">controls/status · data/status · 1 Hz</span></header>
 
 <div class="layout">
-  <div class="viewer">Image Viewer</div>
+  <div class="imgcol">
+    <div class="conn-row"><span class="sw">Image</span><select><option>/nepi/device_0/idx/color_2d_image</option></select></div>
+    <div class="viewer">Image Viewer</div>
+    <div class="foot" style="padding:6px 2px 0">Its stream feeds the viewer above.</div>
+  </div>
   <div class="tables">
 
     <table>
