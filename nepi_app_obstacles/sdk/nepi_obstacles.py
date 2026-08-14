@@ -113,6 +113,35 @@ PROCESS_CONTROLS_DICT = {
         'description': 'Sensor roll on its mount, positive right side down. Added to the NavPose roll.',
         'hidden': False},
 
+    # The optical axis does not generally pierce the middle pixel. Every
+    # calibration reports where it does land as the principal point (cx, cy),
+    # and the geometry below measures each pixel's bearing FROM that point --
+    # not from the centre of the frame, which is only an approximation of it.
+    #
+    # Held as a fraction of the frame rather than in pixels so the value
+    # survives a resolution change: cx / width_px and cy / height_px. A source
+    # that reports no calibration leaves both at 0.5, which puts the principal
+    # point back at the centre and reproduces the previous behaviour exactly.
+    #
+    # This matters more than its size suggests. Elevation is measured from this
+    # row, so an error here is a constant bias on every elevation in the frame,
+    # and height is range * sin(elevation) -- a bias that grows with range and
+    # lands hardest near the horizon, which is precisely where the ground
+    # threshold is being applied. A principal point one percent of the frame
+    # off centre is roughly half a degree, and half a degree is enough to start
+    # flipping far floor into obstacles.
+    'principal_x_ratio': {
+        'type': 'Float', 'default': 0.5, 'bounds': [0.0, 1.0], 'round_value': 4,
+        'display_name': 'Principal Point X',
+        'description': 'Optical axis column as a fraction of image width (cx / width). 0.5 is frame centre.',
+        'hidden': False},
+
+    'principal_y_ratio': {
+        'type': 'Float', 'default': 0.5, 'bounds': [0.0, 1.0], 'round_value': 4,
+        'display_name': 'Principal Point Y',
+        'description': 'Optical axis row as a fraction of image height (cy / height). 0.5 is frame centre.',
+        'hidden': False},
+
     }
 
 
@@ -267,6 +296,8 @@ def process_results(np_depth_map, status_dict, navpose_dict, data_dict, controls
         use_navpose = getControlValue(controls_dict, 'use_navpose', True)
         mount_pitch_deg = getControlValue(controls_dict, 'mount_pitch_deg', 0.0)
         mount_roll_deg = getControlValue(controls_dict, 'mount_roll_deg', 0.0)
+        principal_x_ratio = getControlValue(controls_dict, 'principal_x_ratio', 0.5)
+        principal_y_ratio = getControlValue(controls_dict, 'principal_y_ratio', 0.5)
 
         if max_range_m <= min_range_m:
             max_range_m = min_range_m + 0.1
@@ -313,7 +344,8 @@ def process_results(np_depth_map, status_dict, navpose_dict, data_dict, controls
 
         ##############################
         # Per-pixel bearing and height
-        geometry_dict = getGeometry(width_px, height_px, width_deg, height_deg)
+        geometry_dict = getGeometry(width_px, height_px, width_deg, height_deg,
+                                    principal_x_ratio, principal_y_ratio)
         az_deg_map = geometry_dict['az_deg_map']
         el_deg_map = geometry_dict['el_deg_map']
         [roll_deg, pitch_deg] = getLevelAngles(navpose_dict, use_navpose, mount_roll_deg, mount_pitch_deg)
@@ -463,7 +495,8 @@ def getNoReturnRange(np_ranged, set_no_return_range_m):
     return max_range_m * (1.0 - NO_RETURN_TOLERANCE_RATIO)
 
 
-def getGeometry(width_px, height_px, width_deg, height_deg):
+def getGeometry(width_px, height_px, width_deg, height_deg,
+                principal_x_ratio = 0.5, principal_y_ratio = 0.5):
     # Pinhole angular mapping across the reported field of view. Azimuth is
     # positive to the right of the boresight, elevation positive above it.
     #
@@ -483,13 +516,28 @@ def getGeometry(width_px, height_px, width_deg, height_deg):
     # property of the sensor geometry alone, so they are cached and handed back
     # by reference. Callers must treat every array in the returned dict as
     # read-only -- the bearing maps are broadcast views and are not writable.
-    cache_key = (int(width_px), int(height_px), float(width_deg), float(height_deg))
+    # The principal point is part of the cache key, not just the frame size and
+    # field of view. It is operator-settable and so can change while a source
+    # keeps the same resolution -- keying without it would hand back the
+    # geometry built for the OLD principal point and silently ignore the
+    # change until the source resolution happened to move.
+    cache_key = (int(width_px), int(height_px), float(width_deg), float(height_deg),
+                 float(principal_x_ratio), float(principal_y_ratio))
     geometry_dict = GEOMETRY_CACHE.get(cache_key, None)
     if geometry_dict is not None:
         return geometry_dict
 
-    x_ratio = (np.arange(width_px, dtype = np.float32) + 0.5) / float(width_px) - 0.5
-    y_ratio = 0.5 - (np.arange(height_px, dtype = np.float32) + 0.5) / float(height_px)
+    # Each pixel's offset is measured from the PRINCIPAL POINT, the pixel the
+    # optical axis actually pierces, rather than from the middle of the frame.
+    # At the default 0.5 the two are the same and these reduce to the previous
+    # expressions exactly.
+    #
+    # The focal length still comes from the field of view -- tan(fov/2) below
+    # is the half-frame offset in focal lengths -- so shifting the principal
+    # point moves where a bearing of zero sits without restretching the frame,
+    # which is what a real calibration describes.
+    x_ratio = (np.arange(width_px, dtype = np.float32) + 0.5) / float(width_px) - float(principal_x_ratio)
+    y_ratio = float(principal_y_ratio) - (np.arange(height_px, dtype = np.float32) + 0.5) / float(height_px)
 
     # Image-plane offsets in units of the focal length. These are the pinhole
     # model itself; everything below is read off them.
