@@ -172,6 +172,7 @@ class NepiAppWpilibIF extends Component {
     this.getMotorStatus = this.getMotorStatus.bind(this)
     this.onToggleRbxEnabled = this.onToggleRbxEnabled.bind(this)
     this.renderMotors = this.renderMotors.bind(this)
+    this.renderMotorSlot = this.renderMotorSlot.bind(this)
     this.renderRobotControl = this.renderRobotControl.bind(this)
     this.renderControls = this.renderControls.bind(this)
     this.getExampleControlsNamespace = this.getExampleControlsNamespace.bind(this)
@@ -955,97 +956,30 @@ class NepiAppWpilibIF extends Component {
     )
   }
 
-  // The Motors box. Slot count on top, then one row per slot -- the RoboRIO
-  // motor_id and the operator's display name, both free entry, committed on
-  // Enter -- then the ids actually seen on NetworkTables, read only, then the
-  // per-slot feedback readout.
+  // The Motors box. Two box-level rows on top -- how many slots there are, and
+  // the motor_ids actually seen on NetworkTables -- then one self-contained
+  // group per slot, rendered by renderMotorSlot.
   //
-  // The readout joins both halves of the motor contract: measured output,
-  // position and speed come from the standard nepi_interfaces/MotorsStatus the
-  // app publishes, and control mode, commanded output and current come from the
-  // app's own status message because MotorStatus has no field for them.
+  // Everything belonging to a slot lives inside that slot's group. The earlier
+  // layout listed every id and name box first and every feedback readout
+  // second, which put a slot's own boxes eight rows away from its own indicator
+  // and left neighbouring rows looking paired when they were not. Slot-level
+  // titles are also kept to one short line each: a title that wraps to two lines
+  // while its box stays top-aligned is what made adjacent rows read as grouped.
   renderMotors() {
     const motor_feedback = this.getMotorFeedback()
     const seen_motor_ids = this.getSeenMotorIds()
     const slot_count_value = this.getMotorSlotCountValue()
 
-    var slot_rows = []
+    var slot_groups = []
     for (var slot = 0; slot < motor_feedback.length; slot++) {
-      const slot_ind = slot
-      slot_rows.push(
-        <Columns key={"slot_row_" + slot_ind}>
-          <Column>
-
-            <Label title={this.renderSubLabel("Slot " + slot_ind,
-                                              "motor_" + slot_ind + " - RoboRIO id")}>
-              <Input
-                id={"WpilibMotorId" + slot_ind}
-                value={this.getMotorIdValue(slot_ind)}
-                onChange={(event) => this.onChangeMotorId(slot_ind, event)}
-                onKeyDown={(event) => this.onKeyMotorId(slot_ind, event)}
-                placeholder={"unmapped"}
-              />
-            </Label>
-
-            <Label title={"Slot " + slot_ind + " Name"}>
-              <Input
-                id={"WpilibMotorName" + slot_ind}
-                value={this.getMotorNameValue(slot_ind)}
-                onChange={(event) => this.onChangeMotorName(slot_ind, event)}
-                onKeyDown={(event) => this.onKeyMotorName(slot_ind, event)}
-                placeholder={"optional"}
-              />
-            </Label>
-
-          </Column>
-        </Columns>
-      )
-    }
-
-    var feedback_rows = []
-    for (var i = 0; i < motor_feedback.length; i++) {
-      const feedback = motor_feedback[i]
-      const motor_status = this.getMotorStatus(feedback.nepi_motor_name)
-      const measured = (motor_status != null) ? motor_status.motor_speed_ratio : null
-      const position = (motor_status != null) ? motor_status.motor_position : null
-      const speed = (motor_status != null) ? motor_status.motor_speed : null
-
-      var detail = "unmapped"
-      if (feedback.motor_id >= 0 && feedback.seen !== true) {
-        detail = "id " + feedback.motor_id + " not seen"
-      } else if (feedback.motor_id >= 0 && feedback.fresh !== true) {
-        detail = "id " + feedback.motor_id + " stale"
-      } else if (feedback.motor_id >= 0) {
-        detail = "id " + feedback.motor_id + "  " + feedback.control_mode +
-                 "  out " + Number(feedback.commanded_output).toFixed(2) +
-                 "/" + ((measured != null) ? Number(measured).toFixed(2) : "-") +
-                 "  " + Number(feedback.current_amps).toFixed(1) + "A"
-        if (position != null) {
-          detail = detail + "  pos " + Number(position).toFixed(2) +
-                   "  vel " + Number(speed).toFixed(2)
-        }
-      }
-
-      feedback_rows.push(
-        <Columns key={"feedback_row_" + i}>
-          <Column>
-
-            <Label title={this.renderSubLabel(
-                feedback.nepi_motor_name +
-                  ((feedback.display_name !== "") ? " (" + feedback.display_name + ")" : ""),
-                detail)}>
-              <BooleanIndicator value={feedback.seen === true && feedback.fresh === true} />
-            </Label>
-
-          </Column>
-        </Columns>
-      )
+      slot_groups.push(this.renderMotorSlot(motor_feedback[slot], slot))
     }
 
     return (
       <Section title={"Motors"}>
 
-        <Label title={this.renderSubLabel("Motor Slots", "slot order is the NEPI motor index")}>
+        <Label title={"Motor Slots"}>
           <Input
             id={"WpilibMotorSlotCount"}
             value={slot_count_value}
@@ -1055,15 +989,102 @@ class NepiAppWpilibIF extends Component {
           />
         </Label>
 
-        {slot_rows}
-
-        <Label title={this.renderSubLabel("Ids On Robot", "seen on NetworkTables")}>
+        <Label title={"Ids On Robot"}>
           <Input disabled value={seen_motor_ids.join(', ')} />
         </Label>
 
-        {feedback_rows}
+        <div style={{
+          marginTop: Styles.vars.spacing.small,
+          fontSize: Styles.vars.fontSize.small,
+          color: Styles.vars.colors.grey1
+        }}>
+          {"Slot order is the NEPI motor index: slot 0 is motor_0. Ids On Robot " +
+           "are the motor_ids currently seen on NetworkTables."}
+        </div>
+
+        {slot_groups}
 
       </Section>
+    )
+  }
+
+  // One motor slot as a single group: the NEPI motor name and live indicator on
+  // the heading line, then that slot's two editable boxes indented under it,
+  // then that slot's readout. A rule above each group separates it from the one
+  // before.
+  //
+  // The readout joins both halves of the motor contract: measured output,
+  // position and speed come from the standard nepi_interfaces/MotorsStatus the
+  // app publishes, and control mode, commanded output and current come from the
+  // app's own status message because MotorStatus has no field for them.
+  renderMotorSlot(feedback, slot_ind) {
+    const motor_status = this.getMotorStatus(feedback.nepi_motor_name)
+    const measured = (motor_status != null) ? motor_status.motor_speed_ratio : null
+    const position = (motor_status != null) ? motor_status.motor_position : null
+    const speed = (motor_status != null) ? motor_status.motor_speed : null
+
+    var detail = "unmapped"
+    if (feedback.motor_id >= 0 && feedback.seen !== true) {
+      detail = "id " + feedback.motor_id + " not seen"
+    } else if (feedback.motor_id >= 0 && feedback.fresh !== true) {
+      detail = "id " + feedback.motor_id + " stale"
+    } else if (feedback.motor_id >= 0) {
+      detail = "id " + feedback.motor_id + "  " + feedback.control_mode +
+               "  out " + Number(feedback.commanded_output).toFixed(2) +
+               "/" + ((measured != null) ? Number(measured).toFixed(2) : "-") +
+               "  " + Number(feedback.current_amps).toFixed(1) + "A"
+      if (position != null) {
+        detail = detail + "  pos " + Number(position).toFixed(2) +
+                 "  vel " + Number(speed).toFixed(2)
+      }
+    }
+
+    const heading = feedback.nepi_motor_name +
+      ((feedback.display_name !== "") ? "  (" + feedback.display_name + ")" : "")
+
+    return (
+      <div key={"motor_slot_" + slot_ind}>
+
+        <div style={{
+          borderTop: "1px solid #ffffff",
+          marginTop: Styles.vars.spacing.medium,
+          marginBottom: Styles.vars.spacing.xs
+        }}/>
+
+        <Label title={<span style={{ fontWeight: 'bold' }}>{heading}</span>}>
+          <BooleanIndicator value={feedback.seen === true && feedback.fresh === true} />
+        </Label>
+
+        <Label title={"RoboRIO Id"} marginLeft={Styles.vars.spacing.regular}>
+          <Input
+            id={"WpilibMotorId" + slot_ind}
+            value={this.getMotorIdValue(slot_ind)}
+            onChange={(event) => this.onChangeMotorId(slot_ind, event)}
+            onKeyDown={(event) => this.onKeyMotorId(slot_ind, event)}
+            placeholder={"unmapped"}
+          />
+        </Label>
+
+        <Label title={"Display Name"} marginLeft={Styles.vars.spacing.regular}>
+          <Input
+            id={"WpilibMotorName" + slot_ind}
+            value={this.getMotorNameValue(slot_ind)}
+            onChange={(event) => this.onChangeMotorName(slot_ind, event)}
+            onKeyDown={(event) => this.onKeyMotorName(slot_ind, event)}
+            placeholder={"optional"}
+          />
+        </Label>
+
+        <div style={{
+          marginTop: Styles.vars.spacing.xs,
+          marginLeft: Styles.vars.spacing.regular,
+          fontSize: Styles.vars.fontSize.small,
+          color: Styles.vars.colors.grey1
+        }}>
+          {detail}
+        </div>
+
+      </div>
     )
   }
 
