@@ -1012,8 +1012,31 @@ class NepiStereoCamApp(object):
             return self.setDepthState(
                 "stopped -- the controls for '" + str(self.selected_process) +
                 "' read back as None; restart the app node")
-        self.stereo_data_dict, _ = process['process_function'](
-            left, right, self.stereo_data_dict, process_controls_dict)
+        # A raise inside the process function is the ONE failure on this path that
+        # left the reported state lying. Everything else routes through
+        # setDepthState(); this went to depthCb's throttled 'Depth update failed'
+        # warning and nowhere else, so depth_message kept whatever the LAST pass had
+        # put there -- and the last pass, by definition, is one that stopped at an
+        # earlier gate. An operator who opens the Depth Map viewer on a rig whose
+        # block matching raises every pass reads 'idle -- nothing is subscribed to the
+        # depth map', which is not merely stale but the opposite of true, and sends
+        # them to check subscribers instead of the log. Worse when depth had been
+        # running: the panel holds the last good percentage indefinitely.
+        #
+        # Caught here rather than left to depthCb because this is the level that knows
+        # WHICH process was running and can say so. The gates above are untouched --
+        # this only adds a state report to a path that had none, and still returns
+        # False so a raise ends the pass exactly as it did before.
+        try:
+            self.stereo_data_dict, _ = process['process_function'](
+                left, right, self.stereo_data_dict, process_controls_dict)
+        except Exception as e:
+            return self.setDepthState(
+                "stopped -- the '" + str(self.selected_process) + "' stereo process "
+                "failed on this frame pair: " + str(e) +
+                ". This is a block matching parameter the library refused, not a "
+                "camera or calibration problem -- check the process controls.",
+                warn=True)
 
         # A pass that ran and matched NOTHING is the one failure the depth viewer
         # cannot show: the colorized image is still produced and still published, as
@@ -1060,17 +1083,65 @@ class NepiStereoCamApp(object):
         # The array is handed off, not kept: the colorizer inside overwrites nan /
         # out-of-range pixels in place, so np_depth_map must not be read after
         # this. Each pass gets a fresh array from the process function.
-        self.depth_map_if.publish_np_depth_map(
-            np_depth_map,
-            encoding='32FC1',
-            width_deg=width_deg,
-            height_deg=height_deg,
-            min_range_m=min_range_m,
-            max_range_m=max_range_m,
-            timestamp=timestamp)
+        self.publishDepthMap(np_depth_map, width_deg, height_deg,
+                             min_range_m, max_range_m, timestamp)
 
         self.dm_data_last_time = nepi_utils.get_time()
         return True
+
+    # Hand one depth map to DepthMapIF, holding its re-entrancy latch honest.
+    #
+    # DepthMapIF.publish_np_depth_map() runs its whole body inside
+    # 'if self.publishing == False: self.publishing = True' and clears the flag only
+    # on the normal path out. It has no try/finally, and its early return on a None
+    # depth map does not clear it either, so ONE exception anywhere in there --
+    # SaveDataIF.save() on a write error, the colorizer's unguarded controls_dict
+    # lookup, or its own 'Failed to publish Depth Map' handler, which passes a
+    # throttle= keyword that MsgIF.pub_warn does not accept -- latches the flag True
+    # for the life of the node. Every later call then falls straight past the guard
+    # and returns, so BOTH depth topics go silent permanently with no exception, no
+    # log line, and this node still reporting 'running -- N% of pixels have depth'.
+    # That is the worst state this app can be in: a healthy status message over a dead
+    # data product. BaseImageIF.publish_cv2_img() already handles both cases the right
+    # way; DepthMapIF has not been given the same treatment, and the proper repair is
+    # a try/finally in nepi_api, which is out of scope here.
+    #
+    # So the app guards its own call instead. Checking the flag on ENTRY is sound
+    # precisely because this app has exactly one publisher thread: updateDepthMap runs
+    # only from depthCb, a single self-re-arming oneshot timer, and nothing else in
+    # this node publishes depth. A latch found set before the call therefore cannot be
+    # a concurrent publish in progress -- it can only be a stuck one, so clearing it is
+    # recovery rather than a race. The except arm covers the same failure on the way
+    # out, and reports it, so a stuck publish costs one depth frame instead of all of
+    # them.
+    def publishDepthMap(self, np_depth_map, width_deg, height_deg,
+                        min_range_m, max_range_m, timestamp):
+        if self.depth_map_if.publishing == True:
+            self.depth_map_if.publishing = False
+            self.msg_if.pub_warn("Cleared a stuck DepthMapIF publish latch -- the "
+                                 "previous publish raised before releasing it",
+                                 throttle_s=5.0)
+        try:
+            self.depth_map_if.publish_np_depth_map(
+                np_depth_map,
+                encoding='32FC1',
+                width_deg=width_deg,
+                height_deg=height_deg,
+                min_range_m=min_range_m,
+                max_range_m=max_range_m,
+                timestamp=timestamp)
+            return True
+        except Exception as e:
+            # Release the latch the raise left set, then say so. Reported through
+            # setDepthState like every other reason depth did not come out, because
+            # from the operator's side this is exactly that: the pipeline ran and no
+            # depth map reached the topic.
+            self.depth_map_if.publishing = False
+            self.setDepthState('stopped -- the depth map was computed but publishing '
+                               'it failed: ' + str(e) +
+                               '. The compute is fine; the data product is not.',
+                               warn=True)
+            return False
 
     def computeDepthWindow(self, process_controls_dict):
         """Distances this configuration CAN measure, in mm: (near, far) or None.

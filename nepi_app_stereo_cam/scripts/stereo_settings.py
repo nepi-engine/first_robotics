@@ -121,11 +121,25 @@ DEFAULT_PROCESS = 'sgbm_1'
 # window. MEDIAN_FILTER_OPTIONS leads with '0' because 0 is how the filter is
 # turned off, and every other entry is odd and >= 3, the only sizes
 # compute_depth_map actually applies.
+#
+# MEDIAN_FILTER_OPTIONS STOPS AT 5, and that is a hard library limit rather than a
+# taste judgement. compute_depth_map applies the filter to the float32 DEPTH map,
+# and cv2.medianBlur accepts CV_32F only at ksize 3 or 5 -- for any larger aperture
+# it accepts CV_8U alone. So 7, 9 and 11 did not merely do nothing: they raised
+# cv2.error on EVERY pass, inside the process function, where the only trace is one
+# throttled 'Depth update failed' warning per 5 s from depthCb. The same rule is
+# already written down in calibrate.py's TRACKBARS list, whose median slider is
+# capped at 5 for exactly this reason -- the tuner had it right and this list did
+# not, and the two now agree. An operator wanting more smoothing than a 5x5 median
+# gives has Block Size, which smooths in the matcher where a larger window is legal.
 NUM_DISPARITIES_OPTIONS = ['16', '32', '48', '64', '80', '96', '112', '128',
                            '160', '192', '224', '256']
 BLOCK_SIZE_OPTIONS_SGBM = ['3', '5', '7', '9', '11', '13', '15', '21']
 BLOCK_SIZE_OPTIONS_BM = ['5', '7', '9', '11', '13', '15', '17', '19', '21']
-MEDIAN_FILTER_OPTIONS = ['0', '3', '5', '7', '9', '11']
+MEDIAN_FILTER_OPTIONS = ['0', '3', '5']
+# Largest ksize cv2.medianBlur will take on a float32 image. Used by _build_cfg to
+# cover a value persisted before the option list above was corrected.
+MAX_MEDIAN_FILTER_SIZE = 5
 
 
 # Stereo Process Functions
@@ -156,7 +170,15 @@ def _build_cfg(matcher, process_controls_dict):
         # Depth post-processing
         'min_depth_mm': float(controls.get('min_depth_mm', 50.0)),
         'max_depth_mm': float(controls.get('max_depth_mm', 20000.0)),
-        'median_filter_size': int(controls.get('median_filter_size', 5)),
+        # Held to the float32 medianBlur limit here as well as in the option list,
+        # because trimming MEDIAN_FILTER_OPTIONS does not reach a device that already
+        # saved a config: ControlsIF.init() replaces its whole controls dict with the
+        # persisted '<name>_controls_dict' param, so a stored set_string of '7' comes
+        # back complete with the old option list and would go on raising cv2.error
+        # every pass until a factory reset. Clamped rather than switched off, so the
+        # filter the operator asked for still runs at the largest legal size.
+        'median_filter_size': min(int(controls.get('median_filter_size', 5)),
+                                  MAX_MEDIAN_FILTER_SIZE),
     }
 
 
