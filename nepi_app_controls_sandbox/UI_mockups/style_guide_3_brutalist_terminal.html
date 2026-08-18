@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Style Guide 3 — Brutalist Terminal</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --ink: #000000;
+    --acc: #ff3d00;
+    --dim: #6a6a6a;
+    --ok: #000000;
+    --mono: "Courier New", "IBM Plex Mono", monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--mono); font-size: 14px; line-height: 1.5; }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 40px 28px 100px; }
+
+  header.hero { border: 4px solid var(--ink); padding: 24px; margin-bottom: 40px; }
+  header.hero .kicker { font-size: 12px; font-weight: 700; text-transform: uppercase; }
+  header.hero h1 { margin: 6px 0; font-size: 40px; text-transform: uppercase; letter-spacing: -1px; font-weight: 900; }
+  header.hero p { margin: 0; max-width: 760px; }
+
+  section.block { margin-bottom: 44px; }
+  section.block h2 {
+    font-size: 14px; text-transform: uppercase; font-weight: 700;
+    background: var(--ink); color: var(--bg); display: inline-block; padding: 4px 10px; margin-bottom: 18px;
+  }
+
+  .swatches { display: flex; flex-wrap: wrap; gap: 0; border-top: 4px solid var(--ink); border-left: 4px solid var(--ink); width: fit-content; }
+  .swatch { width: 150px; border-right: 4px solid var(--ink); border-bottom: 4px solid var(--ink); }
+  .swatch .fill { height: 70px; }
+  .swatch .meta { padding: 8px; font-size: 11px; }
+  .swatch .name { font-weight: 700; text-transform: uppercase; }
+
+  .type-row { display: flex; align-items: baseline; gap: 20px; border-bottom: 2px solid var(--ink); padding: 12px 0; }
+  .type-row .label { width: 170px; font-size: 11px; color: var(--dim); flex-shrink: 0; }
+  .type-row .sample.h1 { font-size: 34px; font-weight: 900; text-transform: uppercase; }
+  .type-row .sample.h2 { font-size: 22px; font-weight: 900; text-transform: uppercase; }
+  .type-row .sample.h3 { font-size: 15px; font-weight: 700; }
+  .type-row .sample.body { font-size: 14px; }
+  .type-row .sample.small { font-size: 11px; color: var(--dim); }
+
+  .spacing-row { display: flex; align-items: center; gap: 16px; margin-bottom: 8px; font-size: 11px; }
+  .spacing-row .bar { background: var(--ink); height: 12px; }
+  .spacing-row .label { width: 80px; }
+
+  .comp-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0; border-top: 4px solid var(--ink); border-left: 4px solid var(--ink); }
+  .comp-card { border-right: 4px solid var(--ink); border-bottom: 4px solid var(--ink); padding: 18px; }
+  .comp-card .cap { font-size: 10px; text-transform: uppercase; font-weight: 700; color: var(--dim); margin-bottom: 12px; }
+
+  select.ind, input.ind {
+    width: 100%; font-family: var(--mono); font-size: 13px; padding: 7px 8px;
+    border: 2px solid var(--ink); background: var(--bg); color: var(--ink); border-radius: 0;
+  }
+  input.ind[disabled] { background: #eee; color: var(--dim); }
+
+  .btn-brut {
+    font-family: var(--mono); font-weight: 700; text-transform: uppercase;
+    border: 2px solid var(--ink); background: var(--ink); color: var(--bg);
+    padding: 9px 16px; cursor: pointer; font-size: 12px;
+  }
+  .btn-brut.ghost { background: var(--bg); color: var(--ink); }
+  .btn-brut.acc { background: var(--acc); border-color: var(--acc); color: #fff; }
+
+  .toggle-brut { width: 50px; height: 22px; border: 2px solid var(--ink); background: var(--bg); position: relative; cursor: pointer; display: inline-block; }
+  .toggle-brut.on { background: var(--ink); }
+  .toggle-brut .thumb { width: 14px; height: 14px; background: var(--ink); position: absolute; top: 2px; left: 2px; }
+  .toggle-brut.on .thumb { left: 30px; background: var(--bg); }
+
+  .box-row { display: flex; gap: 0; }
+  .box { border: 2px solid var(--ink); padding: 5px 12px; font-size: 12px; font-weight: 700; }
+  .box.on { background: var(--ink); color: var(--bg); }
+
+  .dot-row { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+  .dot { width: 10px; height: 10px; border: 2px solid var(--ink); background: var(--bg); }
+  .dot.on { background: var(--ink); }
+
+  .slider-brut input[type=range] { width: 100%; accent-color: var(--ink); }
+  .readout { font-size: 11px; text-align: right; color: var(--dim); }
+
+  .rules-list { font-size: 12px; color: var(--dim); line-height: 2; }
+  .rules-list b { color: var(--ink); }
+
+  footer.note { margin-top: 56px; border-top: 4px solid var(--ink); padding-top: 16px; font-size: 12px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="hero">
+    <div class="kicker">/// STYLE_GUIDE_03</div>
+    <h1>Brutalist Terminal</h1>
+    <p>No color, no curve, no ambiguity. Everything is set in monospace on pure white with pure black
+    rules, as if the entire RUI were a well-formatted terminal session. One red accent exists for
+    exactly one purpose: things that are broken or destructive.</p>
+  </header>
+
+  <section class="block">
+    <h2>PRINCIPLE</h2>
+    <p style="max-width:760px; color:var(--dim);">
+      This guide is the opposite instinct from a dashboard: it does not try to look friendly, calm, or
+      "designed" at all. Grids are drawn with real 2–4px black rules, type is exclusively monospaced,
+      and there is exactly one non-black/white color in the entire system — reserved for the two
+      things in this app that the README documents as broken (Trigger, FloatSliders). If a NEPI
+      engineer already lives in a terminal all day, this guide argues the RUI should not fight that
+      mental model, and every value on screen should be exactly as legible and unambiguous as a
+      `cat` of a status topic.
+    </p>
+  </section>
+
+  <section class="block">
+    <h2>COLOR</h2>
+    <div class="swatches">
+      <div class="swatch"><div class="fill" style="background:#fff"></div><div class="meta"><div class="name">bg</div>#ffffff</div></div>
+      <div class="swatch"><div class="fill" style="background:#000"></div><div class="meta"><div class="name">ink</div>#000000</div></div>
+      <div class="swatch"><div class="fill" style="background:#6a6a6a"></div><div class="meta"><div class="name">dim</div>#6a6a6a</div></div>
+      <div class="swatch"><div class="fill" style="background:#ff3d00"></div><div class="meta"><div class="name">acc (broken/danger only)</div>#ff3d00</div></div>
+    </div>
+  </section>
+
+  <section class="block">
+    <h2>TYPOGRAPHY</h2>
+    <div class="type-row"><div class="label">H1 / 34px / 900</div><div class="sample h1">Controls Sandbox</div></div>
+    <div class="type-row"><div class="label">H2 / 22px / 900</div><div class="sample h2">Data Sandbox</div></div>
+    <div class="type-row"><div class="label">H3 / 15px / 700</div><div class="sample h3">SECTION_TITLE</div></div>
+    <div class="type-row"><div class="label">Body / 14px</div><div class="sample body">demo_string = "hello nepi"</div></div>
+    <div class="type-row"><div class="label">Small / 11px</div><div class="sample small">bounds: [0, 10]</div></div>
+  </section>
+
+  <section class="block">
+    <h2>SPACING SCALE</h2>
+    <div class="spacing-row"><div class="label">xs 4px</div><div class="bar" style="width:4px"></div></div>
+    <div class="spacing-row"><div class="label">sm 8px</div><div class="bar" style="width:8px"></div></div>
+    <div class="spacing-row"><div class="label">md 16px</div><div class="bar" style="width:16px"></div></div>
+    <div class="spacing-row"><div class="label">lg 24px</div><div class="bar" style="width:24px"></div></div>
+    <div class="spacing-row"><div class="label">xl 38px</div><div class="bar" style="width:38px"></div></div>
+  </section>
+
+  <section class="block">
+    <h2>COMPONENTS</h2>
+    <div class="comp-grid">
+
+      <div class="comp-card">
+        <div class="cap">Select / Menu</div>
+        <select class="ind"><option>Off</option><option selected>Low</option><option>High</option></select>
+      </div>
+
+      <div class="comp-card">
+        <div class="cap">Text input (editable)</div>
+        <input class="ind" type="text" value="hello nepi">
+      </div>
+
+      <div class="comp-card">
+        <div class="cap">Text input (read-only)</div>
+        <input class="ind" type="text" disabled value="14:22:07">
+      </div>
+
+      <div class="comp-card">
+        <div class="cap">Buttons</div>
+        <div style="display:flex; gap:10px; flex-wrap:wrap;">
+          <button class="btn-brut">RESET</button>
+          <button class="btn-brut ghost">CANCEL</button>
+          <button class="btn-brut acc">FACTORY_RESET</button>
+        </div>
+      </div>
+
+      <div class="comp-card">
+        <div class="cap">Toggle (Bool)</div>
+        <div style="display:flex; gap:14px; align-items:center;">
+          <div class="toggle-brut on"><div class="thumb"></div></div>
+          <div class="toggle-brut"><div class="thumb"></div></div>
+        </div>
+      </div>
+
+      <div class="comp-card">
+        <div class="cap">Multi-select (Selections)</div>
+        <div class="box-row">
+          <div class="box on">RED</div><div class="box">GRN</div><div class="box on">BLU</div>
+        </div>
+      </div>
+
+      <div class="comp-card">
+        <div class="cap">Boolean indicator</div>
+        <div style="display:flex; gap:16px;">
+          <div class="dot-row"><div class="dot on"></div>TRUE</div>
+          <div class="dot-row"><div class="dot"></div>FALSE</div>
+        </div>
+      </div>
+
+      <div class="comp-card">
+        <div class="cap">Slider (FloatSlider)</div>
+        <div class="slider-brut">
+          <input type="range" min="0" max="100" value="50">
+          <div class="readout">50.0 / 100.0</div>
+        </div>
+      </div>
+
+      <div class="comp-card">
+        <div class="cap">Broken / unsupported flag</div>
+        <div class="box-row">
+          <div class="box" style="border-color:var(--acc); color:var(--acc);">! DROPPED_BY_SDK</div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <section class="block">
+    <h2>RULES</h2>
+    <div class="rules-list">
+      <div>— <b>Monospace only.</b> No secondary typeface exists in this system.</div>
+      <div>— Rules are always <b>2–4px solid black</b>, drawn as literal grid lines between cells, never a soft border.</div>
+      <div>— Zero border-radius, zero shadow, zero gradient, anywhere.</div>
+      <div>— The single accent color marks <b>broken or destructive</b> items exclusively — never used for emphasis or branding.</div>
+      <div>— Labels for control identifiers echo the actual Python dict key (<b>demo_float_slider</b>) alongside the display name, since this guide assumes an engineer audience comfortable reading source.</div>
+    </div>
+  </section>
+
+  <footer class="note">
+    Brutalist Terminal covers the same 18 demo fields (10 controls + 8 data) as the real app. See
+    concept_3_brutalist_terminal.html for the full page layout and UI_mockups/README.md for rationale.
+  </footer>
+
+</div>
+</body>
+</html>

@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Concept 5 — Playful Flat</title>
+<style>
+  :root {
+    --bg: #fbf9f4; --card: #ffffff; --ink: #22243a; --ink-soft: #6f7290;
+    --coral: #ff6b5e; --sun: #ffc93c; --mint: #34d1a4; --sky: #4d9dff; --grape: #9b6bff;
+    --sans: "Trebuchet MS", Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--sans); font-size: 14px; line-height: 1.5; }
+
+  .hero { padding: 22px 30px; background: linear-gradient(120deg, var(--sky), var(--grape)); color: #fff; display: flex; justify-content: space-between; align-items: center; }
+  .hero h1 { margin: 0; font-size: 20px; font-weight: 800; }
+  .hero .badge { font-size: 11px; font-weight: 800; background: rgba(255,255,255,0.22); padding: 5px 14px; border-radius: 20px; }
+
+  .page { display: flex; gap: 22px; padding: 24px 30px 50px; }
+  .imgcol { width: 46%; }
+  .sidecol { width: 54%; }
+
+  .card { border-radius: 20px; background: var(--card); box-shadow: 0 6px 18px rgba(34,36,58,0.08); padding: 18px; margin-bottom: 18px; }
+  .card .cap { font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; color: var(--grape); margin-bottom: 12px; }
+
+  select.ind, input.ind { width: 100%; font-family: var(--sans); font-size: 13px; padding: 9px 12px; border: 2px solid #eee2d0; border-radius: 12px; background: #fffdf8; color: var(--ink); }
+  input.ind[disabled] { color: var(--ink-soft); background: #f3f1ea; }
+
+  .viewer { width: 100%; aspect-ratio: 16/9; border-radius: 16px; background: repeating-linear-gradient(45deg, #eee7d8, #eee7d8 10px, #e6ddc8 10px, #e6ddc8 20px); display: flex; align-items: center; justify-content: center; color: var(--ink-soft); font-size: 13px; margin-top: 12px; }
+  .hint { font-size: 11px; color: var(--ink-soft); margin-top: 8px; }
+
+  .accordion-item { border-radius: 16px; background: #fffdf8; margin-bottom: 10px; overflow: hidden; }
+  .accordion-hd { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; font-weight: 800; font-size: 13px; cursor: pointer; }
+  .accordion-hd .chip-summary { font-size: 11px; font-weight: 700; color: #fff; background: var(--sky); padding: 4px 10px; border-radius: 20px; }
+  .accordion-bd { padding: 4px 16px 16px; }
+
+  .row { display: flex; align-items: center; justify-content: space-between; padding: 9px 0; }
+  .row .name { font-weight: 700; font-size: 12.5px; }
+  .row .sub { font-size: 9px; color: var(--ink-soft); }
+  .row .ctl { width: 48%; }
+
+  .btn-play { border: none; border-radius: 12px; padding: 9px 18px; font-weight: 800; font-size: 12px; cursor: pointer; color: #fff; background: var(--coral); box-shadow: 0 4px 0 #d9483d; width: 100%; }
+  .btn-play.broken { background: var(--ink-soft); box-shadow: 0 4px 0 #565873; }
+
+  .toggle-play { width: 44px; height: 24px; border-radius: 12px; position: relative; cursor: pointer; display: inline-block; background: #e7e3d8; float: right; }
+  .toggle-play .thumb { width: 18px; height: 18px; border-radius: 50%; background: #fff; box-shadow: 0 2px 5px rgba(0,0,0,0.2); position: absolute; top: 3px; left: 3px; }
+  .toggle-play.on { background: var(--mint); }
+  .toggle-play.on .thumb { left: 23px; }
+
+  .chip-row { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
+  .chip { font-size: 10px; font-weight: 700; padding: 5px 12px; border-radius: 20px; background: #f3f1ea; color: var(--ink-soft); }
+  .chip.on { color: #fff; background: var(--sky); }
+
+  .dot-row { display: flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 700; justify-content: flex-end; }
+  .dot { width: 11px; height: 11px; border-radius: 50%; background: #e7e3d8; }
+  .dot.on { background: var(--mint); }
+
+  .flag { font-size: 9px; color: var(--coral); font-weight: 700; }
+</style>
+</head>
+<body>
+
+  <div class="hero">
+    <h1>🎛️ Controls Sandbox</h1>
+    <div class="badge">PLAYFUL FLAT</div>
+  </div>
+
+  <div class="page">
+
+    <div class="imgcol">
+      <div class="card">
+        <div class="cap">Connections</div>
+        <select class="ind"><option>/nepi/device_0/idx/color_2d_image</option></select>
+        <div class="viewer">📷 Image Viewer</div>
+        <div class="hint">Its stream feeds the viewer above.</div>
+      </div>
+
+      <div class="card">
+        <div class="cap">Settings</div>
+        <div style="font-size:11px; color:var(--ink-soft);">Available in develop mode or admin mode — lets you show/hide individual controls.</div>
+      </div>
+    </div>
+
+    <div class="sidecol">
+
+      <div class="card">
+        <div class="cap">Choices &amp; Actions &amp; Data — expand a group</div>
+
+        <div class="accordion-item">
+          <div class="accordion-hd"><span>🎯 Choices</span><span class="chip-summary">Low · Bravo · 2 sel</span></div>
+          <div class="accordion-bd">
+            <div class="row"><div><div class="name">Demo Menu</div><div class="sub">demo_menu</div></div><div class="ctl"><select class="ind"><option>Off</option><option selected>Low</option><option>High</option></select></div></div>
+            <div class="row"><div><div class="name">Demo Selection</div><div class="sub">demo_selection</div></div><div class="ctl"><select class="ind"><option>Alpha</option><option selected>Bravo</option><option>Charlie</option></select></div></div>
+            <div class="row"><div><div class="name">Demo Selections</div><div class="sub">demo_selections</div></div><div class="ctl"><div class="chip-row"><div class="chip on">Red</div><div class="chip">Green</div><div class="chip on">Blue</div></div></div></div>
+          </div>
+        </div>
+
+        <div class="accordion-item">
+          <div class="accordion-hd"><span>⚡ Actions</span><span class="chip-summary">On · Trigger idle</span></div>
+          <div class="accordion-bd">
+            <div class="row"><div><div class="name">Demo Trigger</div><div class="sub">demo_trigger</div><div class="flag">doesn't fire yet — known issue</div></div><div class="ctl"><button class="btn-play broken">Trigger</button></div></div>
+            <div class="row"><div><div class="name">Demo Bool</div><div class="sub">demo_bool</div></div><div class="ctl"><div class="toggle-play on"><div class="thumb"></div></div></div></div>
+          </div>
+        </div>
+
+        <div class="accordion-item">
+          <div class="accordion-hd"><span>🔢 Values</span><span class="chip-summary">5 · 2.5 · 50.0</span></div>
+          <div class="accordion-bd">
+            <div class="row"><div><div class="name">Demo String</div><div class="sub">demo_string</div></div><div class="ctl"><input class="ind" value="hello nepi"></div></div>
+            <div class="row"><div><div class="name">Demo Int</div><div class="sub">demo_int · 0–10</div></div><div class="ctl"><input class="ind" value="5"></div></div>
+            <div class="row"><div><div class="name">Demo Float</div><div class="sub">demo_float · 0–10</div></div><div class="ctl"><input class="ind" value="2.5"></div></div>
+            <div class="row"><div><div class="name">Demo Float Slider</div><div class="sub">demo_float_slider</div></div><div class="ctl"><input type="range" min="0" max="100" value="50" style="width:100%; accent-color:var(--coral);"></div></div>
+            <div class="row"><div><div class="name">Demo Floats Slider</div><div class="sub">demo_floats_slider</div><div class="flag">temporarily unavailable</div></div><div class="ctl"><input type="range" min="0" max="100" value="25" style="width:100%; accent-color:var(--coral);"></div></div>
+          </div>
+        </div>
+
+        <div class="accordion-item">
+          <div class="accordion-hd"><span>📊 Live Data</span><span class="chip-summary">tick 812</span></div>
+          <div class="accordion-bd">
+            <div class="row"><div><div class="name">Demo Bool</div><div class="sub">demo_bool_data</div></div><div class="ctl"><div class="dot-row"><div class="dot on"></div>True</div></div></div>
+            <div class="row"><div><div class="name">Demo Bools</div><div class="sub">demo_bools_data</div></div><div class="ctl"><div class="dot-row"><div class="dot on"></div>T&nbsp;&nbsp;<div class="dot"></div>F</div></div></div>
+            <div class="row"><div><div class="name">Demo String</div><div class="sub">demo_string_data</div></div><div class="ctl"><input class="ind" disabled value="14:22:07"></div></div>
+            <div class="row"><div><div class="name">Demo Strings</div><div class="sub">demo_strings_data</div></div><div class="ctl" style="font-size:11px; text-align:right; color:var(--ink-soft);">14:22:07, tick 812</div></div>
+            <div class="row"><div><div class="name">Demo Int</div><div class="sub">demo_int_data</div></div><div class="ctl"><input class="ind" disabled value="812"></div></div>
+            <div class="row"><div><div class="name">Demo Ints</div><div class="sub">demo_ints_data</div></div><div class="ctl" style="font-size:11px; text-align:right; color:var(--ink-soft);">812, -812</div></div>
+            <div class="row"><div><div class="name">Demo Float</div><div class="sub">demo_float_data</div></div><div class="ctl"><input class="ind" disabled value="0.799"></div></div>
+            <div class="row"><div><div class="name">Demo Floats</div><div class="sub">demo_floats_data</div></div><div class="ctl" style="font-size:11px; text-align:right; color:var(--ink-soft);">0.799, -0.799</div></div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+</body>
+</html>

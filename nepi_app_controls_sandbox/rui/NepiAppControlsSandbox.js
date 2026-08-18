@@ -9,9 +9,8 @@
 import React, { Component } from "react"
 import { observer, inject } from "mobx-react"
 
-import Section from "./Section"
 import { Columns, Column } from "./Columns"
-import Label from "./Label"
+import Styles from "./Styles"
 
 import NepiIFConnectData from "./Nepi_IF_ConnectData"
 
@@ -24,21 +23,22 @@ import NepiAppControlsSandboxTabs from "./NepiAppControlsSandbox-Tabs"
 @inject("ros")
 @observer
 
-// Controls Sandbox main panel: an image viewer in the left column, and in the
-// right column an Image connect selector, a Controls box (one widget per
-// control), a read-only Data box (one row per datum) and, in develop run mode or
-// when admin mode is set, a Controls Settings box below them.
+// Controls Sandbox main panel: the left column stacks an Image connect
+// selector strip, the image viewer, and a hint caption in one bordered group
+// (concept_3_tabbed_groups.html's .imgcol); the right column holds the
+// Choices/Actions/Values/Data tab group and, in develop run mode or when
+// admin mode is set, a Controls Settings box below it.
 //
-// The image row follows nepi_app_auto_move exactly. Its connect namespace is
-// <app>/image_connect, owned by the ConnectImageIF in
+// The image column follows nepi_app_auto_move for the connect wiring. Its
+// connect namespace is <app>/image_connect, owned by the ConnectImageIF in
 // controls_sandbox_app_node.py, and the connect name held in state below must
 // match that node-side IMAGE_CONNECT_NAME character for character. Two
-// components share that one namespace: the selector instance in the right column
-// runs with show_data={false}, and a SECOND Nepi_IF_ConnectData in the left
-// column runs with show_selector={false} show_data={true} and is what renders
-// Nepi_IF_ImageViewer. The viewer topic therefore comes from the connect
-// status, not from this app's status message, so ControlsSandboxStatus.msg
-// carries no image topic field.
+// Nepi_IF_ConnectData instances share that one namespace: the selector strip
+// runs with show_data={false}, and the viewer below it runs with
+// show_selector={false} show_data={true}, so whichever topic the operator
+// picks in the strip is what streams in the viewer. The viewer topic
+// therefore comes from the connect status, not from this app's status
+// message, so ControlsSandboxStatus.msg carries no image topic field.
 class NepiAppControlsSandbox extends Component {
   constructor(props) {
     super(props)
@@ -65,8 +65,7 @@ class NepiAppControlsSandbox extends Component {
     this.getConnectNamespace = this.getConnectNamespace.bind(this)
     this.updateStatusListener = this.updateStatusListener.bind(this)
     this.statusListener = this.statusListener.bind(this)
-    this.renderImageViewer = this.renderImageViewer.bind(this)
-    this.renderConnections = this.renderConnections.bind(this)
+    this.renderImageColumn = this.renderImageColumn.bind(this)
     this.renderControlsDataTabs = this.renderControlsDataTabs.bind(this)
   }
 
@@ -154,54 +153,55 @@ class NepiAppControlsSandbox extends Component {
     }
   }
 
-  // The image viewer for the left column: a Nepi_IF_ConnectData on the image
-  // connect namespace carrying only the data panel (show_selector={false}
-  // show_data={true}). Its renderData() reads the image topic off
-  // ConnectIFStatus.selected_topic and mounts Nepi_IF_ImageViewer on it, and it
-  // already handles the unselected case -- renderData() returns an empty
-  // Columns/Column when selected_topic is null or 'None', so no viewer is
-  // mounted on a topic that does not exist. Sharing the namespace with the
-  // selector row rather than adding a second connect IF keeps one selection
-  // driving both halves of the row: whatever the operator picks on the right is
-  // what streams on the left.
-  renderImageViewer() {
+  // Left column: connect selector strip, image viewer, and a hint caption, all
+  // sharing one border -- concept_3_tabbed_groups.html's .imgcol, where the
+  // connect row sits directly above the viewer instead of in a separate
+  // "CONNECTIONS" Section next to the tabs. Two Nepi_IF_ConnectData instances
+  // still share the one image_connect namespace exactly as before: this method
+  // mounts the selector (show_selector={true} show_data={false}) above the
+  // viewer (show_selector={false} show_data={true}), so whichever topic the
+  // operator picks in the top strip is what streams below it. Both run
+  // make_section={false} since the bordering is drawn here, not by Section.
+  renderImageColumn() {
+    const connectNamespace = this.getConnectNamespace(this.state.imageConnectName)
+    const borderStyle = `1px solid ${Styles.vars.colors.grey1}`
+
     return (
-      <Columns>
-        <Column>
-          <NepiIFConnectData
-            namespace={this.getConnectNamespace(this.state.imageConnectName)}
-            title={"Image"}
-            show_selector={false}
-            show_data={true}
-            make_section={false}
-          />
-        </Column>
-      </Columns>
-    )
-  }
+      <React.Fragment>
 
-  // The image source selector, at the top of the right column.
-  //
-  // show_connect_header={true} is what titles the row: the component renders its
-  // title prop and its green "Connected" BooleanIndicator on one line ABOVE the
-  // Select, both driven by the connect namespace's ConnectIFStatus, so the page
-  // renders no bold Label of its own. make_section={false} keeps the component
-  // from drawing a bordered box inside the Section this method already opens.
-  renderConnections() {
-    return (
-      <Section title={"CONNECTIONS"}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", border: borderStyle, borderBottom: "none", padding: `${Styles.vars.spacing.small.raw}px ${Styles.vars.spacing.small.raw + 2}px` }}>
+          <Columns>
+            <Column>
+              <NepiIFConnectData
+                namespace={connectNamespace}
+                title={"Image"}
+                show_selector={true}
+                show_data={false}
+                make_section={false}
+              />
+            </Column>
+          </Columns>
+        </div>
 
-        <NepiIFConnectData
-          namespace={this.getConnectNamespace(this.state.imageConnectName)}
-          title={"Image"}
-          show_selector={true}
-          show_data={false}
-          show_connect_header={true}
-          make_section={false}
-        />
-        <Label title={"Its stream feeds the viewer"}/>
+        <div style={{ border: borderStyle, borderTop: "none", borderBottom: "none" }}>
+          <Columns>
+            <Column>
+              <NepiIFConnectData
+                namespace={connectNamespace}
+                title={"Image"}
+                show_selector={false}
+                show_data={true}
+                make_section={false}
+              />
+            </Column>
+          </Columns>
+        </div>
 
-      </Section>
+        <div style={{ border: borderStyle, borderTop: "none", padding: `${Styles.vars.spacing.xs.raw}px ${Styles.vars.spacing.small.raw + 2}px`, fontSize: Styles.vars.fontSize.small, color: Styles.vars.colors.grey2 }}>
+          Its stream feeds the viewer above.
+        </div>
+
+      </React.Fragment>
     )
   }
 
@@ -295,17 +295,15 @@ class NepiAppControlsSandbox extends Component {
 
             <div style={{ display: 'flex' }}>
 
-              <div style={{ width: "75%" }}>
-                {this.renderImageViewer()}
+              <div style={{ width: "58%" }}>
+                {this.renderImageColumn()}
               </div>
 
               <div style={{ width: '2%' }}>
                 {}
               </div>
 
-              <div style={{ width: "23%" }}>
-
-                {this.renderConnections()}
+              <div style={{ width: "40%" }}>
 
                 {this.renderControlsDataTabs()}
 
