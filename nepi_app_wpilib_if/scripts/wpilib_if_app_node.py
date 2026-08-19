@@ -188,6 +188,11 @@ class NepiWpilibApp(object):
     nt_conn_handle = None
     nt_heartbeat_entry = None
 
+    heartbeat_waiting_for_response = False
+    heartbeat_last_assert_time = 0.0
+    heartbeat_last_response_time = 0.0
+    demo_bool_value = None
+
     # Live NetworkTables input-group caches, one per group, following the
     # per-IF latest-value pattern the connect callbacks above already use: every
     # poll stores the newest dict here and the rest of the app reads from these
@@ -690,6 +695,31 @@ class NepiWpilibApp(object):
             value = self.example_controls_if.get_control_value(control_name)
         self.msg_if.pub_info("Example control '" + str(control_name) + "' updated to: " + str(value))
 
+    def setDemoBool(self, value):
+        """Set the Example Controls demo_bool from heartbeat state."""
+
+        if self.example_controls_if is None:
+            return
+
+        value = bool(value)
+
+        # Avoid spamming the ControlsIF with the same value every timer tick.
+        if self.demo_bool_value == value:
+            return
+
+        try:
+            self.example_controls_if.set_control_value(
+                "demo_bool",
+                value
+            )
+            self.demo_bool_value = value
+
+        except Exception as e:
+            self.msg_if.pub_warn(
+                "Failed to set demo_bool from heartbeat: " + str(e),
+                throttle_s=10.0
+            )
+
     # Fully-qualified namespace of the example ControlsIF.
     #
     # Built from self.node_namespace rather than read off
@@ -753,9 +783,16 @@ class NepiWpilibApp(object):
 
     # Called from an NT listener thread, not from a ROS callback, so it only
     # stores state and republishes status.
+
     def ntConnectionCb(self, connected):
         self.set_connected(connected)
+
+        if connected is False:
+            self.heartbeat_waiting_for_response = False
+            self.setDemoBool(False)
+
         self.publish_status()
+    
 
     def heartbeatPublishCb(self, timer):
         # NEPI's half of the handshake: set the heartbeat True once a second and
@@ -763,11 +800,61 @@ class NepiWpilibApp(object):
         # (nepi_wpilib.respond_to_heartbeat) blocks for 500 ms by design and is
         # therefore never called from this node -- it is the RoboRIO's job, and
         # the loopback test's RoboRIO stand-in runs it on its own thread.
+
         if self.nt_instance is None or self.nt_heartbeat_entry is None:
+            self.heartbeat_waiting_for_response = False
+            self.setDemoBool(False)
             return
+
         if nepi_wpilib.is_connected(self.nt_instance) is False:
+            self.heartbeat_waiting_for_response = False
+            self.setDemoBool(False)
             return
-        nepi_wpilib.publish_heartbeat(self.nt_instance, self.nt_heartbeat_entry)
+
+        nepi_wpilib.publish_heartbeat(
+            self.nt_instance,
+            self.nt_heartbeat_entry
+        )
+
+        self.heartbeat_waiting_for_response = True
+        self.heartbeat_last_assert_time = nepi_sdk.get_time()
+
+        # Visual proof that NEPI sent the heartbeat.
+        self.setDemoBool(True)
+
+    def heartbeatResponseCb(self):
+        """Check whether the RoboRIO answered the heartbeat by writing False."""
+
+        if self.nt_instance is None or self.nt_heartbeat_entry is None:
+            self.heartbeat_waiting_for_response = False
+            self.setDemoBool(False)
+            return
+
+        if nepi_wpilib.is_connected(self.nt_instance) is False:
+            self.heartbeat_waiting_for_response = False
+            self.setDemoBool(False)
+            return
+
+        if self.heartbeat_waiting_for_response is False:
+            return
+
+        try:
+            heartbeat_value = nepi_wpilib.read_boolean(self.nt_heartbeat_entry)
+
+        except Exception as e:
+            self.msg_if.pub_warn(
+                "Failed to read heartbeat response: " + str(e),
+                throttle_s=10.0
+            )
+            return
+
+        if heartbeat_value is False:
+            self.heartbeat_waiting_for_response = False
+            self.heartbeat_last_response_time = nepi_sdk.get_time()
+
+            # Visual proof that RoboRIO answered.
+            self.setDemoBool(False)
+        
 
     def ntPollCb(self, timer):
         # One read of every input group per tick into the in-memory caches. The
@@ -775,7 +862,14 @@ class NepiWpilibApp(object):
         # caches, so NetworkTables is touched at exactly this one rate no matter
         # how many consumers there are.
         if self.nt_instance is None:
+            self.heartbeat_waiting_for_response = False
+            self.setDemoBool(False)
             return
+
+        # Check whether RoboRIO answered the heartbeat by writing False.
+        # This runs at NT_POLL_RATE_HZ, currently 10 Hz, so it is fast enough to
+        # catch the RoboRIO's ~500 ms heartbeat response.
+        self.heartbeatResponseCb()
 
         try:
             self.motor_feedback_dict = nepi_wpilib.read_all_motor_feedback(self.nt_instance)
@@ -784,8 +878,12 @@ class NepiWpilibApp(object):
             self.velocity_dict = nepi_wpilib.read_robot_velocity(self.nt_instance)
             self.orientation_dict = nepi_wpilib.read_robot_orientation(self.nt_instance)
             self.rbx_feedback_dict = nepi_wpilib.read_rbx_feedback(self.nt_instance)
+
         except Exception as e:
-            self.msg_if.pub_warn("NetworkTables poll failed: " + str(e), throttle_s=10.0)
+            self.msg_if.pub_warn(
+                "NetworkTables poll failed: " + str(e),
+                throttle_s=10.0
+            )
             return
 
         self.logFirstGroups()
@@ -1438,8 +1536,13 @@ class NepiWpilibApp(object):
         # No separate timer for it: STATUS_PUBLISH_RATE_HZ is 1.0, so this
         # callback already runs at exactly one hertz. A second timer would
         # either double-publish the status message or duplicate this schedule.
-        self.set_connected(nepi_wpilib.is_connected(self.nt_instance))
+        if self.nt_instance is None:
+            self.set_connected(False)
+        else:
+            self.set_connected(nepi_wpilib.is_connected(self.nt_instance))
+
         self.publish_status()
+        
 
     def set_connected(self, connected):
         """Set the app's reported robot network connection state.
