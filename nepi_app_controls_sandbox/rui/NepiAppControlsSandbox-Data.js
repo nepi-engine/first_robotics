@@ -37,12 +37,7 @@ import React, { Component } from "react"
 import { observer, inject } from "mobx-react"
 
 import Toggle from "react-toggle"
-import Section from "./Section"
-import { Columns, Column } from "./Columns"
-import Label from "./Label"
-import Input from "./Input"
-import Styles from "./Styles"
-import BooleanIndicator from "./BooleanIndicator"
+import Theme from "./NepiAppControlsSandbox-Theme"
 
 import { round, onChangeSwitchStateValue } from "./Utilities"
 
@@ -131,11 +126,28 @@ class NepiAppControlsSandboxData extends Component {
     }
   }
 
+  // A datum's on-screen row: caption + wire name on the left
+  // (concept_4_glass_console.html's .row / .name / .sub), the read-only value
+  // on the right. Every renderDatum() branch below builds its own value
+  // display and hands it to this wrapper instead of <Label>, since Label's
+  // wrapper divs carry no class or style hook this app can reach (see
+  // NepiAppControlsSandbox-Theme.js's header comment).
+  renderRow(name, display_name, sub, value) {
+    return (
+      <div style={Theme.row} key={name}>
+        <div>
+          <div style={Theme.rowName}>{display_name}</div>
+          <div style={Theme.rowSub}>{sub}</div>
+        </div>
+        <div style={{ textAlign: "right", fontSize: "11px", color: Theme.colors.textDim }}>{value}</div>
+      </div>
+    )
+  }
+
   // Render a single datum given its type and Datum message. Every branch below
-  // is read-only: a disabled Input value box for numbers and strings, a
-  // BooleanIndicator for bools. Array types render one box (or one indicator)
-  // per element in a single row, matching the side-by-side pattern in
-  // Nepi_IF_PTX-Data.js.
+  // is read-only: a glowing dot for bools, plain text for numbers and strings.
+  // Array types render their elements inline, matching the side-by-side
+  // pattern in Nepi_IF_PTX-Data.js.
   renderDatum(name, type, datum_msg, index) {
     const display_name = (datum_msg.display_name && datum_msg.display_name !== '') ? datum_msg.display_name : name
     const description = datum_msg.description || ''
@@ -144,71 +156,107 @@ class NepiAppControlsSandboxData extends Component {
     // value to. Default 2 when the datum does not carry a sane value.
     const decimals = (typeof datum_msg.round_display === 'number' && datum_msg.round_display >= 0) ? datum_msg.round_display : 2
 
-    // BOOL -- read-only indicator (green on, grey off). Never a Toggle.
+    // BOOL -- read-only glowing dot (green on, grey off). Never a Toggle.
     if (type === "Bool") {
-      return (
-        <Label title={display_name} key={name}>
-          <BooleanIndicator title={description} value={(datum_msg.value_bool === true)} />
-        </Label>
-      )
+      const on = (datum_msg.value_bool === true)
+      const value = <div title={description} style={on ? { ...Theme.dot, ...Theme.dotOn } : Theme.dot} />
+      return this.renderRow(name, display_name, name, value)
     }
 
-    // BOOLS -- one read-only indicator per element, in element order.
+    // BOOLS -- one read-only dot per element, in element order.
     if (type === "Bools") {
       const values = datum_msg.value_bools || []
-      return (
-        <Label title={display_name} key={name}>
-          <div>
-            {values.map((v, i) => (
-              <div key={name + '_' + i} style={{ display: "inline-block", marginRight: Styles.vars.spacing.regular }}>
-                <BooleanIndicator title={description} value={(v === true)} />
-              </div>
-            ))}
-          </div>
-        </Label>
+      const value = (
+        <div style={{ display: "flex", gap: "6px", justifyContent: "flex-end" }}>
+          {values.map((v, i) => (
+            <div key={name + '_' + i} title={description} style={(v === true) ? { ...Theme.dot, ...Theme.dotOn } : Theme.dot} />
+          ))}
+        </div>
       )
+      return this.renderRow(name, display_name, name, value)
     }
 
-    // STRING / INT / FLOAT -- a single read-only value box.
+    // STRING / INT / FLOAT -- a single read-only value.
     if (type === "String" || type === "Int" || type === "Float") {
       var value = ''
       if (type === "String") { value = datum_msg.value_string }
       else if (type === "Int") { value = datum_msg.value_int }
       else { value = round(datum_msg.value_float, decimals) }
-      return (
-        <Label title={display_name} key={name}>
-          <Input disabled title={description} style={{ width: "100%" }} value={value} />
-        </Label>
-      )
+      return this.renderRow(name, display_name, name, <span title={description}>{value}</span>)
     }
 
-    // STRINGS / INTS / FLOATS -- one read-only value box per element, in
-    // element order, side by side in one row.
+    // STRINGS / INTS / FLOATS -- one read-only value per element, in element
+    // order, slash-separated on the right of the row.
     if (type === "Strings" || type === "Ints" || type === "Floats") {
       var values = []
       if (type === "Strings") { values = datum_msg.value_strings || [] }
       else if (type === "Ints") { values = datum_msg.value_ints || [] }
       else { values = (datum_msg.value_floats || []).map((v) => round(v, decimals)) }
-      const boxWidth = (values.length > 0) ? Math.floor(90 / values.length) + "%" : "90%"
-      return (
-        <Label title={display_name} key={name}>
-          {values.map((v, i) => (
-            <Input
-              key={name + '_' + i}
-              disabled
-              title={description}
-              style={{ width: boxWidth, float: "left" }}
-              value={v}
-            />
-          ))}
-        </Label>
-      )
+      const value = <span title={description}>{values.join(" / ")}</span>
+      return this.renderRow(name, display_name, name, value)
     }
 
     return null
   }
 
+  // Extract one datum's display value as plain text, for the telemetry-tile
+  // strip (concept_4_glass_console.html's "Live Data Telemetry" panel of
+  // glowing number tiles). tile_field is { name, label, index } -- index picks
+  // one element out of an array-typed datum (e.g. ints_data[1]), undefined for
+  // a scalar datum. Returns null if the datum is not present or not scalar/
+  // array-of-scalar, so the caller can skip a tile rather than show garbage.
+  tileValue(status_msg, tile_field) {
+    if (status_msg == null) { return null }
+    const names = status_msg.data_name_list || []
+    const i = names.indexOf(tile_field.name)
+    if (i === -1) { return null }
+    const types = status_msg.data_type_list || []
+    const msgs = status_msg.data_msg_list || []
+    const type = types[i]
+    const datum_msg = msgs[i]
+    if (datum_msg == null) { return null }
+    const decimals = (typeof datum_msg.round_display === 'number' && datum_msg.round_display >= 0) ? datum_msg.round_display : 2
+
+    if (tile_field.index !== undefined) {
+      if (type === "Ints") { return (datum_msg.value_ints || [])[tile_field.index] }
+      if (type === "Floats") { return round((datum_msg.value_floats || [])[tile_field.index], decimals) }
+      if (type === "Strings") { return (datum_msg.value_strings || [])[tile_field.index] }
+      return null
+    }
+    if (type === "Int") { return datum_msg.value_int }
+    if (type === "Float") { return round(datum_msg.value_float, decimals) }
+    if (type === "String") { return datum_msg.value_string }
+    return null
+  }
+
+  // Telemetry-tile strip: a fixed set of scalar readouts picked out by
+  // tile_fields, each drawn as a glowing number-over-label tile. Purely a
+  // second view onto the same DataStatus this component's row-based render()
+  // already reads -- no separate subscription, no publish path.
+  renderTiles() {
+    const status_msg = this.state.status_msg
+    const tile_fields = this.props.tile_fields || []
+    return (
+      <div style={Theme.telemetryGrid}>
+        {tile_fields.map((tf) => {
+          const value = this.tileValue(status_msg, tf)
+          return (
+            <div style={Theme.telemetryTile} className="csbx-glass-panel" key={tf.name + '_' + (tf.index !== undefined ? tf.index : '')}>
+              <div style={Theme.telemetryNum}>{(value !== null && value !== undefined) ? String(value) : "—"}</div>
+              <div style={Theme.telemetryLbl}>{tf.label}</div>
+              <div style={Theme.sparkline} />
+            </div>
+          )
+        })}
+      </div>
+    )
+  }
+
   render() {
+    if (this.props.render_mode === "tiles") {
+      return this.renderTiles()
+    }
+
     const make_section = (this.props.make_section !== undefined) ? this.props.make_section : true
     const status_msg = this.state.status_msg
 
@@ -227,18 +275,13 @@ class NepiAppControlsSandboxData extends Component {
     const show_visibility_toggle = (this.props.show_visibility_toggle !== undefined) ? this.props.show_visibility_toggle : true
 
     const show_data_toggle = (allways_show_data === false && has_show_control === true && show_visibility_toggle === true) ? (
-      <Columns>
-        <Column>
-          <Label title="Show Data">
-            <Toggle
-              checked={show_data === true}
-              onClick={() => onChangeSwitchStateValue.bind(this)("show_data", this.state.show_data)}>
-            </Toggle>
-          </Label>
-        </Column>
-        <Column>
-        </Column>
-      </Columns>
+      <div style={{ ...Theme.row, borderBottom: "none" }}>
+        <div style={Theme.rowName}>Show Data</div>
+        <Toggle
+          checked={show_data === true}
+          onClick={() => onChangeSwitchStateValue.bind(this)("show_data", this.state.show_data)}>
+        </Toggle>
+      </div>
     ) : null
 
     // Data rows, one per non-hidden datum, in data_name_list order. Only built
@@ -250,17 +293,15 @@ class NepiAppControlsSandboxData extends Component {
       const msgs = status_msg.data_msg_list || []
       const hiddens = status_msg.data_hidden_list || []
       data_body = (
-        <Columns>
-          <Column>
-            {names.map((name, i) => {
-              const datum_msg = msgs[i]
-              if (datum_msg == null) { return null }
-              // Hidden data are not shown in the Data box.
-              if (hiddens[i] === true || datum_msg.hidden === true) { return null }
-              return this.renderDatum(name, types[i], datum_msg, i)
-            })}
-          </Column>
-        </Columns>
+        <div>
+          {names.map((name, i) => {
+            const datum_msg = msgs[i]
+            if (datum_msg == null) { return null }
+            // Hidden data are not shown in the Data box.
+            if (hiddens[i] === true || datum_msg.hidden === true) { return null }
+            return this.renderDatum(name, types[i], datum_msg, i)
+          })}
+        </div>
       )
     }
 
@@ -275,9 +316,10 @@ class NepiAppControlsSandboxData extends Component {
       return body
     }
     return (
-      <Section title={(this.props.title !== undefined) ? this.props.title : "DATA"}>
+      <div style={Theme.glassPanel} className="csbx-glass-panel">
+        <div style={Theme.panelCaption}>{(this.props.title !== undefined) ? this.props.title : "DATA"}</div>
         {body}
-      </Section>
+      </div>
     )
   }
 }

@@ -10,13 +10,9 @@ import React, { Component } from "react"
 import { observer, inject } from "mobx-react"
 
 import Toggle from "react-toggle"
-import Section from "./Section"
-import { Columns, Column } from "./Columns"
 import Select from "./Select"
-import Label from "./Label"
 import Input from "./Input"
-import Styles from "./Styles"
-import Button, { ButtonMenu } from "./Button"
+import Theme from "./NepiAppControlsSandbox-Theme"
 
 import { createMenuListFromStrList, setElementStyleModified, clearElementStyleModified } from "./Utilities"
 
@@ -148,12 +144,7 @@ class NepiAppControlsSandboxSettings extends Component {
     const name = this.state.selectedControlName
     const control_msg = this.getControlMsg(name)
     if (name === "" || name === "Select" || control_msg == null) {
-      return (
-        <Columns>
-          <Column>
-          </Column>
-        </Columns>
-      )
+      return null
     }
 
     const namespace = this.getNamespace()
@@ -169,60 +160,70 @@ class NepiAppControlsSandboxSettings extends Component {
     const descValue = (descKey in this.state.editValues) ? this.state.editValues[descKey] : description
 
     return (
-      <Columns>
-        <Column>
+      <div>
 
-          <div style={{ borderTop: "1px solid #ffffff", marginTop: Styles.vars.spacing.medium, marginBottom: Styles.vars.spacing.xs }} />
+        <div style={{ borderTop: `1px solid ${Theme.colors.glassBrd}`, marginTop: "24px", marginBottom: "4px" }} />
 
-          <Label title={"Control"} style={{ fontWeight: 'bold' }}>
-            <div style={{ display: "inline-block" }}>{name + "  (" + control_msg.type + ")"}</div>
-          </Label>
+        <div style={Theme.row}>
+          <div style={Theme.rowName}>Control</div>
+          <div style={{ fontSize: "12.5px", color: Theme.colors.textDim }}>{name + "  (" + control_msg.type + ")"}</div>
+        </div>
 
-          <Label title={"Display Name"}>
+        <div style={Theme.row}>
+          <div style={Theme.rowName}>Display Name</div>
+          <div style={{ width: "48%" }}>
             <Input
               id={'csbxset_' + dnKey}
-              style={{ width: "70%", float: "left" }}
+              className="csbx-input"
+              style={Theme.indField}
               value={dnValue}
               onChange={(e) => this.onFieldChange(dnKey, e)}
               onKeyDown={(e) => this.onFieldKey("/set_control_display_name", name, dnKey, e)}
             />
-          </Label>
+          </div>
+        </div>
 
-          <Label title={"Description"}>
+        <div style={Theme.row}>
+          <div style={Theme.rowName}>Description</div>
+          <div style={{ width: "48%" }}>
             <Input
               id={'csbxset_' + descKey}
-              style={{ width: "70%", float: "left" }}
+              className="csbx-input"
+              style={Theme.indField}
               value={descValue}
               onChange={(e) => this.onFieldChange(descKey, e)}
               onKeyDown={(e) => this.onFieldKey("/set_control_description", name, descKey, e)}
             />
-          </Label>
+          </div>
+        </div>
 
-          <Label title={"Hidden"}>
-            <Toggle
-              checked={hidden}
-              onClick={() => sendUpdateBoolMsg(namespace + "/set_control_hidden", name, !hidden)}
-            />
-          </Label>
+        <div style={Theme.row}>
+          <div style={Theme.rowName}>Hidden</div>
+          <Toggle
+            checked={hidden}
+            onClick={() => sendUpdateBoolMsg(namespace + "/set_control_hidden", name, !hidden)}
+          />
+        </div>
 
-          <Label title={"Display Order"}>
-            <ButtonMenu>
-              <Button onClick={() => sendUpdateOrderMsg(namespace + "/set_control_move", name, "top")}>{"Top"}</Button>
-              <Button onClick={() => sendUpdateOrderMsg(namespace + "/set_control_move", name, "up")}>{"Up"}</Button>
-              <Button onClick={() => sendUpdateOrderMsg(namespace + "/set_control_move", name, "down")}>{"Down"}</Button>
-              <Button onClick={() => sendUpdateOrderMsg(namespace + "/set_control_move", name, "bottom")}>{"Bottom"}</Button>
-            </ButtonMenu>
-          </Label>
+        <div style={Theme.row}>
+          <div style={Theme.rowName}>Display Order</div>
+          <div style={{ display: "flex", gap: "10px" }}>
+            <button style={Theme.btnGlass} onClick={() => sendUpdateOrderMsg(namespace + "/set_control_move", name, "top")}>{"Top"}</button>
+            <button style={Theme.btnGlass} onClick={() => sendUpdateOrderMsg(namespace + "/set_control_move", name, "up")}>{"Up"}</button>
+            <button style={Theme.btnGlass} onClick={() => sendUpdateOrderMsg(namespace + "/set_control_move", name, "down")}>{"Down"}</button>
+            <button style={Theme.btnGlass} onClick={() => sendUpdateOrderMsg(namespace + "/set_control_move", name, "bottom")}>{"Bottom"}</button>
+          </div>
+        </div>
 
-          <Label title={"Reset"}>
-            <ButtonMenu>
-              <Button onClick={() => sendUpdateStringMsg(namespace + "/set_control_reset", name, "")}>{"Reset"}</Button>
-              <Button onClick={() => sendUpdateStringMsg(namespace + "/set_control_factory_reset", name, "")}>{"Factory Reset"}</Button>
-            </ButtonMenu>
-          </Label>
+        <div style={Theme.row}>
+          <div style={Theme.rowName}>Reset</div>
+          <div style={{ display: "flex", gap: "10px" }}>
+            <button style={Theme.btnGlass} onClick={() => sendUpdateStringMsg(namespace + "/set_control_reset", name, "")}>{"Reset"}</button>
+            <button style={{ ...Theme.btnGlass, ...Theme.btnGlassBroken }} onClick={() => sendUpdateStringMsg(namespace + "/set_control_factory_reset", name, "")}>{"Factory Reset"}</button>
+          </div>
+        </div>
 
-        </Column>
-      </Columns>
+      </div>
     )
   }
 
@@ -232,24 +233,14 @@ class NepiAppControlsSandboxSettings extends Component {
     const { systemRunMode, systemAdminModeSet } = this.props.ros
     const show_settings = (systemRunMode === "develop" || systemAdminModeSet === true)
     if (show_settings === false) {
-      return (
-        <Columns>
-          <Column>
-          </Column>
-        </Columns>
-      )
+      return null
     }
 
     const make_section = (this.props.make_section !== undefined) ? this.props.make_section : true
     const status_msg = this.state.status_msg
 
     if (status_msg == null) {
-      return (
-        <Columns>
-          <Column>
-          </Column>
-        </Columns>
-      )
+      return null
     }
 
     const names = status_msg.controls_name_list || []
@@ -257,23 +248,20 @@ class NepiAppControlsSandboxSettings extends Component {
     const body = (
       <React.Fragment>
 
-        <Columns>
-          <Column>
-
-            <Label title={"Select Control"}>
-              <Select
-                id="selectedControlName"
-                onChange={this.updateSelectedControl}
-                value={this.state.selectedControlName}
-              >
-                {createMenuListFromStrList(names, false, [], ['Select'], [])}
-              </Select>
-            </Label>
-
-          </Column>
-          <Column>
-          </Column>
-        </Columns>
+        <div style={Theme.row}>
+          <div style={Theme.rowName}>Select Control</div>
+          <div style={{ width: "48%" }}>
+            <Select
+              id="selectedControlName"
+              className="csbx-select"
+              style={Theme.indField}
+              onChange={this.updateSelectedControl}
+              value={this.state.selectedControlName}
+            >
+              {createMenuListFromStrList(names, false, [], ['Select'], [])}
+            </Select>
+          </div>
+        </div>
 
         {this.renderSelectedControl()}
 
@@ -284,9 +272,10 @@ class NepiAppControlsSandboxSettings extends Component {
       return body
     }
     return (
-      <Section title={(this.props.title !== undefined) ? this.props.title : "CONTROLS SETTINGS"}>
+      <div style={Theme.glassPanel} className="csbx-glass-panel">
+        <div style={Theme.panelCaption}>{(this.props.title !== undefined) ? this.props.title : "CONTROLS SETTINGS"}</div>
         {body}
-      </Section>
+      </div>
     )
   }
 }

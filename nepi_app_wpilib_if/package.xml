@@ -21,6 +21,15 @@
   <exec_depend>std_msgs</exec_depend>
   <exec_depend>message_runtime</exec_depend>
 
+  <!-- The app node imports nepi_sdk wrappers, MsgIF/NodeClassIF/ControlsIF,
+       MotorsDeviceIF and RBXRobotIF from nepi_api, and MotorStatus /
+       MotorsStatus / MotorControl / AxisControls from nepi_interfaces. The
+       vendored ntcore under vendor/ carries the NetworkTables client itself, so
+       there is no rosdep key for it. -->
+  <exec_depend>nepi_sdk</exec_depend>
+  <exec_depend>nepi_api</exec_depend>
+  <exec_depend>nepi_interfaces</exec_depend>
+
   <export>
   </export>
 </package>

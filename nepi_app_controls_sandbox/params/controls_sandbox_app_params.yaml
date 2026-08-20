@@ -15,5 +15,7 @@ RUI_DICT:
   - NepiAppControlsSandbox-Data.js
   - NepiAppControlsSandbox-Settings.js
   - NepiAppControlsSandbox-Tabs.js
+  - NepiAppControlsSandbox-Theme.js
+  - NepiAppControlsSandbox-GlassConsole.css
   rui_main_file: NepiAppControlsSandbox.js
   rui_main_class: NepiAppControlsSandbox

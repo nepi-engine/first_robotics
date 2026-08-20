@@ -9,36 +9,41 @@
 import React, { Component } from "react"
 import { observer, inject } from "mobx-react"
 
-import Section from "./Section"
-import { Columns, Column } from "./Columns"
-import Label from "./Label"
-
 import NepiIFConnectData from "./Nepi_IF_ConnectData"
 
 import NepiAppControlsSandboxControls from "./NepiAppControlsSandbox-Controls"
 import NepiAppControlsSandboxData from "./NepiAppControlsSandbox-Data"
 import NepiAppControlsSandboxSettings from "./NepiAppControlsSandbox-Settings"
 import NepiAppControlsSandboxTabs from "./NepiAppControlsSandbox-Tabs"
+import Theme from "./NepiAppControlsSandbox-Theme"
+import "./NepiAppControlsSandbox-GlassConsole.css"
 
 
 @inject("ros")
 @observer
 
-// Controls Sandbox main panel: an image viewer in the left column, and in the
-// right column an Image connect selector, a Controls box (one widget per
-// control), a read-only Data box (one row per datum) and, in develop run mode or
-// when admin mode is set, a Controls Settings box below them.
+// Controls Sandbox main panel, styled as Glass Console
+// (UI_mockups/concept_4_glass_console.html + style_guide_4_glass_console.html):
+// translucent panels floating over a fixed dark radial-gradient background.
+// The left column ("imgcol") stacks the Connections panel (connect selector,
+// image viewer, hint caption) and a Live Data Telemetry tile strip; the right
+// column ("sidecol") holds the Choices/Actions/Values/Data tab group and, in
+// develop run mode or when admin mode is set, a Controls Settings box below
+// it. NepiAppControlsSandbox-Theme.js carries every color/spacing token this
+// file and its siblings use; NepiAppControlsSandbox-GlassConsole.css carries
+// the handful of overrides inline styles cannot reach (react-toggle,
+// rc-slider). Both are scoped to this app only -- see their own headers.
 //
-// The image row follows nepi_app_auto_move exactly. Its connect namespace is
-// <app>/image_connect, owned by the ConnectImageIF in
+// The image column follows nepi_app_auto_move for the connect wiring. Its
+// connect namespace is <app>/image_connect, owned by the ConnectImageIF in
 // controls_sandbox_app_node.py, and the connect name held in state below must
 // match that node-side IMAGE_CONNECT_NAME character for character. Two
-// components share that one namespace: the selector instance in the right column
-// runs with show_data={false}, and a SECOND Nepi_IF_ConnectData in the left
-// column runs with show_selector={false} show_data={true} and is what renders
-// Nepi_IF_ImageViewer. The viewer topic therefore comes from the connect
-// status, not from this app's status message, so ControlsSandboxStatus.msg
-// carries no image topic field.
+// Nepi_IF_ConnectData instances share that one namespace: the selector strip
+// runs with show_data={false}, and the viewer below it runs with
+// show_selector={false} show_data={true}, so whichever topic the operator
+// picks in the strip is what streams in the viewer. The viewer topic
+// therefore comes from the connect status, not from this app's status
+// message, so ControlsSandboxStatus.msg carries no image topic field.
 class NepiAppControlsSandbox extends Component {
   constructor(props) {
     super(props)
@@ -65,8 +70,7 @@ class NepiAppControlsSandbox extends Component {
     this.getConnectNamespace = this.getConnectNamespace.bind(this)
     this.updateStatusListener = this.updateStatusListener.bind(this)
     this.statusListener = this.statusListener.bind(this)
-    this.renderImageViewer = this.renderImageViewer.bind(this)
-    this.renderConnections = this.renderConnections.bind(this)
+    this.renderImageColumn = this.renderImageColumn.bind(this)
     this.renderControlsDataTabs = this.renderControlsDataTabs.bind(this)
   }
 
@@ -154,60 +158,73 @@ class NepiAppControlsSandbox extends Component {
     }
   }
 
-  // The image viewer for the left column: a Nepi_IF_ConnectData on the image
-  // connect namespace carrying only the data panel (show_selector={false}
-  // show_data={true}). Its renderData() reads the image topic off
-  // ConnectIFStatus.selected_topic and mounts Nepi_IF_ImageViewer on it, and it
-  // already handles the unselected case -- renderData() returns an empty
-  // Columns/Column when selected_topic is null or 'None', so no viewer is
-  // mounted on a topic that does not exist. Sharing the namespace with the
-  // selector row rather than adding a second connect IF keeps one selection
-  // driving both halves of the row: whatever the operator picks on the right is
-  // what streams on the left.
-  renderImageViewer() {
+  // Left column: a "Connections" glass panel (selector, viewer backdrop, hint
+  // caption) followed by a "Live Data Telemetry" glass panel of glowing tiles
+  // -- concept_4_glass_console.html's .imgcol. Two Nepi_IF_ConnectData
+  // instances still share the one image_connect namespace exactly as before:
+  // this method mounts the selector (show_selector={true} show_data={false})
+  // above the viewer (show_selector={false} show_data={true}), so whichever
+  // topic the operator picks in the top strip is what streams below it. Both
+  // run make_section={false} since the panel chrome is drawn here.
+  renderImageColumn() {
+    const connectNamespace = this.getConnectNamespace(this.state.imageConnectName)
+    const dataNamespace = this.getDataNamespace()
+
+    // Live Data Telemetry strip -- concept_4_glass_console.html's glowing
+    // number tiles, a curated highlight of 4 of the 8 demo data fields (the
+    // full set stays reachable, unfiltered, in the Data tab to the right).
+    // ints_data[1] is the second element of the demo_ints_data array
+    // (createDataInitDict() writes [count, -count]), shown as its own tile.
+    const tile_fields = [
+      { name: "demo_int_data", label: "demo_int_data" },
+      { name: "demo_float_data", label: "demo_float_data" },
+      { name: "demo_ints_data", label: "ints[1]", index: 1 },
+      { name: "demo_string_data", label: "demo_string_data" }
+    ]
+
     return (
-      <Columns>
-        <Column>
+      <React.Fragment>
+        <div style={Theme.glassPanel} className="csbx-glass-panel">
+          <div style={Theme.panelCaption}>Connections</div>
+
           <NepiIFConnectData
-            namespace={this.getConnectNamespace(this.state.imageConnectName)}
+            namespace={connectNamespace}
             title={"Image"}
-            show_selector={false}
-            show_data={true}
+            show_selector={true}
+            show_data={false}
             make_section={false}
           />
-        </Column>
-      </Columns>
-    )
-  }
 
-  // The image source selector, at the top of the right column.
-  //
-  // show_connect_header={true} is what titles the row: the component renders its
-  // title prop and its green "Connected" BooleanIndicator on one line ABOVE the
-  // Select, both driven by the connect namespace's ConnectIFStatus, so the page
-  // renders no bold Label of its own. make_section={false} keeps the component
-  // from drawing a bordered box inside the Section this method already opens.
-  renderConnections() {
-    return (
-      <Section title={"CONNECTIONS"}>
+          <div style={Theme.viewer}>
+            <NepiIFConnectData
+              namespace={connectNamespace}
+              title={"Image"}
+              show_selector={false}
+              show_data={true}
+              make_section={false}
+            />
+          </div>
 
-        <NepiIFConnectData
-          namespace={this.getConnectNamespace(this.state.imageConnectName)}
-          title={"Image"}
-          show_selector={true}
-          show_data={false}
-          show_connect_header={true}
-          make_section={false}
-        />
-        <Label title={"Its stream feeds the viewer"}/>
+          <div style={Theme.hint}>Its stream feeds the viewer above.</div>
+        </div>
 
-      </Section>
+        <div style={Theme.glassPanel} className="csbx-glass-panel">
+          <div style={Theme.panelCaption}>Live Data Telemetry</div>
+          <NepiAppControlsSandboxData
+            key={dataNamespace + "_tiles"}
+            namespace={dataNamespace}
+            render_mode="tiles"
+            tile_fields={tile_fields}
+          />
+        </div>
+      </React.Fragment>
     )
   }
 
   // The CONTROLS SANDBOX and DATA SANDBOX boxes, presented as four tabs
-  // (Choices, Actions, Values, Data) instead of two stacked Sections. Purely a
-  // RUI-side regrouping: createControlsInitDict() / createDataInitDict() in
+  // (Choices, Actions, Values, Data) inside one glass panel
+  // (NepiAppControlsSandbox-Tabs.js). Purely a RUI-side regrouping:
+  // createControlsInitDict() / createDataInitDict() in
   // controls_sandbox_app_node.py are unchanged, and every control keeps
   // exactly its current wiring -- each tab mounts the same
   // NepiAppControlsSandboxControls / -Data components used before, just with a
@@ -218,7 +235,7 @@ class NepiAppControlsSandbox extends Component {
   // FloatSliders); Data holds the entire read-only Data Sandbox box
   // unfiltered. show_visibility_toggle={false} on every instance suppresses
   // the per-box "Show Controls"/"Show Data" toggle so it does not repeat once
-  // per tab -- concept_3_tabbed_groups.html has no such toggle at all.
+  // per tab.
   renderControlsDataTabs() {
     const controlsNamespace = this.getControlsNamespace()
     const dataNamespace = this.getDataNamespace()
@@ -281,6 +298,13 @@ class NepiAppControlsSandbox extends Component {
     )
   }
 
+  // Whole-page Glass Console chrome -- concept_4_glass_console.html's <body>:
+  // a fixed dark radial-gradient background behind everything, a topbar with
+  // the app title and a "GLASS CONSOLE" badge, then the 55%/45% imgcol/sidecol
+  // split. The "csbx-glass" class is the one hook NepiAppControlsSandbox
+  // -GlassConsole.css scopes every rule under, so react-toggle and rc-slider
+  // (third-party, shared with every other NEPI app) are only reskinned inside
+  // this app's own subtree.
   render() {
     const controlsNamespace = this.getControlsNamespace()
 
@@ -289,40 +313,39 @@ class NepiAppControlsSandbox extends Component {
     const show_settings = (systemRunMode === "develop" || systemAdminModeSet === true)
 
     return (
-      <React.Fragment>
-        <Columns>
-          <Column>
+      <div className="csbx-glass" style={{ ...Theme.pageBackground, padding: "16px", borderRadius: "16px" }}>
 
-            <div style={{ display: 'flex' }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "4px 6px 18px" }}>
+          <div style={{ fontSize: "17px", fontWeight: 700, background: `linear-gradient(90deg, #fff, ${Theme.colors.cyan})`, WebkitBackgroundClip: "text", backgroundClip: "text", color: "transparent" }}>
+            ◈ CONTROLS SANDBOX
+          </div>
+          <div style={{ fontSize: "10px", fontWeight: 700, letterSpacing: "1px", padding: "5px 12px", borderRadius: "20px", color: Theme.colors.cyan, border: `1px solid ${Theme.colors.glassBrd}`, background: Theme.colors.glass }}>
+            GLASS CONSOLE
+          </div>
+        </div>
 
-              <div style={{ width: "75%" }}>
-                {this.renderImageViewer()}
-              </div>
+        <div style={{ display: "flex", gap: "20px" }}>
 
-              <div style={{ width: '2%' }}>
-                {}
-              </div>
+          <div style={{ width: "55%" }}>
+            {this.renderImageColumn()}
+          </div>
 
-              <div style={{ width: "23%" }}>
+          <div style={{ width: "45%" }}>
 
-                {this.renderConnections()}
+            {this.renderControlsDataTabs()}
 
-                {this.renderControlsDataTabs()}
+            { (show_settings === true) ?
+              <NepiAppControlsSandboxSettings
+                namespace={controlsNamespace}
+                make_section={true}
+              />
+              : null }
 
-                { (show_settings === true) ?
-                  <NepiAppControlsSandboxSettings
-                    namespace={controlsNamespace}
-                    make_section={true}
-                  />
-                  : null }
+          </div>
 
-              </div>
+        </div>
 
-            </div>
-
-          </Column>
-        </Columns>
-      </React.Fragment>
+      </div>
     )
   }
 }

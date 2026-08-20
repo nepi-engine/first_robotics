@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Style Guide 1 — Field Industrial</title>
+<style>
+  :root {
+    --ink: #14181b;
+    --paper: #f3f1ea;
+    --panel: #ffffff;
+    --line: #8d9199;
+    --line-strong: #14181b;
+    --amber: #d97b06;
+    --amber-dark: #9c5804;
+    --safety-green: #1f7a3d;
+    --safety-red: #b3261e;
+    --steel: #445063;
+    --mono: "IBM Plex Mono", "Consolas", monospace;
+    --sans: "IBM Plex Sans", Arial, Helvetica, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 15px;
+    line-height: 1.5;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 40px 32px 96px; }
+  header.hero {
+    border: 3px solid var(--ink);
+    padding: 28px 32px;
+    margin-bottom: 40px;
+    background: var(--panel);
+    position: relative;
+  }
+  header.hero::before {
+    content: "STYLE GUIDE 01";
+    position: absolute; top: -13px; left: 28px;
+    background: var(--amber); color: var(--ink);
+    font-family: var(--mono); font-size: 12px; font-weight: 700;
+    letter-spacing: 2px; padding: 3px 10px; border: 2px solid var(--ink);
+  }
+  header.hero h1 { margin: 8px 0 6px; font-size: 34px; letter-spacing: -0.5px; }
+  header.hero p.tag { font-family: var(--mono); color: var(--steel); margin: 0; font-size: 14px; letter-spacing: 0.5px; }
+
+  section.block { margin-bottom: 48px; }
+  section.block h2 {
+    font-size: 13px; text-transform: uppercase; letter-spacing: 2px;
+    color: var(--amber-dark); border-bottom: 2px solid var(--ink); padding-bottom: 8px; margin-bottom: 20px;
+  }
+  p.principle { max-width: 760px; color: var(--steel); }
+
+  .swatches { display: flex; flex-wrap: wrap; gap: 16px; }
+  .swatch { width: 150px; border: 2px solid var(--ink); background: var(--panel); }
+  .swatch .fill { height: 70px; border-bottom: 2px solid var(--ink); }
+  .swatch .meta { padding: 8px 10px; font-family: var(--mono); font-size: 12px; }
+  .swatch .meta .name { font-weight: 700; text-transform: uppercase; letter-spacing: 1px; font-size: 11px; }
+
+  .type-row { display: flex; align-items: baseline; gap: 20px; border-bottom: 1px solid var(--line); padding: 14px 0; }
+  .type-row .label { width: 160px; font-family: var(--mono); font-size: 12px; color: var(--steel); flex-shrink: 0; }
+  .type-row .sample.h1 { font-size: 34px; font-weight: 700; }
+  .type-row .sample.h2 { font-size: 24px; font-weight: 700; }
+  .type-row .sample.h3 { font-size: 18px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; }
+  .type-row .sample.body { font-size: 15px; }
+  .type-row .sample.mono { font-family: var(--mono); font-size: 14px; }
+  .type-row .sample.small { font-size: 12px; color: var(--steel); }
+
+  .spacing-row { display: flex; align-items: center; gap: 16px; margin-bottom: 10px; font-family: var(--mono); font-size: 12px; }
+  .spacing-row .bar { background: var(--amber); height: 14px; border: 1px solid var(--ink); }
+  .spacing-row .label { width: 90px; }
+
+  .comp-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+  .comp-card { border: 2px solid var(--ink); background: var(--panel); padding: 18px; }
+  .comp-card .cap { font-family: var(--mono); font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--steel); margin-bottom: 12px; }
+
+  select.ind, input.ind {
+    width: 100%; font-family: var(--sans); font-size: 14px; padding: 8px 10px;
+    border: 2px solid var(--ink); background: var(--panel); color: var(--ink);
+  }
+  input.ind[disabled] { background: #e8e6dd; color: var(--steel); border-color: var(--line); }
+
+  .btn-ind {
+    font-family: var(--mono); font-weight: 700; text-transform: uppercase; letter-spacing: 1px;
+    border: 2px solid var(--ink); background: var(--amber); color: var(--ink);
+    padding: 9px 18px; cursor: pointer; font-size: 13px;
+  }
+  .btn-ind.ghost { background: var(--panel); }
+  .btn-ind.danger { background: var(--safety-red); color: #fff; border-color: var(--safety-red); }
+
+  .toggle-ind { width: 46px; height: 24px; border: 2px solid var(--ink); background: var(--panel); position: relative; cursor: pointer; display: inline-block; }
+  .toggle-ind.on { background: var(--safety-green); }
+  .toggle-ind .thumb { width: 16px; height: 16px; background: var(--ink); position: absolute; top: 2px; left: 2px; transition: left .12s; }
+  .toggle-ind.on .thumb { left: 24px; background: #fff; }
+
+  .chip-row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .chip { font-family: var(--mono); font-size: 12px; border: 2px solid var(--ink); padding: 5px 12px; background: var(--panel); }
+  .chip.on { background: var(--steel); color: #fff; border-color: var(--steel); }
+
+  .dot-row { display: flex; align-items: center; gap: 8px; font-family: var(--mono); font-size: 13px; }
+  .dot { width: 12px; height: 12px; border: 2px solid var(--ink); background: var(--line); }
+  .dot.on { background: var(--safety-green); }
+  .dot.off { background: var(--safety-red); }
+
+  .slider-ind { width: 100%; }
+  .slider-ind input[type=range] { width: 100%; accent-color: var(--amber-dark); }
+  .readout { font-family: var(--mono); font-size: 12px; text-align: right; color: var(--steel); }
+
+  .rules-list { font-family: var(--mono); font-size: 13px; color: var(--steel); line-height: 2; }
+  .rules-list b { color: var(--ink); }
+
+  footer.note {
+    margin-top: 56px; border-top: 3px solid var(--ink); padding-top: 16px;
+    font-family: var(--mono); font-size: 12px; color: var(--steel);
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="hero">
+    <h1>Field Industrial</h1>
+    <p class="tag">HIGH-CONTRAST · DAYLIGHT-READABLE · GLOVE-OPERABLE — an evolution of NEPI's current token set, not a departure from it</p>
+  </header>
+
+  <section class="block">
+    <h2>Principle</h2>
+    <p class="principle">
+      NEPI devices are operated outdoors, in vehicles, and on job sites — often through gloves, on a
+      cracked tablet screen, in direct sun. This guide keeps the real app's existing hue family
+      (steel greys, safety amber/green/red) but pushes every edge, border and label toward
+      maximum legibility: thick 2–3px borders instead of hairlines, all-caps monospace labels for
+      anything numeric or state-related, and a paper-white background instead of pure white to cut
+      glare. Nothing here is decorative — every visual choice earns its place by being easier to
+      read at a glance from arm's length.
+    </p>
+  </section>
+
+  <section class="block">
+    <h2>Color</h2>
+    <div class="swatches">
+      <div class="swatch"><div class="fill" style="background:var(--ink)"></div><div class="meta"><div class="name">Ink</div>#14181b</div></div>
+      <div class="swatch"><div class="fill" style="background:var(--paper)"></div><div class="meta"><div class="name">Paper</div>#f3f1ea</div></div>
+      <div class="swatch"><div class="fill" style="background:var(--steel)"></div><div class="meta"><div class="name">Steel</div>#445063</div></div>
+      <div class="swatch"><div class="fill" style="background:var(--amber)"></div><div class="meta"><div class="name">Amber (accent)</div>#d97b06</div></div>
+      <div class="swatch"><div class="fill" style="background:var(--safety-green)"></div><div class="meta"><div class="name">Safety Green</div>#1f7a3d</div></div>
+      <div class="swatch"><div class="fill" style="background:var(--safety-red)"></div><div class="meta"><div class="name">Safety Red</div>#b3261e</div></div>
+    </div>
+  </section>
+
+  <section class="block">
+    <h2>Typography</h2>
+    <div class="type-row"><div class="label">H1 / 34px / 700</div><div class="sample h1">Controls Sandbox</div></div>
+    <div class="type-row"><div class="label">H2 / 24px / 700</div><div class="sample h2">Data Sandbox</div></div>
+    <div class="type-row"><div class="label">H3 / 18px caps</div><div class="sample h3">Section Title</div></div>
+    <div class="type-row"><div class="label">Body / 15px</div><div class="sample body">Free-form text value for demo_string.</div></div>
+    <div class="type-row"><div class="label">Mono / 14px</div><div class="sample mono">demo_float_slider = 50.0</div></div>
+    <div class="type-row"><div class="label">Small / 12px</div><div class="sample small">Integer value within [0, 10]</div></div>
+  </section>
+
+  <section class="block">
+    <h2>Spacing scale</h2>
+    <div class="spacing-row"><div class="label">xs — 4px</div><div class="bar" style="width:4px"></div></div>
+    <div class="spacing-row"><div class="label">sm — 8px</div><div class="bar" style="width:8px"></div></div>
+    <div class="spacing-row"><div class="label">md — 16px</div><div class="bar" style="width:16px"></div></div>
+    <div class="spacing-row"><div class="label">lg — 24px</div><div class="bar" style="width:24px"></div></div>
+    <div class="spacing-row"><div class="label">xl — 38px</div><div class="bar" style="width:38px"></div></div>
+  </section>
+
+  <section class="block">
+    <h2>Components</h2>
+    <div class="comp-grid">
+
+      <div class="comp-card">
+        <div class="cap">Select / Menu</div>
+        <select class="ind"><option>Off</option><option selected>Low</option><option>High</option></select>
+      </div>
+
+      <div class="comp-card">
+        <div class="cap">Text input (editable)</div>
+        <input class="ind" type="text" value="hello nepi">
+      </div>
+
+      <div class="comp-card">
+        <div class="cap">Text input (read-only datum)</div>
+        <input class="ind" type="text" disabled value="14:22:07">
+      </div>
+
+      <div class="comp-card">
+        <div class="cap">Buttons</div>
+        <div style="display:flex; gap:10px; flex-wrap:wrap;">
+          <button class="btn-ind">Trigger</button>
+          <button class="btn-ind ghost">Reset</button>
+          <button class="btn-ind danger">Factory Reset</button>
+        </div>
+      </div>
+
+      <div class="comp-card">
+        <div class="cap">Toggle (Bool control)</div>
+        <div style="display:flex; gap:16px; align-items:center;">
+          <div class="toggle-ind on"><div class="thumb"></div></div>
+          <div class="toggle-ind"><div class="thumb"></div></div>
+        </div>
+      </div>
+
+      <div class="comp-card">
+        <div class="cap">Multi-select chips (Selections)</div>
+        <div class="chip-row">
+          <div class="chip on">Red</div><div class="chip">Green</div><div class="chip on">Blue</div>
+        </div>
+      </div>
+
+      <div class="comp-card">
+        <div class="cap">Boolean indicator (read-only datum)</div>
+        <div style="display:flex; gap:16px;">
+          <div class="dot-row"><div class="dot on"></div>TRUE</div>
+          <div class="dot-row"><div class="dot off"></div>FALSE</div>
+        </div>
+      </div>
+
+      <div class="comp-card">
+        <div class="cap">Slider (FloatSlider)</div>
+        <div class="slider-ind">
+          <input type="range" min="0" max="100" value="50">
+          <div class="readout">50.0 / 100.0</div>
+        </div>
+      </div>
+
+      <div class="comp-card">
+        <div class="cap">Status chip</div>
+        <div class="chip-row">
+          <div class="chip" style="background:var(--safety-green); color:#fff; border-color:var(--safety-green);">CONFIRMED</div>
+          <div class="chip" style="background:var(--amber); border-color:var(--amber);">PENDING</div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <section class="block">
+    <h2>Rules</h2>
+    <div class="rules-list">
+      <div>— Borders are always <b>2px or 3px solid ink</b>, never a hairline, never rounded.</div>
+      <div>— Labels for anything numeric, timestamped, or type-related are set in <b>monospace, uppercase</b>.</div>
+      <div>— Amber is reserved for the single primary accent per view; green/red are reserved for confirmed-state and danger only, never decoration.</div>
+      <div>— Background is warm paper (#f3f1ea), not pure white, to reduce glare in direct sun.</div>
+      <div>— No shadows, no gradients, no border-radius — every edge is a straight, deliberate cut.</div>
+    </div>
+  </section>
+
+  <footer class="note">
+    Field Industrial extends the color tokens already in <b>Styles.js</b> (grey1/grey2/blue/green/red)
+    rather than replacing them — see UI_mockups/README.md for the full rationale and the concept page
+    that applies this guide to the real Controls Sandbox layout.
+  </footer>
+
+</div>
+</body>
+</html>

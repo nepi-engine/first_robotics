@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Style Guide 2 — Soft Neumorphic</title>
+<style>
+  :root {
+    --base: #e6e9ef;
+    --text: #3a4048;
+    --text-soft: #8790a0;
+    --accent: #6c8bf5;
+    --accent-soft: #c8d3fb;
+    --good: #4fb286;
+    --bad: #e3717a;
+    --shadow-d: #c3c8d1;
+    --shadow-l: #ffffff;
+    --sans: "Segoe UI", "Poppins", Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--base); color: var(--text); font-family: var(--sans); font-size: 15px; line-height: 1.55; }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 44px 32px 100px; }
+
+  .neu-out { background: var(--base); border-radius: 24px; box-shadow: 9px 9px 18px var(--shadow-d), -9px -9px 18px var(--shadow-l); }
+  .neu-in { background: var(--base); border-radius: 16px; box-shadow: inset 5px 5px 10px var(--shadow-d), inset -5px -5px 10px var(--shadow-l); }
+
+  header.hero { padding: 32px 36px; margin-bottom: 44px; }
+  header.hero .kicker { font-size: 13px; font-weight: 600; letter-spacing: 2px; color: var(--accent); text-transform: uppercase; }
+  header.hero h1 { margin: 10px 0 8px; font-size: 34px; font-weight: 700; }
+  header.hero p { margin: 0; color: var(--text-soft); max-width: 720px; }
+
+  section.block { margin-bottom: 48px; padding: 0 4px; }
+  section.block h2 {
+    font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.5px;
+    color: var(--text-soft); margin-bottom: 20px;
+  }
+
+  .swatches { display: flex; flex-wrap: wrap; gap: 20px; }
+  .swatch { width: 150px; padding: 16px; text-align: center; }
+  .swatch .fill { height: 60px; border-radius: 14px; margin-bottom: 12px; }
+  .swatch .name { font-weight: 700; font-size: 13px; }
+  .swatch .hex { font-size: 11px; color: var(--text-soft); }
+
+  .type-row { display: flex; align-items: baseline; gap: 20px; padding: 16px 24px; margin-bottom: 10px; }
+  .type-row .label { width: 150px; font-size: 12px; color: var(--text-soft); flex-shrink: 0; }
+  .type-row .sample.h1 { font-size: 32px; font-weight: 700; }
+  .type-row .sample.h2 { font-size: 22px; font-weight: 700; }
+  .type-row .sample.h3 { font-size: 16px; font-weight: 600; }
+  .type-row .sample.body { font-size: 15px; }
+  .type-row .sample.small { font-size: 12px; color: var(--text-soft); }
+
+  .spacing-row { display: flex; align-items: center; gap: 16px; margin-bottom: 12px; font-size: 12px; color: var(--text-soft); }
+  .spacing-row .bar { background: var(--accent-soft); border-radius: 8px; height: 16px; }
+  .spacing-row .label { width: 90px; }
+
+  .comp-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; }
+  .comp-card { padding: 22px; }
+  .comp-card .cap { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: var(--text-soft); margin-bottom: 14px; }
+
+  select.ind, input.ind {
+    width: 100%; font-family: var(--sans); font-size: 14px; padding: 10px 14px;
+    border: none; border-radius: 12px; background: var(--base); color: var(--text);
+    box-shadow: inset 4px 4px 8px var(--shadow-d), inset -4px -4px 8px var(--shadow-l);
+  }
+  input.ind[disabled] { color: var(--text-soft); }
+
+  .btn-neu {
+    border: none; border-radius: 14px; background: var(--base); color: var(--text);
+    padding: 12px 22px; font-weight: 600; font-size: 14px; cursor: pointer;
+    box-shadow: 6px 6px 12px var(--shadow-d), -6px -6px 12px var(--shadow-l);
+  }
+  .btn-neu.accent { color: var(--accent); }
+  .btn-neu.danger { color: var(--bad); }
+  .btn-neu:active { box-shadow: inset 4px 4px 8px var(--shadow-d), inset -4px -4px 8px var(--shadow-l); }
+
+  .toggle-neu {
+    width: 56px; height: 30px; border-radius: 15px; position: relative; cursor: pointer; display: inline-block;
+    background: var(--base); box-shadow: inset 4px 4px 8px var(--shadow-d), inset -4px -4px 8px var(--shadow-l);
+  }
+  .toggle-neu .thumb {
+    width: 22px; height: 22px; border-radius: 50%; position: absolute; top: 4px; left: 4px; transition: left .15s;
+    background: var(--base); box-shadow: 3px 3px 6px var(--shadow-d), -3px -3px 6px var(--shadow-l);
+  }
+  .toggle-neu.on .thumb { left: 30px; background: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+
+  .pill-row { display: flex; gap: 10px; flex-wrap: wrap; }
+  .pill { font-size: 12px; font-weight: 600; padding: 8px 16px; border-radius: 20px; background: var(--base); color: var(--text-soft);
+    box-shadow: 3px 3px 6px var(--shadow-d), -3px -3px 6px var(--shadow-l); }
+  .pill.on { color: #fff; background: var(--accent); box-shadow: none; }
+
+  .dot-row { display: flex; align-items: center; gap: 10px; font-size: 13px; }
+  .dot { width: 14px; height: 14px; border-radius: 50%; background: var(--base);
+    box-shadow: inset 2px 2px 4px var(--shadow-d), inset -2px -2px 4px var(--shadow-l); }
+  .dot.on { background: var(--good); box-shadow: 0 0 0 4px rgba(79,178,134,0.18); }
+
+  .slider-neu input[type=range] { width: 100%; accent-color: var(--accent); }
+  .readout { font-size: 12px; text-align: right; color: var(--text-soft); }
+
+  .rules-list { font-size: 13px; color: var(--text-soft); line-height: 2; }
+  .rules-list b { color: var(--text); }
+
+  footer.note { margin-top: 56px; padding: 20px 24px; font-size: 12px; color: var(--text-soft); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="hero neu-out">
+    <div class="kicker">Style Guide 02</div>
+    <h1>Soft Neumorphic</h1>
+    <p>A tactile, single-surface language where every control looks pressed into or raised out of one
+    continuous background — built for a calm, low-glare indoor or lab console rather than the field.</p>
+  </header>
+
+  <section class="block">
+    <h2>Principle</h2>
+    <p style="color:var(--text-soft); max-width:760px;">
+      Rather than boxes with borders, every element here is the <em>same material</em ​as the
+      background, differentiated only by light and shadow: raised for anything interactive at rest,
+      inset for anything you're currently "pressing into" (an active toggle, a focused field, a
+      read-only value). This suits a lab bench or workstation UI — mouse-and-trackpad precision, soft
+      ambient lighting, and a desire for the interface to feel calm rather than alarm-panel loud. It
+      trades the Field Industrial guide's high-contrast urgency for approachability.
+    </p>
+  </section>
+
+  <section class="block">
+    <h2>Color</h2>
+    <div class="swatches">
+      <div class="swatch neu-out"><div class="fill" style="background:var(--base)"></div><div class="name">Base</div><div class="hex">#e6e9ef</div></div>
+      <div class="swatch neu-out"><div class="fill" style="background:var(--text)"></div><div class="name">Text</div><div class="hex">#3a4048</div></div>
+      <div class="swatch neu-out"><div class="fill" style="background:var(--accent)"></div><div class="name">Accent</div><div class="hex">#6c8bf5</div></div>
+      <div class="swatch neu-out"><div class="fill" style="background:var(--accent-soft)"></div><div class="name">Accent Soft</div><div class="hex">#c8d3fb</div></div>
+      <div class="swatch neu-out"><div class="fill" style="background:var(--good)"></div><div class="name">Confirmed</div><div class="hex">#4fb286</div></div>
+      <div class="swatch neu-out"><div class="fill" style="background:var(--bad)"></div><div class="name">Danger</div><div class="hex">#e3717a</div></div>
+    </div>
+  </section>
+
+  <section class="block">
+    <h2>Typography</h2>
+    <div class="type-row neu-in"><div class="label">H1 / 32px / 700</div><div class="sample h1">Controls Sandbox</div></div>
+    <div class="type-row neu-in"><div class="label">H2 / 22px / 700</div><div class="sample h2">Data Sandbox</div></div>
+    <div class="type-row neu-in"><div class="label">H3 / 16px / 600</div><div class="sample h3">Section title</div></div>
+    <div class="type-row neu-in"><div class="label">Body / 15px</div><div class="sample body">Free-form text value for demo_string.</div></div>
+    <div class="type-row neu-in"><div class="label">Small / 12px</div><div class="sample small">Integer value within [0, 10]</div></div>
+  </section>
+
+  <section class="block">
+    <h2>Spacing scale</h2>
+    <div class="spacing-row"><div class="label">xs — 4px</div><div class="bar" style="width:4px"></div></div>
+    <div class="spacing-row"><div class="label">sm — 8px</div><div class="bar" style="width:8px"></div></div>
+    <div class="spacing-row"><div class="label">md — 16px</div><div class="bar" style="width:16px"></div></div>
+    <div class="spacing-row"><div class="label">lg — 24px</div><div class="bar" style="width:24px"></div></div>
+    <div class="spacing-row"><div class="label">xl — 38px</div><div class="bar" style="width:38px"></div></div>
+  </section>
+
+  <section class="block">
+    <h2>Components</h2>
+    <div class="comp-grid">
+
+      <div class="comp-card neu-out">
+        <div class="cap">Select / Menu</div>
+        <select class="ind"><option>Off</option><option selected>Low</option><option>High</option></select>
+      </div>
+
+      <div class="comp-card neu-out">
+        <div class="cap">Text input (editable)</div>
+        <input class="ind" type="text" value="hello nepi">
+      </div>
+
+      <div class="comp-card neu-out">
+        <div class="cap">Text input (read-only datum)</div>
+        <input class="ind" type="text" disabled value="14:22:07">
+      </div>
+
+      <div class="comp-card neu-out">
+        <div class="cap">Buttons</div>
+        <div style="display:flex; gap:12px; flex-wrap:wrap;">
+          <button class="btn-neu accent">Trigger</button>
+          <button class="btn-neu">Reset</button>
+          <button class="btn-neu danger">Factory Reset</button>
+        </div>
+      </div>
+
+      <div class="comp-card neu-out">
+        <div class="cap">Toggle (Bool control)</div>
+        <div style="display:flex; gap:18px; align-items:center;">
+          <div class="toggle-neu on"><div class="thumb"></div></div>
+          <div class="toggle-neu"><div class="thumb"></div></div>
+        </div>
+      </div>
+
+      <div class="comp-card neu-out">
+        <div class="cap">Multi-select pills (Selections)</div>
+        <div class="pill-row">
+          <div class="pill on">Red</div><div class="pill">Green</div><div class="pill on">Blue</div>
+        </div>
+      </div>
+
+      <div class="comp-card neu-out">
+        <div class="cap">Boolean indicator (read-only datum)</div>
+        <div style="display:flex; gap:18px;">
+          <div class="dot-row"><div class="dot on"></div>True</div>
+          <div class="dot-row"><div class="dot"></div>False</div>
+        </div>
+      </div>
+
+      <div class="comp-card neu-out">
+        <div class="cap">Slider (FloatSlider)</div>
+        <div class="slider-neu">
+          <input type="range" min="0" max="100" value="50">
+          <div class="readout">50.0 / 100.0</div>
+        </div>
+      </div>
+
+      <div class="comp-card neu-out">
+        <div class="cap">Status pill</div>
+        <div class="pill-row">
+          <div class="pill on" style="background:var(--good);">Confirmed</div>
+          <div class="pill">Pending</div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <section class="block">
+    <h2>Rules</h2>
+    <div class="rules-list">
+      <div>— Every surface is <b>the same base color</b>; depth comes only from dual-direction soft shadow (light top-left, dark bottom-right).</div>
+      <div>— Resting/interactive elements are <b>raised</b>; anything read-only or "currently active" is <b>inset</b>.</div>
+      <div>— Corner radius is generous and consistent: 24px for outer panels, 12–16px for controls, full round for pills/toggles/dots.</div>
+      <div>— Accent blue is used sparingly — only on the single most important actionable item per section.</div>
+      <div>— No hard borders anywhere; borders are always implied by shadow, never drawn as a line.</div>
+    </div>
+  </section>
+
+  <footer class="note neu-in">
+    Soft Neumorphic keeps the same 18 demo fields (10 controls + 8 data) and image-connect flow as the
+    real app — see UI_mockups/README.md and concept_2_soft_neumorphic.html for the full layout.
+  </footer>
+
+</div>
+</body>
+</html>

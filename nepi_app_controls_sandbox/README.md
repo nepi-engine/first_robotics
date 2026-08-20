@@ -43,20 +43,41 @@ only writer of record.
 
 ## RUI
 
-- `NepiAppControlsSandbox.js` — main panel.
+Styled as **Glass Console** — translucent panels over a fixed dark
+radial-gradient background, state shown as a glow rather than a plain color
+swap. See `UI_mockups/concept_4_glass_console.html` and
+`UI_mockups/style_guide_4_glass_console.html` for the reference design, and
+`docs/UI_Redesign_2026.md` for how it was chosen.
+
+- `NepiAppControlsSandbox.js` — main panel: page background, topbar, and the
+  imgcol/sidecol layout.
 - `NepiAppControlsSandbox-Controls.js` — the Controls box (one widget per
   control). **App-local copy**, forked from the shared
   `nepi_rui/src/rui_webserver/rui-app/src/Nepi_IF_Controls.js`. Shipped in this
-  app package; editing it changes this app only.
-- `NepiAppControlsSandbox-Data.js` — the read-only Data box (one row per datum).
-  Read-only value boxes for floats, ints and strings; `BooleanIndicator` for
-  bools; no sliders, no editable inputs, no publish path. **App-local copy**,
-  forked from the shared
+  app package; editing it changes this app only. Draws its own row markup
+  (styled from `NepiAppControlsSandbox-Theme.js`) rather than the shared
+  `Section`/`Label`/`Columns` components, which have no style/className hook.
+- `NepiAppControlsSandbox-Data.js` — the read-only Data box (one row per datum),
+  plus a `render_mode="tiles"` mode that draws a curated subset as glowing
+  telemetry tiles (used by the imgcol's "Live Data Telemetry" panel). Read-only
+  values for floats, ints and strings; glowing dots for bools; no sliders, no
+  editable inputs, no publish path. **App-local copy**, forked from the shared
   `nepi_rui/src/rui_webserver/rui-app/src/Nepi_IF_Data.js`. Shipped in this app
   package; editing it changes this app only.
 - `NepiAppControlsSandbox-Settings.js` — the Controls Settings box (display
   management), a Select-dropdown settings panel (Nepi_IF_Settings pattern) shown
   only in `develop` run mode or when admin mode is set.
+- `NepiAppControlsSandbox-Tabs.js` — the Choices/Actions/Values/Data tab bar,
+  built from scratch (no shared tab component exists in `nepi_rui`).
+- `NepiAppControlsSandbox-Theme.js` — Glass Console color, spacing, and inline
+  style-rule tokens, ported from `style_guide_4_glass_console.html`. Every
+  other `rui/*.js` file in this app imports it rather than hardcoding a color.
+- `NepiAppControlsSandbox-GlassConsole.css` — overrides for the two widgets
+  that render their own fixed markup and accept no style prop:
+  `react-toggle` (via `AsyncToggle.js`) and `rc-slider` (via
+  `AdjustmentWidgets.js` / `RangeAdjustment.js`). Every rule is scoped under
+  `.csbx-glass`, the class this app's root div carries, so it cannot affect
+  any other app that also uses those third-party widgets.
 
 ## Working on this app
 

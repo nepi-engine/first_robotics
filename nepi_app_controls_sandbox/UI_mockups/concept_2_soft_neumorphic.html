@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Concept 2 — Soft Neumorphic</title>
+<style>
+  :root {
+    --base: #e6e9ef; --text: #3a4048; --text-soft: #8790a0; --accent: #6c8bf5; --accent-soft: #c8d3fb;
+    --good: #4fb286; --bad: #e3717a; --shadow-d: #c3c8d1; --shadow-l: #ffffff; --sans: "Segoe UI", Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--base); color: var(--text); font-family: var(--sans); font-size: 14px; line-height: 1.5; }
+  .neu-out { background: var(--base); border-radius: 20px; box-shadow: 8px 8px 16px var(--shadow-d), -8px -8px 16px var(--shadow-l); }
+  .neu-in { background: var(--base); border-radius: 14px; box-shadow: inset 4px 4px 8px var(--shadow-d), inset -4px -4px 8px var(--shadow-l); }
+
+  .topbar { display: flex; align-items: center; justify-content: space-between; padding: 18px 28px; }
+  .topbar h1 { font-size: 18px; margin: 0; font-weight: 700; }
+  .topbar .badge { font-size: 11px; font-weight: 700; padding: 6px 14px; border-radius: 20px; color: var(--accent); background: var(--base); box-shadow: 3px 3px 6px var(--shadow-d), -3px -3px 6px var(--shadow-l); }
+
+  .grid { display: grid; grid-template-columns: 1.4fr 1fr 1fr; gap: 22px; padding: 8px 28px 40px; }
+  .grid .span2 { grid-column: span 2; }
+  .grid .span3 { grid-column: span 3; }
+
+  .card { padding: 20px; }
+  .card .cap { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: var(--text-soft); margin-bottom: 14px; }
+
+  select.ind, input.ind { width: 100%; font-family: var(--sans); font-size: 13px; padding: 9px 12px; border: none; border-radius: 12px; background: var(--base); color: var(--text); box-shadow: inset 3px 3px 6px var(--shadow-d), inset -3px -3px 6px var(--shadow-l); }
+  input.ind[disabled] { color: var(--text-soft); }
+
+  .viewer { width: 100%; aspect-ratio: 16/9; border-radius: 16px; background: repeating-linear-gradient(45deg, #dfe2e9, #dfe2e9 10px, #d7dae2 10px, #d7dae2 20px); display: flex; align-items: center; justify-content: center; color: var(--text-soft); font-size: 13px; margin-top: 14px; box-shadow: inset 3px 3px 6px var(--shadow-d), inset -3px -3px 6px var(--shadow-l); }
+  .hint { font-size: 11px; color: var(--text-soft); margin-top: 10px; }
+
+  .btn-neu { border: none; border-radius: 12px; background: var(--base); color: var(--text); padding: 10px 18px; font-weight: 600; font-size: 12px; cursor: pointer; box-shadow: 5px 5px 10px var(--shadow-d), -5px -5px 10px var(--shadow-l); width: 100%; }
+  .btn-neu.accent { color: var(--accent); }
+  .btn-neu.broken { color: var(--bad); }
+
+  .toggle-neu { width: 50px; height: 26px; border-radius: 13px; position: relative; cursor: pointer; display: inline-block; background: var(--base); box-shadow: inset 3px 3px 6px var(--shadow-d), inset -3px -3px 6px var(--shadow-l); float: right; }
+  .toggle-neu .thumb { width: 18px; height: 18px; border-radius: 50%; position: absolute; top: 4px; left: 4px; background: var(--base); box-shadow: 2px 2px 4px var(--shadow-d), -2px -2px 4px var(--shadow-l); }
+  .toggle-neu.on .thumb { left: 28px; background: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+
+  .pill-row { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+  .pill { font-size: 11px; font-weight: 600; padding: 6px 14px; border-radius: 20px; background: var(--base); color: var(--text-soft); box-shadow: 2px 2px 5px var(--shadow-d), -2px -2px 5px var(--shadow-l); }
+  .pill.on { color: #fff; background: var(--accent); box-shadow: none; }
+
+  .row { display: flex; align-items: center; justify-content: space-between; padding: 10px 0; }
+  .row .name { font-weight: 600; font-size: 13px; }
+  .row .sub { font-size: 10px; color: var(--text-soft); }
+  .row .ctl { width: 52%; }
+
+  .dot-row { display: flex; align-items: center; gap: 8px; font-size: 12px; justify-content: flex-end; }
+  .dot { width: 12px; height: 12px; border-radius: 50%; background: var(--base); box-shadow: inset 2px 2px 4px var(--shadow-d), inset -2px -2px 4px var(--shadow-l); }
+  .dot.on { background: var(--good); box-shadow: 0 0 0 3px rgba(79,178,134,0.18); }
+
+  .slider-neu input[type=range] { width: 100%; accent-color: var(--accent); }
+  .readout { font-size: 10px; text-align: right; color: var(--text-soft); }
+  .dual { display: flex; gap: 6px; }
+  .dual input { flex: 1; }
+
+  .flag { font-size: 9px; color: var(--bad); font-weight: 700; }
+</style>
+</head>
+<body>
+
+  <div class="topbar">
+    <h1>Controls Sandbox</h1>
+    <div class="badge">SOFT NEUMORPHIC</div>
+  </div>
+
+  <div class="grid">
+
+    <div class="card neu-out span2">
+      <div class="cap">Connections &amp; Viewer</div>
+      <select class="ind"><option>/nepi/device_0/idx/color_2d_image</option></select>
+      <div class="viewer">Image Viewer</div>
+      <div class="hint">Its stream feeds the viewer above.</div>
+    </div>
+
+    <div class="card neu-out">
+      <div class="cap">Choices</div>
+      <div class="row"><div><div class="name">Demo Menu</div><div class="sub">demo_menu</div></div><div class="ctl"><select class="ind"><option>Off</option><option selected>Low</option><option>High</option></select></div></div>
+      <div class="row"><div><div class="name">Demo Selection</div><div class="sub">demo_selection</div></div><div class="ctl"><select class="ind"><option>Alpha</option><option selected>Bravo</option><option>Charlie</option></select></div></div>
+      <div class="row"><div><div class="name">Demo Selections</div><div class="sub">demo_selections</div></div><div class="ctl"><div class="pill-row"><div class="pill on">Red</div><div class="pill">Green</div><div class="pill on">Blue</div></div></div></div>
+    </div>
+
+    <div class="card neu-out">
+      <div class="cap">Actions</div>
+      <div class="row"><div><div class="name">Demo Trigger</div><div class="sub">demo_trigger</div><div class="flag">does not fire — SDK bug</div></div><div class="ctl"><button class="btn-neu broken">Trigger</button></div></div>
+      <div class="row"><div><div class="name">Demo Bool</div><div class="sub">demo_bool</div></div><div class="ctl"><div class="toggle-neu on"><div class="thumb"></div></div></div></div>
+    </div>
+
+    <div class="card neu-out span2">
+      <div class="cap">Values</div>
+      <div class="row"><div><div class="name">Demo String</div><div class="sub">demo_string</div></div><div class="ctl"><input class="ind" value="hello nepi"></div></div>
+      <div class="row"><div><div class="name">Demo Int</div><div class="sub">demo_int · [0,10]</div></div><div class="ctl"><input class="ind" value="5"></div></div>
+      <div class="row"><div><div class="name">Demo Float</div><div class="sub">demo_float · [0,10]</div></div><div class="ctl"><input class="ind" value="2.5"></div></div>
+      <div class="row"><div><div class="name">Demo Float Slider</div><div class="sub">demo_float_slider</div></div><div class="ctl slider-neu"><input type="range" min="0" max="100" value="50"><div class="readout">50.0 / 100.0</div></div></div>
+      <div class="row"><div><div class="name">Demo Floats Slider</div><div class="sub">demo_floats_slider</div><div class="flag">dropped by SDK</div></div><div class="ctl slider-neu"><input type="range" min="0" max="100" value="25"><div class="readout">0.25 – 0.75</div></div></div>
+    </div>
+
+    <div class="card neu-out">
+      <div class="cap">Data — Bools</div>
+      <div class="row"><div><div class="name">Demo Bool</div><div class="sub">demo_bool_data</div></div><div class="ctl"><div class="dot-row"><div class="dot on"></div>True</div></div></div>
+      <div class="row"><div><div class="name">Demo Bools</div><div class="sub">demo_bools_data</div></div><div class="ctl"><div class="dot-row"><div class="dot on"></div>T&nbsp;&nbsp;<div class="dot"></div>F</div></div></div>
+    </div>
+
+    <div class="card neu-out">
+      <div class="cap">Data — Strings</div>
+      <div class="row"><div><div class="name">Demo String</div><div class="sub">demo_string_data</div></div><div class="ctl"><input class="ind" disabled value="14:22:07"></div></div>
+      <div class="row"><div><div class="name">Demo Strings</div><div class="sub">demo_strings_data</div></div><div class="ctl dual"><input class="ind" disabled value="14:22:07"><input class="ind" disabled value="tick 812"></div></div>
+    </div>
+
+    <div class="card neu-out">
+      <div class="cap">Data — Ints</div>
+      <div class="row"><div><div class="name">Demo Int</div><div class="sub">demo_int_data</div></div><div class="ctl"><input class="ind" disabled value="812"></div></div>
+      <div class="row"><div><div class="name">Demo Ints</div><div class="sub">demo_ints_data</div></div><div class="ctl dual"><input class="ind" disabled value="812"><input class="ind" disabled value="-812"></div></div>
+    </div>
+
+    <div class="card neu-out span2">
+      <div class="cap">Data — Floats</div>
+      <div class="row"><div><div class="name">Demo Float</div><div class="sub">demo_float_data (sine)</div></div><div class="ctl"><input class="ind" disabled value="0.799"></div></div>
+      <div class="row"><div><div class="name">Demo Floats</div><div class="sub">demo_floats_data</div></div><div class="ctl dual"><input class="ind" disabled value="0.799"><input class="ind" disabled value="-0.799"></div></div>
+    </div>
+
+    <div class="card neu-in span3">
+      <div class="cap">Controls Settings (develop mode / admin only)</div>
+      <div style="font-size:12px; color:var(--text-soft);">Display-management panel for hiding/reordering controls — appears here as an inset drawer when the run mode allows it.</div>
+    </div>
+
+  </div>
+
+</body>
+</html>

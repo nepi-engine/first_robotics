@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Style Guide 5 — Playful Flat</title>
+<style>
+  :root {
+    --bg: #fbf9f4;
+    --card: #ffffff;
+    --ink: #22243a;
+    --ink-soft: #6f7290;
+    --coral: #ff6b5e;
+    --sun: #ffc93c;
+    --mint: #34d1a4;
+    --sky: #4d9dff;
+    --grape: #9b6bff;
+    --sans: "Trebuchet MS", "Nunito", Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--sans); font-size: 15px; line-height: 1.55; }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 44px 32px 100px; }
+
+  header.hero {
+    padding: 34px 38px; margin-bottom: 44px; border-radius: 28px;
+    background: linear-gradient(120deg, var(--sky), var(--grape));
+    color: #fff; position: relative; overflow: hidden;
+  }
+  header.hero .kicker { font-size: 13px; font-weight: 800; letter-spacing: 2px; opacity: 0.85; text-transform: uppercase; }
+  header.hero h1 { margin: 10px 0 8px; font-size: 36px; font-weight: 800; }
+  header.hero p { margin: 0; max-width: 700px; opacity: 0.92; }
+  header.hero::after {
+    content: ""; position: absolute; right: -40px; bottom: -60px; width: 200px; height: 200px;
+    background: rgba(255,255,255,0.14); border-radius: 50%;
+  }
+
+  section.block { margin-bottom: 48px; }
+  section.block h2 {
+    font-size: 13px; text-transform: uppercase; letter-spacing: 1.5px; font-weight: 800;
+    color: var(--grape); margin-bottom: 20px;
+  }
+
+  .swatches { display: flex; flex-wrap: wrap; gap: 18px; }
+  .swatch { width: 150px; border-radius: 18px; background: var(--card); box-shadow: 0 6px 16px rgba(34,36,58,0.08); overflow: hidden; }
+  .swatch .fill { height: 64px; }
+  .swatch .meta { padding: 10px 12px; }
+  .swatch .name { font-weight: 800; font-size: 13px; }
+  .swatch .hex { font-size: 11px; color: var(--ink-soft); }
+
+  .type-row { display: flex; align-items: baseline; gap: 20px; padding: 14px 24px; margin-bottom: 10px; border-radius: 16px; background: var(--card); box-shadow: 0 4px 12px rgba(34,36,58,0.06); }
+  .type-row .label { width: 150px; font-size: 12px; color: var(--ink-soft); flex-shrink: 0; }
+  .type-row .sample.h1 { font-size: 32px; font-weight: 800; }
+  .type-row .sample.h2 { font-size: 22px; font-weight: 800; }
+  .type-row .sample.h3 { font-size: 16px; font-weight: 700; color: var(--grape); }
+  .type-row .sample.body { font-size: 15px; }
+  .type-row .sample.small { font-size: 12px; color: var(--ink-soft); }
+
+  .spacing-row { display: flex; align-items: center; gap: 16px; margin-bottom: 12px; font-size: 12px; color: var(--ink-soft); }
+  .spacing-row .bar { background: linear-gradient(90deg, var(--coral), var(--sun)); border-radius: 8px; height: 16px; }
+  .spacing-row .label { width: 90px; }
+
+  .comp-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px; }
+  .comp-card { padding: 20px; border-radius: 20px; background: var(--card); box-shadow: 0 6px 18px rgba(34,36,58,0.08); }
+  .comp-card .cap { font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; color: var(--ink-soft); margin-bottom: 14px; }
+
+  select.ind, input.ind {
+    width: 100%; font-family: var(--sans); font-size: 14px; padding: 10px 14px;
+    border: 2px solid #eee2d0; border-radius: 12px; background: #fffdf8; color: var(--ink);
+  }
+  input.ind[disabled] { color: var(--ink-soft); background: #f3f1ea; }
+
+  .btn-play {
+    border: none; border-radius: 14px; padding: 12px 22px; font-weight: 800; font-size: 14px; cursor: pointer; color: #fff;
+    background: var(--coral); box-shadow: 0 6px 0 #d9483d;
+  }
+  .btn-play.mint { background: var(--mint); box-shadow: 0 6px 0 #219f7c; }
+  .btn-play.ghost { background: var(--card); color: var(--ink); box-shadow: 0 4px 12px rgba(34,36,58,0.1); }
+
+  .toggle-play {
+    width: 54px; height: 30px; border-radius: 15px; position: relative; cursor: pointer; display: inline-block;
+    background: #e7e3d8;
+  }
+  .toggle-play .thumb { width: 22px; height: 22px; border-radius: 50%; background: #fff; box-shadow: 0 2px 6px rgba(0,0,0,0.2); position: absolute; top: 4px; left: 4px; transition: left .15s; }
+  .toggle-play.on { background: var(--mint); }
+  .toggle-play.on .thumb { left: 28px; }
+
+  .chip-row { display: flex; gap: 10px; flex-wrap: wrap; }
+  .chip { font-size: 12px; font-weight: 700; padding: 8px 16px; border-radius: 20px; background: #f3f1ea; color: var(--ink-soft); }
+  .chip.on { color: #fff; background: var(--sky); }
+
+  .dot-row { display: flex; align-items: center; gap: 10px; font-size: 13px; font-weight: 600; }
+  .dot { width: 14px; height: 14px; border-radius: 50%; background: #e7e3d8; }
+  .dot.on { background: var(--mint); }
+
+  .slider-play input[type=range] { width: 100%; accent-color: var(--coral); }
+  .readout { font-size: 12px; text-align: right; color: var(--ink-soft); font-weight: 700; }
+
+  .rules-list { font-size: 13px; color: var(--ink-soft); line-height: 2; }
+  .rules-list b { color: var(--ink); }
+
+  footer.note { margin-top: 56px; padding: 22px 26px; border-radius: 20px; background: var(--card); font-size: 12px; color: var(--ink-soft); box-shadow: 0 4px 12px rgba(34,36,58,0.06); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="hero">
+    <div class="kicker">Style Guide 05</div>
+    <h1>Playful Flat</h1>
+    <p>Bright saturated colors, big rounded cards, and a friendly rounded sans typeface — a
+    consumer-app energy borrowed from smart-home and fitness apps, aimed at making a technical
+    type-survey demo approachable to a non-engineer visiting the RUI for the first time.</p>
+  </header>
+
+  <section class="block">
+    <h2>Principle</h2>
+    <p style="max-width:760px; color:var(--ink-soft);">
+      The other four guides all assume an engineer or technician audience. This one assumes the
+      opposite: someone unfamiliar with ROS topics or control types who just wants to know "what does
+      this switch do and is it on." Every control gets a card of its own with generous whitespace, a
+      bright single-purpose color, and large touch targets — buttons have a visible "pressed" ledge
+      (an offset shadow) rather than a flat click target, which reads as more inviting and game-like.
+      This is the most colorful and highest-personality option of the five; it is intentionally the
+      furthest from NEPI's current utilitarian look.
+    </p>
+  </section>
+
+  <section class="block">
+    <h2>Color</h2>
+    <div class="swatches">
+      <div class="swatch"><div class="fill" style="background:var(--coral)"></div><div class="meta"><div class="name">Coral</div><div class="hex">#ff6b5e</div></div></div>
+      <div class="swatch"><div class="fill" style="background:var(--sun)"></div><div class="meta"><div class="name">Sun</div><div class="hex">#ffc93c</div></div></div>
+      <div class="swatch"><div class="fill" style="background:var(--mint)"></div><div class="meta"><div class="name">Mint (confirmed)</div><div class="hex">#34d1a4</div></div></div>
+      <div class="swatch"><div class="fill" style="background:var(--sky)"></div><div class="meta"><div class="name">Sky</div><div class="hex">#4d9dff</div></div></div>
+      <div class="swatch"><div class="fill" style="background:var(--grape)"></div><div class="meta"><div class="name">Grape</div><div class="hex">#9b6bff</div></div></div>
+      <div class="swatch"><div class="fill" style="background:var(--ink)"></div><div class="meta"><div class="name">Ink (text)</div><div class="hex">#22243a</div></div></div>
+    </div>
+  </section>
+
+  <section class="block">
+    <h2>Typography</h2>
+    <div class="type-row"><div class="label">H1 / 32px / 800</div><div class="sample h1">Controls Sandbox</div></div>
+    <div class="type-row"><div class="label">H2 / 22px / 800</div><div class="sample h2">Data Sandbox</div></div>
+    <div class="type-row"><div class="label">H3 / 16px / 700</div><div class="sample h3">Section title</div></div>
+    <div class="type-row"><div class="label">Body / 15px</div><div class="sample body">Free-form text value for demo_string.</div></div>
+    <div class="type-row"><div class="label">Small / 12px</div><div class="sample small">Integer value within [0, 10]</div></div>
+  </section>
+
+  <section class="block">
+    <h2>Spacing scale</h2>
+    <div class="spacing-row"><div class="label">xs — 4px</div><div class="bar" style="width:4px"></div></div>
+    <div class="spacing-row"><div class="label">sm — 8px</div><div class="bar" style="width:8px"></div></div>
+    <div class="spacing-row"><div class="label">md — 16px</div><div class="bar" style="width:16px"></div></div>
+    <div class="spacing-row"><div class="label">lg — 24px</div><div class="bar" style="width:24px"></div></div>
+    <div class="spacing-row"><div class="label">xl — 38px</div><div class="bar" style="width:38px"></div></div>
+  </section>
+
+  <section class="block">
+    <h2>Components</h2>
+    <div class="comp-grid">
+
+      <div class="comp-card">
+        <div class="cap">Select / Menu</div>
+        <select class="ind"><option>Off</option><option selected>Low</option><option>High</option></select>
+      </div>
+
+      <div class="comp-card">
+        <div class="cap">Text input (editable)</div>
+        <input class="ind" type="text" value="hello nepi">
+      </div>
+
+      <div class="comp-card">
+        <div class="cap">Text input (read-only datum)</div>
+        <input class="ind" type="text" disabled value="14:22:07">
+      </div>
+
+      <div class="comp-card">
+        <div class="cap">Buttons</div>
+        <div style="display:flex; gap:14px; flex-wrap:wrap;">
+          <button class="btn-play">Trigger</button>
+          <button class="btn-play ghost">Reset</button>
+          <button class="btn-play mint">Save</button>
+        </div>
+      </div>
+
+      <div class="comp-card">
+        <div class="cap">Toggle (Bool control)</div>
+        <div style="display:flex; gap:18px; align-items:center;">
+          <div class="toggle-play on"><div class="thumb"></div></div>
+          <div class="toggle-play"><div class="thumb"></div></div>
+        </div>
+      </div>
+
+      <div class="comp-card">
+        <div class="cap">Multi-select chips (Selections)</div>
+        <div class="chip-row">
+          <div class="chip on">Red</div><div class="chip">Green</div><div class="chip on">Blue</div>
+        </div>
+      </div>
+
+      <div class="comp-card">
+        <div class="cap">Boolean indicator (read-only datum)</div>
+        <div style="display:flex; gap:18px;">
+          <div class="dot-row"><div class="dot on"></div>True</div>
+          <div class="dot-row"><div class="dot"></div>False</div>
+        </div>
+      </div>
+
+      <div class="comp-card">
+        <div class="cap">Slider (FloatSlider)</div>
+        <div class="slider-play">
+          <input type="range" min="0" max="100" value="50">
+          <div class="readout">50.0 / 100.0</div>
+        </div>
+      </div>
+
+      <div class="comp-card">
+        <div class="cap">Status chip</div>
+        <div class="chip-row">
+          <div class="chip on" style="background:var(--mint);">Confirmed</div>
+          <div class="chip">Pending</div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <section class="block">
+    <h2>Rules</h2>
+    <div class="rules-list">
+      <div>— Every card gets its own <b>rounded (18–20px), drop-shadowed</b> surface — nothing is a flat inline row.</div>
+      <div>— Buttons use a solid <b>"ledge" shadow</b> (offset flat color, not blur) so they read as physically pressable.</div>
+      <div>— Each functional group gets its own accent hue (coral = actions, sky = selection, mint = confirmed/success, grape = brand/heading) rather than one accent color for everything.</div>
+      <div>— Copy stays plain-language first, with the technical field name (e.g. "demo_float_slider") demoted to small print, not the headline label.</div>
+      <div>— Corner radius, shadow, and color are all more saturated/exaggerated than any of the other four guides — this is the deliberate "friendly extreme" of the set.</div>
+    </div>
+  </section>
+
+  <footer class="note">
+    Playful Flat covers the same 18 demo fields (10 controls + 8 data) as the real app. See
+    concept_5_playful_flat.html and UI_mockups/README.md for the full layout and rationale.
+  </footer>
+
+</div>
+</body>
+</html>

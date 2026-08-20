@@ -17,6 +17,7 @@ find_package(catkin REQUIRED COMPONENTS
 ## Generate messages in the 'msg' folder
 add_message_files(FILES
   NepiAppWpilibIFStatus.msg
+  WpilibMotorFeedback.msg
 )
 
 ## Generate services in the 'srv' folder
@@ -39,9 +40,27 @@ include_directories(
   ${catkin_INCLUDE_DIRS}
 )
 
+## All three scripts, not just the node. nepi_wpilib.py (the NetworkTables
+## access layer) and wpilib_rbx_if.py (the RBX device) are imported by the node
+## at runtime as plain sibling modules, so an install listing only the node
+## leaves those imports unresolvable. deploy_app.sh's live path happens to work
+## because it rsyncs the whole scripts/ directory; a catkin install installs only
+## what is listed here.
 catkin_install_python(PROGRAMS
   scripts/wpilib_if_app_node.py
+  scripts/nepi_wpilib.py
+  scripts/wpilib_rbx_if.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+)
+
+## The vendored ntcore / wpiutil / wpinet packages nepi_wpilib.py imports. It
+## resolves them relative to its own installed location first
+## (<script dir>/vendor/py38_aarch64), which is what this install rule makes
+## exist, and relative to a repo checkout second. Without this there is no
+## importable ntcore on a deployed system.
+install(DIRECTORY vendor/
+  DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}/vendor
+  USE_SOURCE_PERMISSIONS
 )
 
 install(DIRECTORY etc/

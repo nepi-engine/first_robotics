@@ -28,6 +28,7 @@ import Input from "./Input"
 import Label from "./Label"
 import Select, { Option } from "./Select"
 import BooleanIndicator from "./BooleanIndicator"
+import AsyncToggle from "./AsyncToggle"
 
 import NepiIFConnectDetections from "./Nepi_IF_ConnectDetections"
 import NepiIFConnectNavPose from "./Nepi_IF_ConnectNavPose"
@@ -55,6 +56,18 @@ const STATUS_TIMEOUT_MS = 5000
 // How often the indicator re-evaluates its staleness test. One status period,
 // so the timeout above is honoured to within one tick.
 const CONN_CHECK_INTERVAL_MS = 1000
+
+// The standard NEPI multi-motor contract the app publishes. Subscribed directly
+// (rather than through Nepi_IF_ConnectMotor, which binds to a connect IF this
+// app does not host) so the feedback readout can show the fields that DO have a
+// MotorStatus home -- measured output, position and speed -- beside the ones
+// that do not, which ride on the app's own status message.
+const MOTORS_STATUS_TYPE = "nepi_interfaces/MotorsStatus"
+const MOTOR_STATUS_SUFFIX = "/motor_status"
+
+// A slot holding this motor_id is unmapped, matching UNMAPPED_MOTOR_ID in the
+// node. Setting a slot to this, or clearing its box, is how a slot is turned off.
+const UNMAPPED_MOTOR_ID = -1
 
 @inject("ros")
 @observer
@@ -110,6 +123,18 @@ class NepiAppWpilibIF extends Component {
       settingsListener: null,
       settingsNamesList: [],
       settingsValuesList: [],
+
+      // Motor slot editor. Per-slot edits are held as strings keyed by slot so a
+      // partially typed entry survives a re-render, and the node's status stays
+      // authoritative for every slot the operator is not currently editing.
+      motor_slot_count_edit: null,
+      motor_id_edits: {},
+      motor_name_edits: {},
+
+      // Live nepi_interfaces/MotorsStatus from the app's own motors interface.
+      motorsStatusNamespace: null,
+      motorsStatusListener: null,
+      motors_status_msg: null,
     }
 
     this.getBaseNamespace = this.getBaseNamespace.bind(this)
@@ -129,6 +154,26 @@ class NepiAppWpilibIF extends Component {
     this.settingsListener = this.settingsListener.bind(this)
     this.updateSettingsListener = this.updateSettingsListener.bind(this)
     this.getSettingValue = this.getSettingValue.bind(this)
+    this.getMotorIds = this.getMotorIds.bind(this)
+    this.getMotorNames = this.getMotorNames.bind(this)
+    this.getMotorFeedback = this.getMotorFeedback.bind(this)
+    this.getSeenMotorIds = this.getSeenMotorIds.bind(this)
+    this.getMotorSlotCountValue = this.getMotorSlotCountValue.bind(this)
+    this.onChangeMotorSlotCount = this.onChangeMotorSlotCount.bind(this)
+    this.onKeyMotorSlotCount = this.onKeyMotorSlotCount.bind(this)
+    this.getMotorIdValue = this.getMotorIdValue.bind(this)
+    this.onChangeMotorId = this.onChangeMotorId.bind(this)
+    this.onKeyMotorId = this.onKeyMotorId.bind(this)
+    this.getMotorNameValue = this.getMotorNameValue.bind(this)
+    this.onChangeMotorName = this.onChangeMotorName.bind(this)
+    this.onKeyMotorName = this.onKeyMotorName.bind(this)
+    this.motorsStatusListener = this.motorsStatusListener.bind(this)
+    this.updateMotorsStatusListener = this.updateMotorsStatusListener.bind(this)
+    this.getMotorStatus = this.getMotorStatus.bind(this)
+    this.onToggleRbxEnabled = this.onToggleRbxEnabled.bind(this)
+    this.renderMotors = this.renderMotors.bind(this)
+    this.renderMotorSlot = this.renderMotorSlot.bind(this)
+    this.renderRobotControl = this.renderRobotControl.bind(this)
     this.renderControls = this.renderControls.bind(this)
     this.getExampleControlsNamespace = this.getExampleControlsNamespace.bind(this)
     this.renderExampleControls = this.renderExampleControls.bind(this)
@@ -364,6 +409,15 @@ class NepiAppWpilibIF extends Component {
             valueStr: prefix + '.2' }
         ]
         this.props.ros.updateSettings(base_namespace + '/settings', settingsList)
+
+        // The same entry also sets the app's own team number, which is what its
+        // NetworkTables client derives the RoboRIO address from. One operator
+        // control, so the device network config and the NT client can never be
+        // pointed at two different teams.
+        const appNamespace = this.getAppNamespace()
+        if (appNamespace != null) {
+          this.props.ros.sendIntMsg(appNamespace + '/set_team_number', String(team))
+        }
       }
     }
   }
@@ -443,6 +497,250 @@ class NepiAppWpilibIF extends Component {
   }
 
 
+  ///////////////////
+  // Motor Slots
+  //
+  // The operator-facing motor model is an ordered list of slots, each holding
+  // one RoboRIO motor_id. Slot order IS the NEPI motor index: it selects the
+  // channel for MotorControl.motor_ind and it names motor_0, motor_1, ... in
+  // MotorsStatus.
+  //
+  // The motor_id box is FREE ENTRY, not a dropdown of the ids discovered on
+  // NetworkTables, and the discovered ids are shown read-only beside it instead.
+  // A dropdown whose only options come from live data cannot express the two
+  // states that matter most in the pit: mapping slots before the robot code is
+  // running at all, and reserving a slot for a motor that is not on the bus yet.
+  // See docs/WPILIB_IF_DESIGN.md, Decision 2.
+
+  getMotorIds() {
+    const status_msg = this.state.status_msg
+    if (status_msg == null || status_msg.motor_ids == null) {
+      return []
+    }
+    return Array.from(status_msg.motor_ids)
+  }
+
+  getMotorNames() {
+    const status_msg = this.state.status_msg
+    if (status_msg == null || status_msg.motor_names == null) {
+      return []
+    }
+    return Array.from(status_msg.motor_names)
+  }
+
+  getMotorFeedback() {
+    const status_msg = this.state.status_msg
+    if (status_msg == null || status_msg.motor_feedback == null) {
+      return []
+    }
+    return Array.from(status_msg.motor_feedback)
+  }
+
+  getSeenMotorIds() {
+    const status_msg = this.state.status_msg
+    if (status_msg == null || status_msg.nt_motor_ids == null) {
+      return []
+    }
+    return Array.from(status_msg.nt_motor_ids)
+  }
+
+  getMotorSlotCountValue() {
+    if (this.state.motor_slot_count_edit !== null) {
+      return this.state.motor_slot_count_edit
+    }
+    const status_msg = this.state.status_msg
+    return (status_msg != null) ? String(status_msg.motor_slot_count) : ""
+  }
+
+  onChangeMotorSlotCount(event) {
+    const el = document.getElementById("WpilibMotorSlotCount")
+    el.style.color = "purple"
+    el.style.fontWeight = "bold"
+    this.setState({ motor_slot_count_edit: event.target.value })
+  }
+
+  onKeyMotorSlotCount(event) {
+    if (event.key !== 'Enter') {
+      return
+    }
+    const appNamespace = this.getAppNamespace()
+    const text = String(this.state.motor_slot_count_edit).trim()
+    // Rejected rather than committed if it is not a plain non-negative integer:
+    // the box stays marked so the operator can see the entry was not accepted.
+    if (!/^\d{1,3}$/.test(text) || appNamespace == null) {
+      return
+    }
+    const el = document.getElementById("WpilibMotorSlotCount")
+    el.style.color = Styles.vars.colors.black
+    el.style.fontWeight = "normal"
+    this.props.ros.sendIntMsg(appNamespace + '/set_motor_slot_count', text)
+    // Cleared so the box follows the node's status again, including the resize
+    // the node applies to both per-slot lists.
+    this.setState({ motor_slot_count_edit: null, motor_id_edits: {}, motor_name_edits: {} })
+  }
+
+  getMotorIdValue(slot) {
+    const edits = this.state.motor_id_edits
+    if (edits[slot] !== undefined) {
+      return edits[slot]
+    }
+    const motor_ids = this.getMotorIds()
+    if (slot >= motor_ids.length) {
+      return ""
+    }
+    // An unmapped slot shows an empty box rather than a bare -1, which reads as
+    // a value the operator typed.
+    return (motor_ids[slot] === UNMAPPED_MOTOR_ID) ? "" : String(motor_ids[slot])
+  }
+
+  onChangeMotorId(slot, event) {
+    const el = document.getElementById("WpilibMotorId" + slot)
+    el.style.color = "purple"
+    el.style.fontWeight = "bold"
+    var edits = Object.assign({}, this.state.motor_id_edits)
+    edits[slot] = event.target.value
+    this.setState({ motor_id_edits: edits })
+  }
+
+  onKeyMotorId(slot, event) {
+    if (event.key !== 'Enter') {
+      return
+    }
+    const appNamespace = this.getAppNamespace()
+    if (appNamespace == null) {
+      return
+    }
+    const text = String(this.getMotorIdValue(slot)).trim()
+    // A blank box unmaps the slot. Anything else must be a plain integer.
+    var value = UNMAPPED_MOTOR_ID
+    if (text !== "") {
+      if (!/^-?\d{1,5}$/.test(text)) {
+        return
+      }
+      value = parseInt(text, 10)
+    }
+
+    // The whole list is sent in one message, built from the node's current
+    // mapping with this slot replaced, so slot order can never be left
+    // half-updated by editing one box.
+    var motor_ids = this.getMotorIds().map((motor_id) => parseInt(motor_id, 10))
+    while (motor_ids.length <= slot) {
+      motor_ids.push(UNMAPPED_MOTOR_ID)
+    }
+    motor_ids[slot] = value
+
+    const el = document.getElementById("WpilibMotorId" + slot)
+    el.style.color = Styles.vars.colors.black
+    el.style.fontWeight = "normal"
+    this.props.ros.sendStringMsg(appNamespace + '/set_motor_ids', motor_ids.join(','))
+
+    var edits = Object.assign({}, this.state.motor_id_edits)
+    delete edits[slot]
+    this.setState({ motor_id_edits: edits })
+  }
+
+  getMotorNameValue(slot) {
+    const edits = this.state.motor_name_edits
+    if (edits[slot] !== undefined) {
+      return edits[slot]
+    }
+    const motor_names = this.getMotorNames()
+    return (slot < motor_names.length) ? String(motor_names[slot]) : ""
+  }
+
+  onChangeMotorName(slot, event) {
+    const el = document.getElementById("WpilibMotorName" + slot)
+    el.style.color = "purple"
+    el.style.fontWeight = "bold"
+    var edits = Object.assign({}, this.state.motor_name_edits)
+    // Commas are stripped on entry: the ordered name list travels as one
+    // comma-separated String, so a comma inside a name would split it into two
+    // slots. Stripping here keeps that impossible instead of surprising.
+    edits[slot] = String(event.target.value).replace(/,/g, '')
+    this.setState({ motor_name_edits: edits })
+  }
+
+  onKeyMotorName(slot, event) {
+    if (event.key !== 'Enter') {
+      return
+    }
+    const appNamespace = this.getAppNamespace()
+    if (appNamespace == null) {
+      return
+    }
+    var motor_names = this.getMotorNames().map((name) => String(name))
+    while (motor_names.length <= slot) {
+      motor_names.push("")
+    }
+    motor_names[slot] = String(this.getMotorNameValue(slot))
+
+    const el = document.getElementById("WpilibMotorName" + slot)
+    el.style.color = Styles.vars.colors.black
+    el.style.fontWeight = "normal"
+    this.props.ros.sendStringMsg(appNamespace + '/set_motor_names', motor_names.join(','))
+
+    var edits = Object.assign({}, this.state.motor_name_edits)
+    delete edits[slot]
+    this.setState({ motor_name_edits: edits })
+  }
+
+  // The app's own motors interface, publishing the standard MotorsStatus. Its
+  // namespace comes off the app status rather than being assumed, so if the
+  // interface fails to start the readout simply shows no measured values instead
+  // of subscribing to a topic that does not exist.
+  motorsStatusListener(message) {
+    this.setState({ motors_status_msg: message })
+  }
+
+  updateMotorsStatusListener() {
+    const status_msg = this.state.status_msg
+    if (status_msg == null) {
+      return
+    }
+    const motors_namespace = status_msg.motors_namespace
+    if (motors_namespace == null || motors_namespace === "" || motors_namespace === "None") {
+      return
+    }
+    const namespace = motors_namespace + MOTOR_STATUS_SUFFIX
+    if (this.state.motorsStatusNamespace === namespace) {
+      return
+    }
+    if (this.state.motorsStatusListener != null) {
+      this.state.motorsStatusListener.unsubscribe()
+    }
+    const listener = this.props.ros.setupStatusListener(
+      namespace,
+      MOTORS_STATUS_TYPE,
+      this.motorsStatusListener
+    )
+    this.setState({ motorsStatusNamespace: namespace, motorsStatusListener: listener })
+  }
+
+  // One MotorStatus by NEPI motor name, or null.
+  getMotorStatus(nepi_motor_name) {
+    const motors_status_msg = this.state.motors_status_msg
+    if (motors_status_msg == null || motors_status_msg.motors == null) {
+      return null
+    }
+    for (var i = 0; i < motors_status_msg.motors.length; i++) {
+      if (motors_status_msg.motors[i].motor_name === nepi_motor_name) {
+        return motors_status_msg.motors[i]
+      }
+    }
+    return null
+  }
+
+  onToggleRbxEnabled() {
+    const appNamespace = this.getAppNamespace()
+    const status_msg = this.state.status_msg
+    if (appNamespace == null || status_msg == null) {
+      return
+    }
+    this.props.ros.sendBoolMsg(appNamespace + '/set_rbx_enabled',
+                               status_msg.rbx_enabled !== true)
+  }
+
+
   componentDidMount() {
     // Re-render on a fixed tick so the Robot Network indicator notices status
     // messages that stopped arriving. Nothing reads conn_tick; the render it
@@ -463,6 +761,9 @@ class NepiAppWpilibIF extends Component {
     // calling it on every update settles after the first subscribe rather than
     // looping on its own setState.
     this.updateSettingsListener()
+    // Same shape: subscribes once the app status names the motors namespace, and
+    // no-ops on every update after that.
+    this.updateMotorsStatusListener()
   }
 
   componentWillUnmount() {
@@ -471,6 +772,9 @@ class NepiAppWpilibIF extends Component {
     }
     if (this.state.settingsListener != null) {
       this.state.settingsListener.unsubscribe()
+    }
+    if (this.state.motorsStatusListener != null) {
+      this.state.motorsStatusListener.unsubscribe()
     }
     if (this.state.connCheckTimer != null) {
       clearInterval(this.state.connCheckTimer)
@@ -652,6 +956,201 @@ class NepiAppWpilibIF extends Component {
     )
   }
 
+  // The Motors box. Two box-level rows on top -- how many slots there are, and
+  // the motor_ids actually seen on NetworkTables -- then one self-contained
+  // group per slot, rendered by renderMotorSlot.
+  //
+  // Everything belonging to a slot lives inside that slot's group. The earlier
+  // layout listed every id and name box first and every feedback readout
+  // second, which put a slot's own boxes eight rows away from its own indicator
+  // and left neighbouring rows looking paired when they were not. Slot-level
+  // titles are also kept to one short line each: a title that wraps to two lines
+  // while its box stays top-aligned is what made adjacent rows read as grouped.
+  renderMotors() {
+    const motor_feedback = this.getMotorFeedback()
+    const seen_motor_ids = this.getSeenMotorIds()
+    const slot_count_value = this.getMotorSlotCountValue()
+
+    var slot_groups = []
+    for (var slot = 0; slot < motor_feedback.length; slot++) {
+      slot_groups.push(this.renderMotorSlot(motor_feedback[slot], slot))
+    }
+
+    return (
+      <Section title={"Motors"}>
+
+        <Label title={"Motor Slots"}>
+          <Input
+            id={"WpilibMotorSlotCount"}
+            value={slot_count_value}
+            onChange={this.onChangeMotorSlotCount}
+            onKeyDown={this.onKeyMotorSlotCount}
+            placeholder={"e.g. 4"}
+          />
+        </Label>
+
+        <Label title={"Ids On Robot"}>
+          <Input disabled value={seen_motor_ids.join(', ')} />
+        </Label>
+
+        <div style={{
+          marginTop: Styles.vars.spacing.small,
+          fontSize: Styles.vars.fontSize.small,
+          color: Styles.vars.colors.grey1
+        }}>
+          {"Slot order is the NEPI motor index: slot 0 is motor_0. Ids On Robot " +
+           "are the motor_ids currently seen on NetworkTables."}
+        </div>
+
+        {slot_groups}
+
+      </Section>
+    )
+  }
+
+  // One motor slot as a single group: the NEPI motor name and live indicator on
+  // the heading line, then that slot's two editable boxes indented under it,
+  // then that slot's readout. A rule above each group separates it from the one
+  // before.
+  //
+  // The readout joins both halves of the motor contract: measured output,
+  // position and speed come from the standard nepi_interfaces/MotorsStatus the
+  // app publishes, and control mode, commanded output and current come from the
+  // app's own status message because MotorStatus has no field for them.
+  renderMotorSlot(feedback, slot_ind) {
+    const motor_status = this.getMotorStatus(feedback.nepi_motor_name)
+    const measured = (motor_status != null) ? motor_status.motor_speed_ratio : null
+    const position = (motor_status != null) ? motor_status.motor_position : null
+    const speed = (motor_status != null) ? motor_status.motor_speed : null
+
+    var detail = "unmapped"
+    if (feedback.motor_id >= 0 && feedback.seen !== true) {
+      detail = "id " + feedback.motor_id + " not seen"
+    } else if (feedback.motor_id >= 0 && feedback.fresh !== true) {
+      detail = "id " + feedback.motor_id + " stale"
+    } else if (feedback.motor_id >= 0) {
+      detail = "id " + feedback.motor_id + "  " + feedback.control_mode +
+               "  out " + Number(feedback.commanded_output).toFixed(2) +
+               "/" + ((measured != null) ? Number(measured).toFixed(2) : "-") +
+               "  " + Number(feedback.current_amps).toFixed(1) + "A"
+      if (position != null) {
+        detail = detail + "  pos " + Number(position).toFixed(2) +
+                 "  vel " + Number(speed).toFixed(2)
+      }
+    }
+
+    const heading = feedback.nepi_motor_name +
+      ((feedback.display_name !== "") ? "  (" + feedback.display_name + ")" : "")
+
+    return (
+      <div key={"motor_slot_" + slot_ind}>
+
+        <div style={{
+          borderTop: "1px solid #ffffff",
+          marginTop: Styles.vars.spacing.medium,
+          marginBottom: Styles.vars.spacing.xs
+        }}/>
+
+        <Label title={<span style={{ fontWeight: 'bold' }}>{heading}</span>}>
+          <BooleanIndicator value={feedback.seen === true && feedback.fresh === true} />
+        </Label>
+
+        <Label title={"RoboRIO Id"} marginLeft={Styles.vars.spacing.regular}>
+          <Input
+            id={"WpilibMotorId" + slot_ind}
+            value={this.getMotorIdValue(slot_ind)}
+            onChange={(event) => this.onChangeMotorId(slot_ind, event)}
+            onKeyDown={(event) => this.onKeyMotorId(slot_ind, event)}
+            placeholder={"unmapped"}
+          />
+        </Label>
+
+        <Label title={"Display Name"} marginLeft={Styles.vars.spacing.regular}>
+          <Input
+            id={"WpilibMotorName" + slot_ind}
+            value={this.getMotorNameValue(slot_ind)}
+            onChange={(event) => this.onChangeMotorName(slot_ind, event)}
+            onKeyDown={(event) => this.onKeyMotorName(slot_ind, event)}
+            placeholder={"optional"}
+          />
+        </Label>
+
+        <div style={{
+          marginTop: Styles.vars.spacing.xs,
+          marginLeft: Styles.vars.spacing.regular,
+          fontSize: Styles.vars.fontSize.small,
+          color: Styles.vars.colors.grey1
+        }}>
+          {detail}
+        </div>
+
+      </div>
+    )
+  }
+
+  // The Robot Control box: the RBX device toggle, the namespace the device
+  // appears at once it is on, and the RBX Feedback readout.
+  //
+  // The namespace reads "None" until the RoboRIO has reported its supported
+  // capabilities, because RBXRobotIF derives and caches its capability flags at
+  // construction -- so the device is deliberately not built until there is a
+  // real capability list to build it from.
+  renderRobotControl() {
+    const status_msg = this.state.status_msg
+    const rbx_enabled = (status_msg != null) ? status_msg.rbx_enabled === true : false
+    const rbx_namespace = (status_msg != null) ? status_msg.rbx_namespace : ""
+    const rbx_ready = (status_msg != null) ? status_msg.rbx_ready === true : false
+    const navpose_topic = (status_msg != null) ? status_msg.navpose_topic : ""
+    const navpose_valid = (status_msg != null) ? status_msg.navpose_valid === true : false
+    const capabilities = (status_msg != null && status_msg.supported_capabilities != null)
+      ? Array.from(status_msg.supported_capabilities) : []
+    const request_status = (status_msg != null) ? status_msg.request_status : ""
+    const request_id = (status_msg != null) ? status_msg.active_request_id : ""
+    const request_type = (status_msg != null) ? status_msg.active_request_type : ""
+    const status_message = (status_msg != null) ? status_msg.status_message : ""
+
+    return (
+      <Section title={"Robot Control"}>
+
+        <Label title={this.renderSubLabel("Robot Device", "present this robot to NEPI as RBX")}>
+          <AsyncToggle
+            checked={rbx_enabled}
+            onClick={this.onToggleRbxEnabled}>
+          </AsyncToggle>
+        </Label>
+
+        <div hidden={rbx_enabled === false}>
+
+          <Label title={"RBX Namespace"}>
+            <Input disabled value={rbx_namespace} />
+          </Label>
+
+          <Label title={"RBX Ready"}>
+            <BooleanIndicator value={rbx_ready} />
+          </Label>
+
+          <Label title={this.renderSubLabel("NavPose", navpose_topic)}>
+            <BooleanIndicator value={navpose_valid} />
+          </Label>
+
+          <Label title={"Robot Capabilities"}>
+            <Input disabled value={capabilities.join(', ')} />
+          </Label>
+
+          <Label title={this.renderSubLabel("Request", "id " + request_id + " " + request_type)}>
+            <Input disabled value={request_status} />
+          </Label>
+
+          <Label title={"Request Message"}>
+            <Input disabled value={status_message} />
+          </Label>
+
+        </div>
+
+      </Section>
+    )
+  }
+
   renderConfig() {
     const appNamespace = this.getAppNamespace()
     return (
@@ -681,6 +1180,8 @@ class NepiAppWpilibIF extends Component {
 
         <div style={{ width: "23%" }}>
           {this.renderRobotNetwork()}
+          {this.renderMotors()}
+          {this.renderRobotControl()}
           {this.renderControls()}
           {this.renderConfig()}
           {this.renderExampleControls()}

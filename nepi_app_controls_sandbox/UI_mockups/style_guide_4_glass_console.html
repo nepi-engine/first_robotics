@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Style Guide 4 — Glass Console</title>
+<style>
+  :root {
+    --bg0: #070b16;
+    --bg1: #0e1730;
+    --glass: rgba(255,255,255,0.06);
+    --glass-brd: rgba(255,255,255,0.14);
+    --text: #e8edf9;
+    --text-dim: #8a93ab;
+    --cyan: #4be3ff;
+    --violet: #9d7bff;
+    --green: #3ef2a8;
+    --red: #ff5d7a;
+    --sans: "Segoe UI", "Inter", Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: var(--sans); font-size: 15px; color: var(--text); line-height: 1.55;
+    background:
+      radial-gradient(circle at 15% 10%, rgba(75,227,255,0.16), transparent 40%),
+      radial-gradient(circle at 85% 30%, rgba(157,123,255,0.14), transparent 45%),
+      linear-gradient(160deg, var(--bg0), var(--bg1));
+    min-height: 100vh;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 44px 32px 100px; }
+
+  .glass { background: var(--glass); border: 1px solid var(--glass-brd); border-radius: 18px; backdrop-filter: blur(10px); }
+
+  header.hero { padding: 30px 36px; margin-bottom: 44px; }
+  header.hero .kicker { font-size: 12px; font-weight: 700; letter-spacing: 3px; color: var(--cyan); text-transform: uppercase; }
+  header.hero h1 { margin: 10px 0 8px; font-size: 34px; font-weight: 700; background: linear-gradient(90deg, #fff, var(--cyan)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  header.hero p { margin: 0; color: var(--text-dim); max-width: 720px; }
+
+  section.block { margin-bottom: 48px; }
+  section.block h2 {
+    font-size: 12px; text-transform: uppercase; letter-spacing: 2px; font-weight: 700;
+    color: var(--cyan); margin-bottom: 20px;
+  }
+
+  .swatches { display: flex; flex-wrap: wrap; gap: 18px; }
+  .swatch { width: 150px; padding: 14px; }
+  .swatch .fill { height: 60px; border-radius: 10px; margin-bottom: 10px; }
+  .swatch .name { font-weight: 700; font-size: 13px; }
+  .swatch .hex { font-size: 11px; color: var(--text-dim); }
+
+  .type-row { display: flex; align-items: baseline; gap: 20px; padding: 14px 24px; margin-bottom: 10px; }
+  .type-row .label { width: 150px; font-size: 12px; color: var(--text-dim); flex-shrink: 0; }
+  .type-row .sample.h1 { font-size: 30px; font-weight: 700; }
+  .type-row .sample.h2 { font-size: 21px; font-weight: 700; }
+  .type-row .sample.h3 { font-size: 15px; font-weight: 600; color: var(--cyan); text-transform: uppercase; letter-spacing: 1px; }
+  .type-row .sample.body { font-size: 15px; }
+  .type-row .sample.mono { font-family: "Consolas", monospace; font-size: 14px; color: var(--green); }
+  .type-row .sample.small { font-size: 12px; color: var(--text-dim); }
+
+  .spacing-row { display: flex; align-items: center; gap: 16px; margin-bottom: 12px; font-size: 12px; color: var(--text-dim); }
+  .spacing-row .bar { background: linear-gradient(90deg, var(--cyan), var(--violet)); border-radius: 6px; height: 14px; }
+  .spacing-row .label { width: 90px; }
+
+  .comp-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px; }
+  .comp-card { padding: 20px; }
+  .comp-card .cap { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: var(--text-dim); margin-bottom: 14px; }
+
+  select.ind, input.ind {
+    width: 100%; font-family: var(--sans); font-size: 14px; padding: 9px 12px;
+    border: 1px solid var(--glass-brd); border-radius: 10px; background: rgba(255,255,255,0.04); color: var(--text);
+  }
+  input.ind[disabled] { color: var(--text-dim); }
+  select.ind option { background: #101a33; color: var(--text); }
+
+  .btn-glass {
+    border: 1px solid var(--glass-brd); border-radius: 12px; background: rgba(255,255,255,0.06); color: var(--text);
+    padding: 11px 20px; font-weight: 600; font-size: 13px; cursor: pointer;
+  }
+  .btn-glass.acc { background: linear-gradient(90deg, var(--cyan), var(--violet)); color: #04101f; border: none; }
+  .btn-glass.danger { color: var(--red); border-color: rgba(255,93,122,0.5); }
+
+  .toggle-glass {
+    width: 52px; height: 28px; border-radius: 14px; position: relative; cursor: pointer; display: inline-block;
+    background: rgba(255,255,255,0.08); border: 1px solid var(--glass-brd);
+  }
+  .toggle-glass .thumb { width: 20px; height: 20px; border-radius: 50%; background: var(--text-dim); position: absolute; top: 3px; left: 3px; transition: left .15s; }
+  .toggle-glass.on { background: rgba(75,227,255,0.18); border-color: var(--cyan); }
+  .toggle-glass.on .thumb { left: 27px; background: var(--cyan); box-shadow: 0 0 12px var(--cyan); }
+
+  .chip-row { display: flex; gap: 10px; flex-wrap: wrap; }
+  .chip { font-size: 12px; font-weight: 600; padding: 7px 14px; border-radius: 20px; border: 1px solid var(--glass-brd); color: var(--text-dim); }
+  .chip.on { color: #04101f; background: var(--violet); border-color: var(--violet); }
+
+  .dot-row { display: flex; align-items: center; gap: 10px; font-size: 13px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--text-dim); }
+  .dot.on { background: var(--green); box-shadow: 0 0 10px var(--green); }
+
+  .slider-glass input[type=range] { width: 100%; accent-color: var(--cyan); }
+  .readout { font-size: 12px; text-align: right; color: var(--text-dim); }
+
+  .rules-list { font-size: 13px; color: var(--text-dim); line-height: 2; }
+  .rules-list b { color: var(--text); }
+
+  footer.note { margin-top: 56px; padding: 20px 26px; font-size: 12px; color: var(--text-dim); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="hero glass">
+    <div class="kicker">Style Guide 04</div>
+    <h1>Glass Console</h1>
+    <p>Frosted panels floating over a deep-space gradient, cyan/violet accent glow, and a "mission
+    control at night" mood — for a fully dark operating environment where the interface itself
+    should feel like an instrument panel, not a form.</p>
+  </header>
+
+  <section class="block">
+    <h2>Principle</h2>
+    <p style="max-width:760px; color:var(--text-dim);">
+      Where Field Industrial optimizes for direct sun, this guide is its opposite: a night-operations
+      or indoor-dark-room console, where a bright white UI would be actively harmful to an operator's
+      vision. Panels are translucent "glass" layered over a soft gradient background so nothing is a
+      flat rectangle; state changes are communicated with light — a glow, not just a color swap —
+      because color alone reads poorly against a dark background at a glance. This is the highest-
+      drama option of the five, aimed at making the sandbox demo feel like a spacecraft telemetry
+      readout rather than a settings page.
+    </p>
+  </section>
+
+  <section class="block">
+    <h2>Color</h2>
+    <div class="swatches">
+      <div class="swatch glass"><div class="fill" style="background:var(--bg1)"></div><div class="name">Base Navy</div><div class="hex">#0e1730</div></div>
+      <div class="swatch glass"><div class="fill" style="background:var(--text)"></div><div class="name">Text</div><div class="hex">#e8edf9</div></div>
+      <div class="swatch glass"><div class="fill" style="background:var(--cyan)"></div><div class="name">Cyan</div><div class="hex">#4be3ff</div></div>
+      <div class="swatch glass"><div class="fill" style="background:var(--violet)"></div><div class="name">Violet</div><div class="hex">#9d7bff</div></div>
+      <div class="swatch glass"><div class="fill" style="background:var(--green)"></div><div class="name">Confirmed</div><div class="hex">#3ef2a8</div></div>
+      <div class="swatch glass"><div class="fill" style="background:var(--red)"></div><div class="name">Danger</div><div class="hex">#ff5d7a</div></div>
+    </div>
+  </section>
+
+  <section class="block">
+    <h2>Typography</h2>
+    <div class="type-row glass"><div class="label">H1 / 30px / 700</div><div class="sample h1">Controls Sandbox</div></div>
+    <div class="type-row glass"><div class="label">H2 / 21px / 700</div><div class="sample h2">Data Sandbox</div></div>
+    <div class="type-row glass"><div class="label">H3 / 15px caps</div><div class="sample h3">Section Title</div></div>
+    <div class="type-row glass"><div class="label">Body / 15px</div><div class="sample body">Free-form text value for demo_string.</div></div>
+    <div class="type-row glass"><div class="label">Mono readout</div><div class="sample mono">demo_float ≈ 0.799</div></div>
+    <div class="type-row glass"><div class="label">Small / 12px</div><div class="sample small">Integer value within [0, 10]</div></div>
+  </section>
+
+  <section class="block">
+    <h2>Spacing scale</h2>
+    <div class="spacing-row"><div class="label">xs — 4px</div><div class="bar" style="width:4px"></div></div>
+    <div class="spacing-row"><div class="label">sm — 8px</div><div class="bar" style="width:8px"></div></div>
+    <div class="spacing-row"><div class="label">md — 16px</div><div class="bar" style="width:16px"></div></div>
+    <div class="spacing-row"><div class="label">lg — 24px</div><div class="bar" style="width:24px"></div></div>
+    <div class="spacing-row"><div class="label">xl — 38px</div><div class="bar" style="width:38px"></div></div>
+  </section>
+
+  <section class="block">
+    <h2>Components</h2>
+    <div class="comp-grid">
+
+      <div class="comp-card glass">
+        <div class="cap">Select / Menu</div>
+        <select class="ind"><option>Off</option><option selected>Low</option><option>High</option></select>
+      </div>
+
+      <div class="comp-card glass">
+        <div class="cap">Text input (editable)</div>
+        <input class="ind" type="text" value="hello nepi">
+      </div>
+
+      <div class="comp-card glass">
+        <div class="cap">Text input (read-only datum)</div>
+        <input class="ind" type="text" disabled value="14:22:07">
+      </div>
+
+      <div class="comp-card glass">
+        <div class="cap">Buttons</div>
+        <div style="display:flex; gap:12px; flex-wrap:wrap;">
+          <button class="btn-glass acc">Trigger</button>
+          <button class="btn-glass">Reset</button>
+          <button class="btn-glass danger">Factory Reset</button>
+        </div>
+      </div>
+
+      <div class="comp-card glass">
+        <div class="cap">Toggle (Bool control)</div>
+        <div style="display:flex; gap:18px; align-items:center;">
+          <div class="toggle-glass on"><div class="thumb"></div></div>
+          <div class="toggle-glass"><div class="thumb"></div></div>
+        </div>
+      </div>
+
+      <div class="comp-card glass">
+        <div class="cap">Multi-select chips (Selections)</div>
+        <div class="chip-row">
+          <div class="chip on">Red</div><div class="chip">Green</div><div class="chip on">Blue</div>
+        </div>
+      </div>
+
+      <div class="comp-card glass">
+        <div class="cap">Boolean indicator (read-only datum)</div>
+        <div style="display:flex; gap:18px;">
+          <div class="dot-row"><div class="dot on"></div>True</div>
+          <div class="dot-row"><div class="dot"></div>False</div>
+        </div>
+      </div>
+
+      <div class="comp-card glass">
+        <div class="cap">Slider (FloatSlider)</div>
+        <div class="slider-glass">
+          <input type="range" min="0" max="100" value="50">
+          <div class="readout">50.0 / 100.0</div>
+        </div>
+      </div>
+
+      <div class="comp-card glass">
+        <div class="cap">Status chip</div>
+        <div class="chip-row">
+          <div class="chip on">Confirmed</div>
+          <div class="chip">Pending</div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <section class="block">
+    <h2>Rules</h2>
+    <div class="rules-list">
+      <div>— Every panel is <b>translucent</b> (6–10% white over the gradient) with a 1px hairline border at 14% white, never opaque.</div>
+      <div>— State changes are shown with a <b>glow</b> (box-shadow bloom in the accent hue), not just a fill/color swap, so they read at a glance in the dark.</div>
+      <div>— Cyan = informational / primary action; violet = selection/secondary; green = confirmed; red = danger, reserved exclusively.</div>
+      <div>— Background is a fixed radial-gradient "nebula," never plain — panels float over it, they never replace it with flat color.</div>
+      <div>— Numeric/live readouts may use a monospace accent color (green) to read as telemetry, distinct from static body text.</div>
+    </div>
+  </section>
+
+  <footer class="note glass">
+    Glass Console covers the same 18 demo fields (10 controls + 8 data) as the real app. See
+    concept_4_glass_console.html and UI_mockups/README.md for the full layout and rationale.
+  </footer>
+
+</div>
+</body>
+</html>

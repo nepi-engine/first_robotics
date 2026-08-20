@@ -17,7 +17,7 @@
 
 import time
 
-from std_msgs.msg import Bool, Empty, String, Float32
+from std_msgs.msg import Bool, Empty, String, Float32, Int32
 
 from nepi_app_wpilib_if.msg import NepiAppWpilibIFStatus
 
@@ -96,6 +96,36 @@ class ConnectAppWpilibIF:
                 'msg': String,
                 'qsize': 1
             },
+            'set_team_number': {
+                'namespace': self.namespace,
+                'topic': 'set_team_number',
+                'msg': Int32,
+                'qsize': 1
+            },
+            'set_motor_slot_count': {
+                'namespace': self.namespace,
+                'topic': 'set_motor_slot_count',
+                'msg': Int32,
+                'qsize': 1
+            },
+            'set_motor_ids': {
+                'namespace': self.namespace,
+                'topic': 'set_motor_ids',
+                'msg': String,
+                'qsize': 1
+            },
+            'set_motor_names': {
+                'namespace': self.namespace,
+                'topic': 'set_motor_names',
+                'msg': String,
+                'qsize': 1
+            },
+            'set_rbx_enabled': {
+                'namespace': self.namespace,
+                'topic': 'set_rbx_enabled',
+                'msg': Bool,
+                'qsize': 1
+            },
             'save_config': {
                 'namespace': self.namespace,
                 'topic': 'save_config',
@@ -171,6 +201,103 @@ class ConnectAppWpilibIF:
             return nepi_sdk.convert_msg2dict(self.status_msg)
         return None
 
+    def get_motor_slots(self):
+        """Return the app's motor slot mapping and per-slot feedback.
+
+        One entry per slot in slot order, joining the configured RoboRIO
+        motor_id and display name to the per-slot RoboRIO fields that have no
+        nepi_interfaces/MotorStatus home (control_mode, commanded_output,
+        current_amps). The mappable feedback is on the standard motor contract
+        instead -- see get_motors_namespace().
+
+        Returns:
+            list: One dict per slot, or an empty list before the first status
+                message arrives.
+        """
+        if self.status_msg is None:
+            return []
+        slots = []
+        for feedback_msg in self.status_msg.motor_feedback:
+            slots.append(nepi_sdk.convert_msg2dict(feedback_msg))
+        return slots
+
+    def get_motors_namespace(self):
+        """Return where this app publishes the standard NEPI motor contract.
+
+        Returns:
+            str: Namespace of the app's motors interface, publishing
+                nepi_interfaces/MotorsStatus at <namespace>/motor_status. "None"
+                if the interface is not up, or None before the first status
+                message.
+        """
+        if self.status_msg is None:
+            return None
+        return self.status_msg.motors_namespace
+
+    def get_seen_motor_ids(self):
+        """Return the RoboRIO motor_ids currently present on NetworkTables.
+
+        These are the ids that actually exist on the robot, whether or not they
+        are mapped to a slot.
+
+        Returns:
+            list: int motor ids, or an empty list before the first status message.
+        """
+        if self.status_msg is None:
+            return []
+        return list(self.status_msg.nt_motor_ids)
+
+    def check_rbx_enabled(self):
+        """Return whether the app's RBX device is enabled.
+
+        Returns:
+            bool: True if the operator has enabled the RBX device.
+        """
+        if self.status_msg is None:
+            return False
+        return self.status_msg.rbx_enabled
+
+    def get_rbx_namespace(self):
+        """Return where this app's RBX device is advertised.
+
+        Returns:
+            str: RBX device namespace, "None" while the device is not built, or
+                None before the first status message.
+        """
+        if self.status_msg is None:
+            return None
+        return self.status_msg.rbx_namespace
+
+    def get_navpose_topic(self):
+        """Return where the robot's NavPose is published.
+
+        There is one owner of that pose and it is the RBX device, so this reads
+        "None" while the RBX device is disabled.
+
+        Returns:
+            str: NavPose namespace, or None before the first status message.
+        """
+        if self.status_msg is None:
+            return None
+        return self.status_msg.navpose_topic
+
+    def get_rbx_feedback_dict(self):
+        """Return the RBX Feedback input group as the app last read it.
+
+        Returns:
+            dict: supported_capabilities, active_request_id,
+                active_request_type, request_status and status_message, or None
+                before the first status message.
+        """
+        if self.status_msg is None:
+            return None
+        return dict(
+            supported_capabilities=list(self.status_msg.supported_capabilities),
+            active_request_id=self.status_msg.active_request_id,
+            active_request_type=self.status_msg.active_request_type,
+            request_status=self.status_msg.request_status,
+            status_message=self.status_msg.status_message)
+
     def set_enabled(self, enabled):
         """Enable or disable the app."""
         msg = Bool()
@@ -203,6 +330,82 @@ class ConnectAppWpilibIF:
         msg = String()
         msg.data = namespace
         self.con_node_if.publish_pub('set_obstacles_namespace', msg)
+
+    def set_team_number(self, team_number):
+        """Set the FRC team number the NetworkTables client connects to.
+
+        Args:
+            team_number (int): FRC team number, 1 or greater.
+        """
+        msg = Int32()
+        msg.data = int(team_number)
+        self.con_node_if.publish_pub('set_team_number', msg)
+
+    def set_motor_slot_count(self, slot_count):
+        """Set how many motor slots the app maps.
+
+        Resizing also resizes the motor id and motor name lists, so new slots
+        come up unmapped and unnamed.
+
+        Args:
+            slot_count (int): Number of motor slots, 0 or greater.
+        """
+        msg = Int32()
+        msg.data = int(slot_count)
+        self.con_node_if.publish_pub('set_motor_slot_count', msg)
+
+    def set_motor_ids(self, motor_ids):
+        """Set the ordered RoboRIO motor_id per slot.
+
+        Slot order is the NEPI motor index: it is what
+        nepi_interfaces/MotorControl.motor_ind selects and what names motor_0,
+        motor_1, ... in MotorsStatus. The whole list is sent in one message, so a
+        partial edit can never leave slot order ambiguous.
+
+        Args:
+            motor_ids (list): RoboRIO motor ids in slot order. Use -1 for an
+                unmapped slot. Accepts a list or an already-joined
+                comma-separated string.
+        """
+        msg = String()
+        if isinstance(motor_ids, str):
+            msg.data = motor_ids
+        else:
+            msg.data = ','.join([str(int(motor_id)) for motor_id in motor_ids])
+        self.con_node_if.publish_pub('set_motor_ids', msg)
+
+    def set_motor_names(self, motor_names):
+        """Set the ordered operator display name per slot.
+
+        These are display names only. MotorStatus.motor_name stays positional
+        (motor_0, motor_1, ...).
+
+        Args:
+            motor_names (list): Display names in slot order; a blank entry means
+                no name. Accepts a list or an already-joined comma-separated
+                string.
+        """
+        msg = String()
+        if isinstance(motor_names, str):
+            msg.data = motor_names
+        else:
+            msg.data = ','.join([str(name) for name in motor_names])
+        self.con_node_if.publish_pub('set_motor_names', msg)
+
+    def set_rbx_enabled(self, enabled):
+        """Enable or disable the app's RBX device.
+
+        Enabling presents the robot to the rest of NEPI as a commandable RBX
+        device, and is also what publishes its NavPose. The device appears once
+        the RoboRIO has reported its supported capabilities; read
+        rbx_namespace off the status message to find where.
+
+        Args:
+            enabled (bool): True to present the RBX device.
+        """
+        msg = Bool()
+        msg.data = bool(enabled)
+        self.con_node_if.publish_pub('set_rbx_enabled', msg)
 
     def save_config(self):
         self.con_node_if.publish_pub('save_config', Empty())
