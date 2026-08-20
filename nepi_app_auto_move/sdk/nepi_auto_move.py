@@ -139,65 +139,277 @@ MOVE_CONTROLS_DICT = {
 #   process reports COMPLETE for it rather than treating it as a failure.
 ##############################################################################
 
-def plan_move(goto_dict, np_depth_map, objects_list, targets_list, robot_dict, controls_dict):
-    """Plan the sequence of relative moves that satisfies a goto request.
+def _control_value(controls_dict, name, default):
+    """Read a value from either a live ControlsIF dict or the factory dict."""
+    if controls_dict is None or name not in controls_dict:
+        return default
+    entry = controls_dict.get(name)
+    if isinstance(entry, dict):
+        if 'value' in entry:
+            return entry.get('value')
+        if 'data' in entry:
+            return entry.get('data')
+        if 'default' in entry:
+            return entry.get('default')
+    return entry
 
-    This is the placeholder implementation. It returns a single direct move to
-    the requested offset with no avoidance of any kind: the depth map, the
-    object list, the target list and the robot state are accepted and ignored.
-    Replace the body to add real move logic; see the EXTENSION POINT block above
-    this function for the contract it must keep.
 
-    Args:
-        goto_dict (dict): The requested relative move, in METERS, in the robot
-            body frame (x forward, y left, z up). Keys: 'x_m', 'y_m', 'z_m',
-            and 'max_move_m', the largest forward distance the operator allows.
-        np_depth_map (numpy.ndarray): The newest depth map frame for the
-            selected image source, in MILLIMETERS, or None when no depth map is
-            connected. Non-returns are NaN or non-positive.
-        objects_list (list): Detected objects for the selected image, each a
-            dict converted from a nepi_interfaces/Detection. Pixel bounds are
-            'xmin'/'ymin'/'xmax'/'ymax'; 'range_m' is METERS. Empty when no
-            detector is running on this image.
-        targets_list (list): Located targets for the selected image, each a dict
-            converted from a nepi_interfaces/Target. Pixel bounds carry the
-            '_pixel' suffix; 'range_m' is METERS. Empty when none are published.
-        robot_dict (dict): What the RBX connect interface reports about the
-            selected robot. Keys: 'namespace', 'connected', 'ready', and
-            'status_dict', the DeviceRBXStatus as a dict or None.
-        controls_dict (dict): The live nepi_controls dictionary for this app's
-            control set, built from MOVE_CONTROLS_DICT above.
+def _as_float(value, default):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
 
-    Returns:
-        list: Move steps, executed in order, each a dict with keys 'x_m',
-            'y_m', 'z_m' (METERS, relative, body frame), 'yaw_deg' (DEGREES,
-            relative, zero holds the current heading) and 'description', a short
-            operator-facing string. An empty list means no move is needed.
-    """
-    x_m = float(goto_dict.get('x_m', 0.0))
-    y_m = float(goto_dict.get('y_m', 0.0))
-    z_m = float(goto_dict.get('z_m', 0.0))
 
-    # PLACEHOLDER: one straight move to the requested offset. Nothing here
-    # consults np_depth_map, objects_list, targets_list or robot_dict -- a real
-    # planner is exactly the code that does.
-    distance_m = math.sqrt((x_m * x_m) + (y_m * y_m) + (z_m * z_m))
-    if distance_m <= 0.0:
-        logger.log_info("Goto request is a zero move, no steps planned")
-        return []
+def _as_bool(value, default):
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in ['true', '1', 'yes', 'on']
+    if value is None:
+        return default
+    return bool(value)
 
-    step_dict = {
+
+def _distance_3d(x_m, y_m, z_m):
+    return math.sqrt((x_m * x_m) + (y_m * y_m) + (z_m * z_m))
+
+
+def _make_step(x_m, y_m, z_m, yaw_deg, description):
+    return {
         'x_m': x_m,
         'y_m': y_m,
         'z_m': z_m,
-        # Zero holds the current heading, per the GotoPosition contract. A
-        # planner that turns the robot sets this.
-        'yaw_deg': 0.0,
-        'description': 'Direct move ' + str(round(distance_m, 2)) + 'm',
+        'yaw_deg': yaw_deg,
+        'description': description,
     }
 
-    return [step_dict]
 
+def _split_translation_step(x_m, y_m, z_m, max_step_m, description):
+    distance_m = _distance_3d(x_m, y_m, z_m)
+    if distance_m <= 0.0:
+        return []
+    if max_step_m <= 0.0:
+        max_step_m = distance_m
+    step_count = int(math.ceil(distance_m / max_step_m))
+    steps = []
+    for i in range(step_count):
+        ratio = 1.0 / float(step_count)
+        step_description = description
+        if step_count > 1:
+            step_description = description + ' part ' + str(i + 1) + '/' + str(step_count)
+        steps.append(_make_step(x_m * ratio, y_m * ratio, z_m * ratio, 0.0, step_description))
+    return steps
+
+
+def _entry_to_xy(entry):
+    """Convert a range/bearing perception entry into body-frame x/y metres."""
+    if not isinstance(entry, dict):
+        return None
+    range_m = _as_float(entry.get('range_m', None), -999.0)
+    azimuth_deg = _as_float(entry.get('azimuth_deg', None), -999.0)
+    if range_m <= 0.0 or range_m == -999.0 or azimuth_deg == -999.0:
+        return None
+    azimuth_rad = math.radians(azimuth_deg)
+    x_m = range_m * math.cos(azimuth_rad)
+    # Positive azimuth is to the camera/right side; body y is positive left.
+    y_m = -range_m * math.sin(azimuth_rad)
+    return {
+        'name': str(entry.get('name', 'obstacle')),
+        'x_m': x_m,
+        'y_m': y_m,
+        'range_m': range_m,
+    }
+
+
+def _collect_obstacles(obstacles_list, objects_list):
+    obstacles = []
+    for entry in obstacles_list or []:
+        obstacle = _entry_to_xy(entry)
+        if obstacle is not None:
+            obstacle['source'] = 'obstacle'
+            obstacles.append(obstacle)
+    for entry in objects_list or []:
+        obstacle = _entry_to_xy(entry)
+        if obstacle is not None:
+            obstacle['source'] = 'object'
+            obstacles.append(obstacle)
+    return obstacles
+
+
+def _blocking_obstacles(dest_x, dest_y, obstacles, clearance_m):
+    path_len = math.sqrt((dest_x * dest_x) + (dest_y * dest_y))
+    if path_len <= 0.0:
+        return []
+
+    ux = dest_x / path_len
+    uy = dest_y / path_len
+    nx = -uy
+    ny = ux
+
+    blocked = []
+    for obstacle in obstacles:
+        ox = obstacle['x_m']
+        oy = obstacle['y_m']
+        along_m = (ox * ux) + (oy * uy)
+        if along_m <= 0.0 or along_m >= path_len:
+            continue
+        lateral_m = (ox * nx) + (oy * ny)
+        miss_m = abs(lateral_m)
+        if miss_m < clearance_m:
+            item = dict(obstacle)
+            item['along_m'] = along_m
+            item['lateral_m'] = lateral_m
+            item['miss_m'] = miss_m
+            blocked.append(item)
+    blocked.sort(key = lambda item: item['along_m'])
+    return blocked
+
+
+def _choose_avoidance_side(blocked, obstacles, dest_x, dest_y, clearance_m):
+    path_len = math.sqrt((dest_x * dest_x) + (dest_y * dest_y))
+    ux = dest_x / path_len
+    uy = dest_y / path_len
+    nx = -uy
+    ny = ux
+
+    best_side = 1.0
+    best_score = None
+    for side in [-1.0, 1.0]:
+        offset_m = side * (clearance_m + 0.5)
+        score = None
+        for obstacle in obstacles:
+            along_m = (obstacle['x_m'] * ux) + (obstacle['y_m'] * uy)
+            if along_m <= 0.0 or along_m >= path_len:
+                continue
+            lateral_m = (obstacle['x_m'] * nx) + (obstacle['y_m'] * ny)
+            separation_m = abs(lateral_m - offset_m)
+            if score is None or separation_m < score:
+                score = separation_m
+        if score is None:
+            score = clearance_m + 0.5
+        if best_score is None or score > best_score:
+            best_score = score
+            best_side = side
+
+    if len(blocked) > 0:
+        first_lateral = blocked[0].get('lateral_m', 0.0)
+        if abs(first_lateral) > 0.01:
+            best_side = -1.0 if first_lateral > 0.0 else 1.0
+    return best_side
+
+
+def _build_avoidance_waypoints(dest_x, dest_y, clearance_m, blocked, obstacles):
+    path_len = math.sqrt((dest_x * dest_x) + (dest_y * dest_y))
+    if path_len <= 0.0 or len(blocked) == 0:
+        return [(dest_x, dest_y)]
+
+    ux = dest_x / path_len
+    uy = dest_y / path_len
+    nx = -uy
+    ny = ux
+    side = _choose_avoidance_side(blocked, obstacles, dest_x, dest_y, clearance_m)
+    lateral_offset_m = side * (clearance_m + 0.5)
+
+    first_block = blocked[0]
+    last_block = blocked[-1]
+    before_m = max(first_block['along_m'] - clearance_m, 0.0)
+    after_m = min(last_block['along_m'] + clearance_m, path_len)
+
+    return [
+        ((ux * before_m) + (nx * lateral_offset_m),
+         (uy * before_m) + (ny * lateral_offset_m)),
+        ((ux * after_m) + (nx * lateral_offset_m),
+         (uy * after_m) + (ny * lateral_offset_m)),
+        (dest_x, dest_y),
+    ]
+
+
+def plan_move(goto_dict, np_depth_map, objects_list, targets_list, robot_dict, controls_dict, obstacles_list = None):
+    """Plan the sequence of relative moves that satisfies a goto request.
+
+    Builds a conservative RBX goto_position plan. The planner can stop short of
+    the clicked point, hold altitude, split long moves into smaller steps, turn
+    toward the target first, and route laterally around range/bearing obstacles.
+    Obstacles from the obstacle app and ranged object detections are both used
+    when avoid_obstacles is enabled.
+    """
+    x_m = _as_float(goto_dict.get('x_m', 0.0), 0.0)
+    y_m = _as_float(goto_dict.get('y_m', 0.0), 0.0)
+    z_m = _as_float(goto_dict.get('z_m', 0.0), 0.0)
+
+    max_step_m = _as_float(_control_value(controls_dict, 'max_step_m', 2.0), 2.0)
+    standoff_m = _as_float(_control_value(controls_dict, 'standoff_m', 0.5), 0.5)
+    clearance_m = _as_float(_control_value(controls_dict, 'clearance_m', 0.5), 0.5)
+    hold_altitude = _as_bool(_control_value(controls_dict, 'hold_altitude', True), True)
+    face_target = _as_bool(_control_value(controls_dict, 'face_target', False), False)
+    avoid_obstacles = _as_bool(_control_value(controls_dict, 'avoid_obstacles', False), False)
+
+    if max_step_m < 0.1:
+        max_step_m = 0.1
+    if standoff_m < 0.0:
+        standoff_m = 0.0
+    if clearance_m < 0.0:
+        clearance_m = 0.0
+    if hold_altitude == True:
+        z_m = 0.0
+
+    distance_m = _distance_3d(x_m, y_m, z_m)
+    if distance_m <= 0.0:
+        logger.log_info('Goto request is a zero move, no steps planned')
+        return []
+
+    if standoff_m > 0.0:
+        if distance_m <= standoff_m:
+            logger.log_info('Goto request is inside standoff distance, no steps planned')
+            return []
+        scale = (distance_m - standoff_m) / distance_m
+        x_m = x_m * scale
+        y_m = y_m * scale
+        z_m = z_m * scale
+
+    waypoints = [(x_m, y_m)]
+    obstacles = []
+    blocked = []
+    if avoid_obstacles == True and clearance_m > 0.0:
+        obstacles = _collect_obstacles(obstacles_list, objects_list)
+        blocked = _blocking_obstacles(x_m, y_m, obstacles, clearance_m)
+        if len(blocked) > 0:
+            waypoints = _build_avoidance_waypoints(x_m, y_m, clearance_m, blocked, obstacles)
+
+    steps = []
+    current_x = 0.0
+    current_y = 0.0
+
+    if face_target == True:
+        yaw_deg = math.degrees(math.atan2(y_m, x_m))
+        if abs(yaw_deg) > 1.0:
+            steps.append(_make_step(0.0, 0.0, 0.0, yaw_deg,
+                                    'Turn toward destination ' + str(round(yaw_deg, 1)) + 'deg'))
+            if len(blocked) == 0:
+                waypoints = [(math.sqrt((x_m * x_m) + (y_m * y_m)), 0.0)]
+
+    for i, waypoint in enumerate(waypoints):
+        next_x = waypoint[0]
+        next_y = waypoint[1]
+        step_x = next_x - current_x
+        step_y = next_y - current_y
+        step_z = z_m if i == len(waypoints) - 1 else 0.0
+        description = 'Move to destination'
+        if len(blocked) > 0:
+            if i == 0:
+                description = 'Avoid obstacle: offset from path'
+            elif i == len(waypoints) - 1:
+                description = 'Return to destination path'
+            else:
+                description = 'Avoid obstacle: pass obstruction'
+        steps.extend(_split_translation_step(step_x, step_y, step_z, max_step_m, description))
+        current_x = next_x
+        current_y = next_y
+
+    if len(steps) == 0:
+        logger.log_info('Planner produced no non-zero RBX moves')
+    return steps
 
 def get_controls_dict():
     """Return a copy of this module's control definition dictionary.

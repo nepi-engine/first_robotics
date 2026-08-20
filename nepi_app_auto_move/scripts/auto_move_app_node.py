@@ -77,16 +77,17 @@ class NepiAutoMoveApp(object):
         nepi_sdk.spin()
         #########################################################
 
-    def planMove(self, goto_dict, np_depth_map, objects_list, targets_list, robot_dict, controls_dict):
+    def planMove(self, goto_dict, np_depth_map, objects_list, targets_list, robot_dict, controls_dict, obstacles_list = None):
         # Called by AutoMoveIF once per goto trigger. Thin pass-through to the
         # SDK module so the planner ships in nepi_sdk and any other node can call
-        # it with the same six arguments.
+        # it with the same planner arguments.
         return nepi_auto_move.plan_move(goto_dict,
                                         np_depth_map,
                                         objects_list,
                                         targets_list,
                                         robot_dict,
-                                        controls_dict)
+                                        controls_dict,
+                                        obstacles_list)
 
 
 #########################################

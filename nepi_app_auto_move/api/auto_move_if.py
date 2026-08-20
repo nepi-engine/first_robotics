@@ -1388,7 +1388,8 @@ class AutoMoveIF:
                              copy.deepcopy(self.objects_list),
                              copy.deepcopy(self.targets_list),
                              robot_dict,
-                             controls_dict)
+                             controls_dict,
+                             copy.deepcopy(self.obstacles_list))
 
         if plan is None or len(plan) == 0:
             self.goto_state = NepiAppAutoMoveStatus.GOTO_STATE_COMPLETE
