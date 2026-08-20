@@ -13,22 +13,34 @@ app is for. This guide covers how to change it.
 
 ## 1. What these files are
 
-Four JavaScript files draw the app's page in the RUI. One Python file owns
-everything the page displays. Here is the map.
+Seven files in `rui/` draw the app's page in the RUI: four components plus a
+tab bar, a theme, and a CSS override file for the two widgets a theme file
+cannot reach. One Python file owns everything the page displays. Here is the
+map.
+
+> **Line numbers in this guide.** Every `file.js:NNN` reference below was
+> accurate as of the pre-Glass-Console layout. The Glass Console restyle (see
+> `docs/UI_Redesign_2026.md`) reworked `renderControl()`, `renderDatum()`, and
+> every `render()` method, which shifted most line numbers. Treat a cited
+> number as "roughly here, in this named function" and use the function name
+> to find the real location; do not assume the exact line is still correct.
 
 ```
 nepi_app_controls_sandbox/
 ├── rui/
-│   ├── NepiAppControlsSandbox.js           # the page: lays out the three boxes
-│   ├── NepiAppControlsSandbox-Controls.js  # the CONTROLS SANDBOX box
-│   ├── NepiAppControlsSandbox-Data.js      # the DATA SANDBOX box
-│   └── NepiAppControlsSandbox-Settings.js  # the CONTROLS SETTINGS box (develop mode only)
+│   ├── NepiAppControlsSandbox.js              # the page: lays out imgcol/sidecol, topbar
+│   ├── NepiAppControlsSandbox-Controls.js     # the CONTROLS SANDBOX box
+│   ├── NepiAppControlsSandbox-Data.js         # the DATA SANDBOX box (+ telemetry-tile mode)
+│   ├── NepiAppControlsSandbox-Settings.js     # the CONTROLS SETTINGS box (develop mode only)
+│   ├── NepiAppControlsSandbox-Tabs.js         # the Choices/Actions/Values/Data tab bar
+│   ├── NepiAppControlsSandbox-Theme.js        # Glass Console color/spacing/style tokens
+│   └── NepiAppControlsSandbox-GlassConsole.css # react-toggle / rc-slider overrides, scoped .csbx-glass
 ├── scripts/
-│   └── controls_sandbox_app_node.py        # the ROS node: declares every control and datum
+│   └── controls_sandbox_app_node.py           # the ROS node: declares every control and datum
 ├── msg/
-│   └── ControlsSandboxStatus.msg           # this app's own small status message
+│   └── ControlsSandboxStatus.msg              # this app's own small status message
 └── params/
-    └── controls_sandbox_app_params.yaml    # app metadata + the RUI file registration list
+    └── controls_sandbox_app_params.yaml       # app metadata + the RUI file registration list
 ```
 
 ### Which file do I edit?
@@ -89,6 +101,9 @@ RUI_DICT:
   - NepiAppControlsSandbox-Controls.js
   - NepiAppControlsSandbox-Data.js
   - NepiAppControlsSandbox-Settings.js
+  - NepiAppControlsSandbox-Tabs.js
+  - NepiAppControlsSandbox-Theme.js
+  - NepiAppControlsSandbox-GlassConsole.css
   rui_main_file: NepiAppControlsSandbox.js
   rui_main_class: NepiAppControlsSandbox
 ```
@@ -1905,12 +1920,35 @@ rebuilding the RUI will help.
 
 `NepiAppControlsSandbox-Controls.js` and `NepiAppControlsSandbox-Data.js` are
 **app-local forks** of `Nepi_IF_Controls.js` and `Nepi_IF_Data.js` in
-`nepi_rui`. As of this writing the Controls fork differs from its origin only in
-the header comment and the class name — it has not diverged yet. That is fine
-and expected; the fork exists so it *can* diverge without touching the shared
-component.
+`nepi_rui`. As of the Glass Console restyle (see `docs/UI_Redesign_2026.md`)
+both forks have diverged from their origin: `renderControl()` /
+`renderDatum()` no longer build `<Label>`/`<Section>`/`<Columns>` markup --
+those shared components have no `style`/`className` hook a consumer can reach
+(confirmed by reading their source), so this app draws its own row markup
+instead, styled from `NepiAppControlsSandbox-Theme.js`. `Input`, `Select`,
+`AsyncToggle`, and `BooleanIndicator` are still used, since all four do accept
+a `style` and/or `className` override. That is fine and expected; the fork
+exists so it *can* diverge without touching the shared component.
 
 Change these two files freely. **Do not change the originals in `nepi_rui`.**
+
+Two files exist only for this app's visual theme and are not present in
+`Nepi_IF_Controls.js` / `Nepi_IF_Data.js` at all:
+
+- `NepiAppControlsSandbox-Theme.js` — every Glass Console color, spacing, and
+  inline-style rule, ported from `UI_mockups/style_guide_4_glass_console.html`.
+  Import it wherever a color or shared style rule is needed; do not hardcode a
+  hex value or a magic-number style object in a second place.
+- `NepiAppControlsSandbox-GlassConsole.css` — the handful of overrides inline
+  styles cannot reach, because `react-toggle` (via `AsyncToggle.js`) and
+  `rc-slider` (via `AdjustmentWidgets.js` / `RangeAdjustment.js`) render their
+  own fixed markup with no prop-level style hook. Every rule in this file is
+  scoped under `.csbx-glass`, the class `NepiAppControlsSandbox.js`'s root div
+  carries, so nothing here can leak into another app that also uses those
+  third-party widgets. Imported once, from `NepiAppControlsSandbox.js`.
+
+Both are registered in `params/controls_sandbox_app_params.yaml`'s
+`RUI_DICT.rui_files`, same as every other file in this directory.
 
 `NepiAppControlsSandbox-Settings.js` is a different case: it is a
 sandbox-specific panel, not a fork, and most of what it publishes has no

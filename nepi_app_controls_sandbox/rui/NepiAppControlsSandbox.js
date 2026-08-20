@@ -9,25 +9,30 @@
 import React, { Component } from "react"
 import { observer, inject } from "mobx-react"
 
-import { Columns, Column } from "./Columns"
-import Styles from "./Styles"
-
 import NepiIFConnectData from "./Nepi_IF_ConnectData"
 
 import NepiAppControlsSandboxControls from "./NepiAppControlsSandbox-Controls"
 import NepiAppControlsSandboxData from "./NepiAppControlsSandbox-Data"
 import NepiAppControlsSandboxSettings from "./NepiAppControlsSandbox-Settings"
 import NepiAppControlsSandboxTabs from "./NepiAppControlsSandbox-Tabs"
+import Theme from "./NepiAppControlsSandbox-Theme"
+import "./NepiAppControlsSandbox-GlassConsole.css"
 
 
 @inject("ros")
 @observer
 
-// Controls Sandbox main panel: the left column stacks an Image connect
-// selector strip, the image viewer, and a hint caption in one bordered group
-// (concept_3_tabbed_groups.html's .imgcol); the right column holds the
-// Choices/Actions/Values/Data tab group and, in develop run mode or when
-// admin mode is set, a Controls Settings box below it.
+// Controls Sandbox main panel, styled as Glass Console
+// (UI_mockups/concept_4_glass_console.html + style_guide_4_glass_console.html):
+// translucent panels floating over a fixed dark radial-gradient background.
+// The left column ("imgcol") stacks the Connections panel (connect selector,
+// image viewer, hint caption) and a Live Data Telemetry tile strip; the right
+// column ("sidecol") holds the Choices/Actions/Values/Data tab group and, in
+// develop run mode or when admin mode is set, a Controls Settings box below
+// it. NepiAppControlsSandbox-Theme.js carries every color/spacing token this
+// file and its siblings use; NepiAppControlsSandbox-GlassConsole.css carries
+// the handful of overrides inline styles cannot reach (react-toggle,
+// rc-slider). Both are scoped to this app only -- see their own headers.
 //
 // The image column follows nepi_app_auto_move for the connect wiring. Its
 // connect namespace is <app>/image_connect, owned by the ConnectImageIF in
@@ -153,61 +158,73 @@ class NepiAppControlsSandbox extends Component {
     }
   }
 
-  // Left column: connect selector strip, image viewer, and a hint caption, all
-  // sharing one border -- concept_3_tabbed_groups.html's .imgcol, where the
-  // connect row sits directly above the viewer instead of in a separate
-  // "CONNECTIONS" Section next to the tabs. Two Nepi_IF_ConnectData instances
-  // still share the one image_connect namespace exactly as before: this method
-  // mounts the selector (show_selector={true} show_data={false}) above the
-  // viewer (show_selector={false} show_data={true}), so whichever topic the
-  // operator picks in the top strip is what streams below it. Both run
-  // make_section={false} since the bordering is drawn here, not by Section.
+  // Left column: a "Connections" glass panel (selector, viewer backdrop, hint
+  // caption) followed by a "Live Data Telemetry" glass panel of glowing tiles
+  // -- concept_4_glass_console.html's .imgcol. Two Nepi_IF_ConnectData
+  // instances still share the one image_connect namespace exactly as before:
+  // this method mounts the selector (show_selector={true} show_data={false})
+  // above the viewer (show_selector={false} show_data={true}), so whichever
+  // topic the operator picks in the top strip is what streams below it. Both
+  // run make_section={false} since the panel chrome is drawn here.
   renderImageColumn() {
     const connectNamespace = this.getConnectNamespace(this.state.imageConnectName)
-    const borderStyle = `1px solid ${Styles.vars.colors.grey1}`
+    const dataNamespace = this.getDataNamespace()
+
+    // Live Data Telemetry strip -- concept_4_glass_console.html's glowing
+    // number tiles, a curated highlight of 4 of the 8 demo data fields (the
+    // full set stays reachable, unfiltered, in the Data tab to the right).
+    // ints_data[1] is the second element of the demo_ints_data array
+    // (createDataInitDict() writes [count, -count]), shown as its own tile.
+    const tile_fields = [
+      { name: "demo_int_data", label: "demo_int_data" },
+      { name: "demo_float_data", label: "demo_float_data" },
+      { name: "demo_ints_data", label: "ints[1]", index: 1 },
+      { name: "demo_string_data", label: "demo_string_data" }
+    ]
 
     return (
       <React.Fragment>
+        <div style={Theme.glassPanel} className="csbx-glass-panel">
+          <div style={Theme.panelCaption}>Connections</div>
 
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", border: borderStyle, borderBottom: "none", padding: `${Styles.vars.spacing.small.raw}px ${Styles.vars.spacing.small.raw + 2}px` }}>
-          <Columns>
-            <Column>
-              <NepiIFConnectData
-                namespace={connectNamespace}
-                title={"Image"}
-                show_selector={true}
-                show_data={false}
-                make_section={false}
-              />
-            </Column>
-          </Columns>
+          <NepiIFConnectData
+            namespace={connectNamespace}
+            title={"Image"}
+            show_selector={true}
+            show_data={false}
+            make_section={false}
+          />
+
+          <div style={Theme.viewer}>
+            <NepiIFConnectData
+              namespace={connectNamespace}
+              title={"Image"}
+              show_selector={false}
+              show_data={true}
+              make_section={false}
+            />
+          </div>
+
+          <div style={Theme.hint}>Its stream feeds the viewer above.</div>
         </div>
 
-        <div style={{ border: borderStyle, borderTop: "none", borderBottom: "none" }}>
-          <Columns>
-            <Column>
-              <NepiIFConnectData
-                namespace={connectNamespace}
-                title={"Image"}
-                show_selector={false}
-                show_data={true}
-                make_section={false}
-              />
-            </Column>
-          </Columns>
+        <div style={Theme.glassPanel} className="csbx-glass-panel">
+          <div style={Theme.panelCaption}>Live Data Telemetry</div>
+          <NepiAppControlsSandboxData
+            key={dataNamespace + "_tiles"}
+            namespace={dataNamespace}
+            render_mode="tiles"
+            tile_fields={tile_fields}
+          />
         </div>
-
-        <div style={{ border: borderStyle, borderTop: "none", padding: `${Styles.vars.spacing.xs.raw}px ${Styles.vars.spacing.small.raw + 2}px`, fontSize: Styles.vars.fontSize.small, color: Styles.vars.colors.grey2 }}>
-          Its stream feeds the viewer above.
-        </div>
-
       </React.Fragment>
     )
   }
 
   // The CONTROLS SANDBOX and DATA SANDBOX boxes, presented as four tabs
-  // (Choices, Actions, Values, Data) instead of two stacked Sections. Purely a
-  // RUI-side regrouping: createControlsInitDict() / createDataInitDict() in
+  // (Choices, Actions, Values, Data) inside one glass panel
+  // (NepiAppControlsSandbox-Tabs.js). Purely a RUI-side regrouping:
+  // createControlsInitDict() / createDataInitDict() in
   // controls_sandbox_app_node.py are unchanged, and every control keeps
   // exactly its current wiring -- each tab mounts the same
   // NepiAppControlsSandboxControls / -Data components used before, just with a
@@ -218,7 +235,7 @@ class NepiAppControlsSandbox extends Component {
   // FloatSliders); Data holds the entire read-only Data Sandbox box
   // unfiltered. show_visibility_toggle={false} on every instance suppresses
   // the per-box "Show Controls"/"Show Data" toggle so it does not repeat once
-  // per tab -- concept_3_tabbed_groups.html has no such toggle at all.
+  // per tab.
   renderControlsDataTabs() {
     const controlsNamespace = this.getControlsNamespace()
     const dataNamespace = this.getDataNamespace()
@@ -281,6 +298,13 @@ class NepiAppControlsSandbox extends Component {
     )
   }
 
+  // Whole-page Glass Console chrome -- concept_4_glass_console.html's <body>:
+  // a fixed dark radial-gradient background behind everything, a topbar with
+  // the app title and a "GLASS CONSOLE" badge, then the 55%/45% imgcol/sidecol
+  // split. The "csbx-glass" class is the one hook NepiAppControlsSandbox
+  // -GlassConsole.css scopes every rule under, so react-toggle and rc-slider
+  // (third-party, shared with every other NEPI app) are only reskinned inside
+  // this app's own subtree.
   render() {
     const controlsNamespace = this.getControlsNamespace()
 
@@ -289,38 +313,39 @@ class NepiAppControlsSandbox extends Component {
     const show_settings = (systemRunMode === "develop" || systemAdminModeSet === true)
 
     return (
-      <React.Fragment>
-        <Columns>
-          <Column>
+      <div className="csbx-glass" style={{ ...Theme.pageBackground, padding: "16px", borderRadius: "16px" }}>
 
-            <div style={{ display: 'flex' }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "4px 6px 18px" }}>
+          <div style={{ fontSize: "17px", fontWeight: 700, background: `linear-gradient(90deg, #fff, ${Theme.colors.cyan})`, WebkitBackgroundClip: "text", backgroundClip: "text", color: "transparent" }}>
+            ◈ CONTROLS SANDBOX
+          </div>
+          <div style={{ fontSize: "10px", fontWeight: 700, letterSpacing: "1px", padding: "5px 12px", borderRadius: "20px", color: Theme.colors.cyan, border: `1px solid ${Theme.colors.glassBrd}`, background: Theme.colors.glass }}>
+            GLASS CONSOLE
+          </div>
+        </div>
 
-              <div style={{ width: "58%" }}>
-                {this.renderImageColumn()}
-              </div>
+        <div style={{ display: "flex", gap: "20px" }}>
 
-              <div style={{ width: '2%' }}>
-                {}
-              </div>
+          <div style={{ width: "55%" }}>
+            {this.renderImageColumn()}
+          </div>
 
-              <div style={{ width: "40%" }}>
+          <div style={{ width: "45%" }}>
 
-                {this.renderControlsDataTabs()}
+            {this.renderControlsDataTabs()}
 
-                { (show_settings === true) ?
-                  <NepiAppControlsSandboxSettings
-                    namespace={controlsNamespace}
-                    make_section={true}
-                  />
-                  : null }
+            { (show_settings === true) ?
+              <NepiAppControlsSandboxSettings
+                namespace={controlsNamespace}
+                make_section={true}
+              />
+              : null }
 
-              </div>
+          </div>
 
-            </div>
+        </div>
 
-          </Column>
-        </Columns>
-      </React.Fragment>
+      </div>
     )
   }
 }

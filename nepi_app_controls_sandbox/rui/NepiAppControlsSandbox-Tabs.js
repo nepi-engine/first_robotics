@@ -21,12 +21,17 @@
 /*
  * APP-LOCAL tab bar for nepi_app_controls_sandbox. No shared tab component
  * exists in nepi_rui (checked: no Tab*.js anywhere under
- * rui_webserver/rui-app/src/), so this is built from scratch using the same
- * Styles.js color tokens every other component in this app already uses
- * (grey1 borders, blue active-state, white background). Presentation only:
- * it holds which tab is active and renders whichever child corresponds to it.
- * It does not touch ROS, does not filter or transform its children's data,
- * and does not know what a "control" or "datum" is.
+ * rui_webserver/rui-app/src/), so this is built from scratch. Presentation
+ * only: it holds which tab is active and renders whichever child corresponds
+ * to it. It does not touch ROS, does not filter or transform its children's
+ * data, and does not know what a "control" or "datum" is.
+ *
+ * Styled to match concept_4_glass_console.html's .tabbar: a glass panel
+ * wrapping equal-width pill tabs, with the active tab picked out by a
+ * cyan-to-violet gradient fill rather than a plain color swap -- the "state is
+ * a glow, not just a color" rule from style_guide_4_glass_console.html's
+ * Rules section. Tokens come from NepiAppControlsSandbox-Theme.js, this app's
+ * own Glass Console port, not the shared Styles.js every other app inherits.
  *
  * Two rules keep it working, matching every other file in this directory:
  *   1. This file must stay listed under RUI_DICT.rui_files in
@@ -35,48 +40,7 @@
  */
 import React, { Component } from "react"
 
-import Styles from "./Styles"
-
-const styles = Styles.Create({
-  // Matches concept_3_tabbed_groups.html's .panel: bordered box (border: 1px
-  // solid grey1), but no padding of its own -- the mockup's .tabbar sits flush
-  // against the panel's top/left/right edges and only .tabpage carries the
-  // 16px padding (applied via tabPage below), so the tab bar spans edge to
-  // edge exactly as in the mockup screenshot.
-  panel: {
-    textAlign: "left",
-    marginTop: Styles.vars.spacing.regular,
-    border: `1px solid ${Styles.vars.colors.grey1}`
-  },
-  bar: {
-    display: "flex",
-    borderBottom: `1px solid ${Styles.vars.colors.grey1}`
-  },
-  tab: {
-    flex: 1,
-    textAlign: "center",
-    padding: `${Styles.vars.spacing.small.raw}px ${Styles.vars.spacing.xs.raw}px`,
-    cursor: "pointer",
-    fontSize: Styles.vars.fontSize.small,
-    textTransform: "uppercase",
-    letterSpacing: "0.03em",
-    color: Styles.vars.colors.grey2,
-    borderRight: `1px solid ${Styles.vars.colors.grey1}`
-  },
-  tabLast: {
-    borderRight: "none"
-  },
-  tabActive: {
-    background: Styles.vars.colors.blue,
-    color: Styles.vars.colors.white,
-    fontWeight: "bold"
-  },
-  // The mockup's .tabpage padding: 16px, applied to the content area below
-  // the tab bar only, so tab rows still line up with Section's own padding.
-  tabPage: {
-    padding: Styles.vars.spacing.regular
-  }
-})
+import Theme from "./NepiAppControlsSandbox-Theme"
 
 // Tab bar + tab pages. `tabs` is an array of { title, content }; only the
 // active tab's content is rendered (the mockup's showTab() behavior, done
@@ -95,14 +59,10 @@ class NepiAppControlsSandboxTabs extends Component {
     const activeIndex = this.state.activeIndex
 
     return (
-      <div style={styles.panel}>
-        <div style={styles.bar}>
+      <div style={Theme.glassPanel} className="csbx-glass-panel">
+        <div style={Theme.tabBar}>
           {tabs.map((tab, i) => {
-            const tabStyle = {
-              ...styles.tab,
-              ...(i === tabs.length - 1 ? styles.tabLast : {}),
-              ...(i === activeIndex ? styles.tabActive : {})
-            }
+            const tabStyle = (i === activeIndex) ? { ...Theme.tab, ...Theme.tabActive } : Theme.tab
             return (
               <div
                 key={tab.title}
@@ -114,7 +74,7 @@ class NepiAppControlsSandboxTabs extends Component {
             )
           })}
         </div>
-        <div style={styles.tabPage}>
+        <div>
           {(tabs[activeIndex] !== undefined) ? tabs[activeIndex].content : null}
         </div>
       </div>

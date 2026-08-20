@@ -39,15 +39,11 @@ import { observer, inject } from "mobx-react"
 
 import Toggle from "react-toggle"
 import AsyncToggle from "./AsyncToggle"
-import Section from "./Section"
-import { Columns, Column } from "./Columns"
 import Select, { Option } from "./Select"
-import Label from "./Label"
 import Input from "./Input"
-import Styles from "./Styles"
-import Button, { ButtonMenu } from "./Button"
 import { SliderAdjustment } from "./AdjustmentWidgets"
 import RangeAdjustment from "./RangeAdjustment"
+import Theme from "./NepiAppControlsSandbox-Theme"
 
 import { setElementStyleModified, clearElementStyleModified, onChangeSwitchStateValue } from "./Utilities"
 
@@ -243,6 +239,26 @@ class NepiAppControlsSandboxControls extends Component {
     this.setState({ editValues: editValues, pending: pending })
   }
 
+  // A control's on-screen row: caption + optional wire-name/bounds subtext +
+  // optional broken/dropped flag on the left (concept_4_glass_console.html's
+  // .row / .name / .sub / .flag), the widget on the right in a fixed-width
+  // .ctl column. Every renderControl() branch below builds its own widget and
+  // hands it to this wrapper instead of <Label>, since Label's wrapper divs
+  // carry no class or style hook this app can reach (see NepiAppControlsSandbox
+  // -Theme.js's header comment).
+  renderRow(name, display_name, sub, flag, widget) {
+    return (
+      <div style={Theme.row} key={name}>
+        <div>
+          <div style={Theme.rowName}>{display_name}</div>
+          {(sub !== undefined && sub !== null && sub !== '') ? <div style={Theme.rowSub}>{sub}</div> : null}
+          {(flag !== undefined && flag !== null && flag !== '') ? <div style={Theme.rowFlag}>{flag}</div> : null}
+        </div>
+        <div style={{ width: "48%" }}>{widget}</div>
+      </div>
+    )
+  }
+
   // Render a single control given its type and Control message.
   // Each block below maps one nepi_controls control type to its RUI widget and
   // the nepi_controls "set_*_control_value" topic it publishes to on change.
@@ -259,17 +275,18 @@ class NepiAppControlsSandboxControls extends Component {
     if (type === "Menu") {
       const options = control_msg.string_options
       const set_index = control_msg.set_index
-      return (
-        <Label title={display_name} key={name}>
-          <Select
-            id={'csbx_' + name}
-            value={set_index}
-            onChange={(e) => sendUpdateIntMsg(namespace + "/set_menu_control_value", name, parseInt(e.target.value, 10))}
-          >
-            {options.map((opt, i) => <Option key={name + '_' + i} value={i}>{opt}</Option>)}
-          </Select>
-        </Label>
+      const widget = (
+        <Select
+          id={'csbx_' + name}
+          className="csbx-select"
+          style={Theme.indField}
+          value={set_index}
+          onChange={(e) => sendUpdateIntMsg(namespace + "/set_menu_control_value", name, parseInt(e.target.value, 10))}
+        >
+          {options.map((opt, i) => <Option key={name + '_' + i} value={i}>{opt}</Option>)}
+        </Select>
       )
+      return this.renderRow(name, display_name, name, null, widget)
     }
 
     // SELECTION -- drop-down of string options; the control's value is the
@@ -277,73 +294,84 @@ class NepiAppControlsSandboxControls extends Component {
     if (type === "Selection") {
       const options = control_msg.string_options
       const set_string = control_msg.set_string
-      return (
-        <Label title={display_name} key={name}>
-          <Select
-            id={'csbx_' + name}
-            value={set_string}
-            onChange={(e) => sendUpdateStringMsg(namespace + "/set_selection_control_value", name, e.target.value)}
-          >
-            {options.map((opt, i) => <Option key={name + '_' + i} value={opt}>{opt}</Option>)}
-          </Select>
-        </Label>
+      const widget = (
+        <Select
+          id={'csbx_' + name}
+          className="csbx-select"
+          style={Theme.indField}
+          value={set_string}
+          onChange={(e) => sendUpdateStringMsg(namespace + "/set_selection_control_value", name, e.target.value)}
+        >
+          {options.map((opt, i) => <Option key={name + '_' + i} value={opt}>{opt}</Option>)}
+        </Select>
       )
+      return this.renderRow(name, display_name, name, null, widget)
     }
 
-    // SELECTIONS -- a multi-select: each option gets its own toggle. The value
-    // is the full array of currently-selected option strings. On every toggle
-    // we send the complete desired selection (declarative), not a single delta.
+    // SELECTIONS -- a multi-select: each option gets its own toggle, drawn as
+    // a Glass Console chip. The value is the full array of currently-selected
+    // option strings. On every click we send the complete desired selection
+    // (declarative), not a single delta.
     if (type === "Selections") {
       const options = control_msg.string_options
       const set_strings = control_msg.set_strings || []
       const { sendUpdateStringArrayMsg } = this.props.ros
-      return (
-        <Label title={display_name} key={name}>
-          <div>
-            {options.map((opt, i) => (
-              <div key={name + '_' + i} style={{ display: "inline-block", marginRight: Styles.vars.spacing.regular, textAlign: "center" }}>
-                <div style={{ fontSize: Styles.vars.fontSize.small, marginBottom: Styles.vars.spacing.xs }}>{opt}</div>
-                <AsyncToggle
-                  checked={set_strings.indexOf(opt) !== -1}
-                  onClick={() => {
-                    // Send the complete desired selection (declarative), not a toggle.
-                    const next = set_strings.indexOf(opt) !== -1
-                      ? set_strings.filter((s) => s !== opt)
-                      : [...set_strings, opt]
-                    sendUpdateStringArrayMsg(namespace + "/set_selections_control_value", name, next)
-                  }}
-                />
+      const widget = (
+        <div style={{ display: "flex", gap: "6px", justifyContent: "flex-end", flexWrap: "wrap" }}>
+          {options.map((opt, i) => {
+            const on = set_strings.indexOf(opt) !== -1
+            return (
+              <div
+                key={name + '_' + i}
+                style={on ? { ...Theme.chip, ...Theme.chipOn } : Theme.chip}
+                onClick={() => {
+                  // Send the complete desired selection (declarative), not a toggle.
+                  const next = on
+                    ? set_strings.filter((s) => s !== opt)
+                    : [...set_strings, opt]
+                  sendUpdateStringArrayMsg(namespace + "/set_selections_control_value", name, next)
+                }}
+              >
+                {opt}
               </div>
-            ))}
-          </div>
-        </Label>
+            )
+          })}
+        </div>
       )
+      return this.renderRow(name, display_name, name, null, widget)
     }
 
     // TRIGGER -- a momentary action. There is no persistent value; pressing the
-    // button fires a one-shot trigger (an empty String payload).
+    // button fires a one-shot trigger (an empty String payload). Broken today
+    // (see README's Known rough edges): the Controls box sends an UpdateString
+    // and ControlsIF subscribes the topic as UpdateTrigger, so the type
+    // mismatch means the node never receives a click. Flagged rather than
+    // hidden, matching every concept_4 mockup convention.
     if (type === "Trigger") {
-      return (
-        <Label title={display_name} key={name}>
-          <ButtonMenu>
-            <Button onClick={() => sendUpdateStringMsg(namespace + "/set_trigger_control_value", name, "")}>{"Trigger"}</Button>
-          </ButtonMenu>
-        </Label>
+      const widget = (
+        <button
+          style={{ ...Theme.btnGlass, ...Theme.btnGlassBroken }}
+          onClick={() => sendUpdateStringMsg(namespace + "/set_trigger_control_value", name, "")}
+        >
+          {"Trigger"}
+        </button>
       )
+      return this.renderRow(name, display_name, name, "! no fire — msg-type mismatch", widget)
     }
 
     // BOOL -- a single on/off switch. Sends the *opposite* of the current
     // value as a Bool each time it is clicked.
     if (type === "Bool") {
       const checked = (control_msg.set_bool === true)
-      return (
-        <Label title={display_name} key={name}>
+      const widget = (
+        <div style={{ textAlign: "right" }}>
           <AsyncToggle
             checked={checked}
             onClick={() => sendUpdateBoolMsg(namespace + "/set_bool_control_value", name, !checked)}
           />
-        </Label>
+        </div>
       )
+      return this.renderRow(name, display_name, name, null, widget)
     }
 
     // STRING / INT / FLOAT -- free-form typed values. These follow the PTX
@@ -356,17 +384,20 @@ class NepiAppControlsSandboxControls extends Component {
       else if (type === "Int") { msgValue = control_msg.set_int }
       else { msgValue = control_msg.set_float }
       const value = editing ? this.state.editValues[name] : msgValue
-      return (
-        <Label title={display_name} key={name}>
-          <Input
-            id={'csbx_' + name}
-            style={{ width: "100%" }}
-            value={value}
-            onChange={(e) => this.onInputChange(name, e)}
-            onKeyDown={(e) => this.onInputKey(name, type, e)}
-          />
-        </Label>
+      const bounds = control_msg.int_bounds || control_msg.float_bounds || []
+      const has_bounds = (type !== "String" && bounds.length > 1)
+      const sub = has_bounds ? (name + " [" + bounds[0] + "," + bounds[1] + "]") : name
+      const widget = (
+        <Input
+          id={'csbx_' + name}
+          className="csbx-input"
+          style={Theme.indField}
+          value={value}
+          onChange={(e) => this.onInputChange(name, e)}
+          onKeyDown={(e) => this.onInputKey(name, type, e)}
+        />
       )
+      return this.renderRow(name, display_name, sub, null, widget)
     }
 
     // FLOATSLIDER -- a single decimal value dragged between a min and max.
@@ -384,45 +415,63 @@ class NepiAppControlsSandboxControls extends Component {
       const step = has_round ? 1 / Math.pow(10, round_value) : 1
       const displayDecimals = has_round ? round_value : undefined
       return (
-        <SliderAdjustment
-          key={name}
-          title={display_name}
-          comp_name={name}
-          topic={namespace + "/set_floatslider_control_value"}
-          msgType={"std_msgs/Float32"}
-          adjustment={control_msg.set_float}
-          min={min}
-          max={max}
-          step={step}
-          displayDecimals={displayDecimals}
-          scaled={1}
-          tooltip={control_msg.description}
-          unit={""}
-        />
+        <div style={Theme.row} key={name}>
+          <div>
+            <div style={Theme.rowName}>{display_name}</div>
+            <div style={Theme.rowSub}>{name}</div>
+          </div>
+          <div style={{ width: "48%" }}>
+            <SliderAdjustment
+              title={null}
+              noLabel
+              comp_name={name}
+              topic={namespace + "/set_floatslider_control_value"}
+              msgType={"std_msgs/Float32"}
+              adjustment={control_msg.set_float}
+              min={min}
+              max={max}
+              step={step}
+              displayDecimals={displayDecimals}
+              scaled={1}
+              tooltip={control_msg.description}
+              unit={""}
+            />
+          </div>
+        </div>
       )
     }
 
     // FLOATSLIDERS -- a min/max *range* dragged between two limits. set_floats
     // holds the current [min, max] handles; float_bounds holds the outer
-    // [min_limit, max_limit] the handles may move within.
+    // [min_limit, max_limit] the handles may move within. Dropped by the SDK
+    // today (see README's Known rough edges) -- flagged rather than hidden.
     if (type === "FloatSliders") {
       const set_floats = control_msg.set_floats || [0, 1]
       const bounds = control_msg.float_bounds || []
       const min_limit = (bounds.length > 0 && bounds[0] !== -999) ? bounds[0] : 0
       const max_limit = (bounds.length > 1 && bounds[1] !== -999) ? bounds[1] : 1
       return (
-        <RangeAdjustment
-          key={name}
-          title={display_name}
-          comp_name={name}
-          topic={namespace + "/set_floatsliders_control_value"}
-          min={set_floats[0]}
-          max={set_floats[1]}
-          min_limit_m={min_limit}
-          max_limit_m={max_limit}
-          tooltip={control_msg.description}
-          unit={""}
-        />
+        <div style={Theme.row} key={name}>
+          <div>
+            <div style={Theme.rowName}>{display_name}</div>
+            <div style={Theme.rowSub}>{name}</div>
+            <div style={Theme.rowFlag}>! dropped by SDK</div>
+          </div>
+          <div style={{ width: "48%" }}>
+            <RangeAdjustment
+              title={null}
+              noLabel
+              comp_name={name}
+              topic={namespace + "/set_floatsliders_control_value"}
+              min={set_floats[0]}
+              max={set_floats[1]}
+              min_limit_m={min_limit}
+              max_limit_m={max_limit}
+              tooltip={control_msg.description}
+              unit={""}
+            />
+          </div>
+        </div>
       )
     }
 
@@ -444,19 +493,14 @@ class NepiAppControlsSandboxControls extends Component {
     const show_visibility_toggle = (this.props.show_visibility_toggle !== undefined) ? this.props.show_visibility_toggle : true
 
     const show_controls_toggle = (allways_show_controls === false && show_visibility_toggle === true) ? (
-      <Columns>
-        <Column>
-          <Label title="Show Controls">
-            {/* react-toggle (not AsyncToggle): checked is local view state, already immediate -- no backend round trip to confirm. */}
-            <Toggle
-              checked={show_controls === true}
-              onClick={() => onChangeSwitchStateValue.bind(this)("show_controls", show_controls)}>
-            </Toggle>
-          </Label>
-        </Column>
-        <Column>
-        </Column>
-      </Columns>
+      <div style={{ ...Theme.row, borderBottom: "none" }}>
+        <div style={Theme.rowName}>Show Controls</div>
+        {/* react-toggle (not AsyncToggle): checked is local view state, already immediate -- no backend round trip to confirm. */}
+        <Toggle
+          checked={show_controls === true}
+          onClick={() => onChangeSwitchStateValue.bind(this)("show_controls", show_controls)}>
+        </Toggle>
+      </div>
     ) : null
 
     // Controls widgets, one per non-hidden control. Only built when the section
@@ -472,19 +516,17 @@ class NepiAppControlsSandboxControls extends Component {
       const types = status_msg.controls_type_list || []
       const msgs = status_msg.controls_msg_list || []
       controls_body = (
-        <Columns>
-          <Column>
-            {names.map((name, i) => {
-              const control_msg = msgs[i]
-              if (control_msg == null) { return null }
-              // Hidden controls are not shown in the Controls box (they remain
-              // manageable from the Controls Settings box).
-              if (control_msg.hidden === true) { return null }
-              if (type_filter !== undefined && type_filter.indexOf(types[i]) === -1) { return null }
-              return this.renderControl(name, types[i], control_msg, i)
-            })}
-          </Column>
-        </Columns>
+        <div>
+          {names.map((name, i) => {
+            const control_msg = msgs[i]
+            if (control_msg == null) { return null }
+            // Hidden controls are not shown in the Controls box (they remain
+            // manageable from the Controls Settings box).
+            if (control_msg.hidden === true) { return null }
+            if (type_filter !== undefined && type_filter.indexOf(types[i]) === -1) { return null }
+            return this.renderControl(name, types[i], control_msg, i)
+          })}
+        </div>
       )
     }
 
@@ -499,9 +541,10 @@ class NepiAppControlsSandboxControls extends Component {
       return body
     }
     return (
-      <Section title={(this.props.title !== undefined) ? this.props.title : "CONTROLS"}>
+      <div style={Theme.glassPanel} className="csbx-glass-panel">
+        <div style={Theme.panelCaption}>{(this.props.title !== undefined) ? this.props.title : "CONTROLS"}</div>
         {body}
-      </Section>
+      </div>
     )
   }
 }
