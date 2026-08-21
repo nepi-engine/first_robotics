@@ -301,6 +301,17 @@ def readGroup(nt_instance, table_path, fields, group_key):
 
 
 def writeField(table, name, kind, value):
+    success = writeFieldValue(table, name, kind, value)
+    # TEST MODE -- write trace. No-op unless set_write_trace(True) was called.
+    if _write_trace is not None:
+        _write_trace.append(tracePath(table) + "/" + str(name) +
+                            " = " + str(value) +
+                            " (" + str(kind) + ")" +
+                            ("" if success else "   <-- WRITE FAILED"))
+    return success
+
+
+def writeFieldValue(table, name, kind, value):
     try:
         if kind == "float":
             return bool(table.putNumber(name, float(value)))
@@ -315,6 +326,63 @@ def writeField(table, name, kind, value):
     except Exception:
         return False
     return False
+
+
+#########################################
+# TEST MODE -- NetworkTables write trace
+#
+# TEMPORARY. Delete this block, the writeField() hook above, and the
+# take_write_trace() calls in wpilib_if_app_node.py to remove it.
+#
+# Records the FULL NetworkTables key path, value and declared type of every
+# field written, so a command can be checked against the RoboRIO contract
+# key by key rather than trusted because the app said it sent something. Modelled
+# on the commented-out "Sending ... serial msg" tracing in
+# ptx_sidus_ss109_serial_node.py, with the destination added: on a serial bus
+# the wire string is the whole story, but here the same value written to the
+# wrong key looks identical in a log that prints only the value.
+#
+# Off unless switched on, and it buffers rather than logging directly, so one
+# command produces one grouped log entry instead of a line per field.
+#########################################
+
+_write_trace = None
+
+
+def set_write_trace(enabled):
+    """Turn NetworkTables write tracing on or off.
+
+    Args:
+        enabled (bool): True to start recording writes, False to stop and
+            discard anything buffered.
+    """
+    global _write_trace
+    _write_trace = [] if enabled else None
+
+
+def take_write_trace():
+    """Return the writes recorded since the last call and clear the buffer.
+
+    Returns:
+        list: One string per field written, each "<full key path> = <value>
+        (<type>)", with a WRITE FAILED marker on any field the write rejected.
+        Empty if tracing is off.
+    """
+    global _write_trace
+    if _write_trace is None:
+        return []
+    lines = _write_trace
+    _write_trace = []
+    return lines
+
+
+# The table's own path, so the trace shows where the field actually went rather
+# than where the caller believed it was going.
+def tracePath(table):
+    try:
+        return str(table.getPath())
+    except Exception:
+        return "<unknown table>"
 
 
 def parseMotorId(name):

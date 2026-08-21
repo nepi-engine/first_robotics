@@ -40,16 +40,18 @@ include_directories(
   ${catkin_INCLUDE_DIRS}
 )
 
-## All three scripts, not just the node. nepi_wpilib.py (the NetworkTables
-## access layer) and wpilib_rbx_if.py (the RBX device) are imported by the node
-## at runtime as plain sibling modules, so an install listing only the node
-## leaves those imports unresolvable. deploy_app.sh's live path happens to work
-## because it rsyncs the whole scripts/ directory; a catkin install installs only
-## what is listed here.
+## Every script, not just the node. nepi_wpilib.py (the NetworkTables access
+## layer), wpilib_rbx_if.py (the RBX device) and wpilib_test_mode.py (the
+## synthetic telemetry source) are imported by the node at runtime as plain
+## sibling modules, so an install listing only the node leaves those imports
+## unresolvable. deploy_app.sh's live path happens to work because it rsyncs the
+## whole scripts/ directory; a catkin install installs only what is listed here.
 catkin_install_python(PROGRAMS
   scripts/wpilib_if_app_node.py
   scripts/nepi_wpilib.py
   scripts/wpilib_rbx_if.py
+  # TEST MODE -- delete this line with test mode.
+  scripts/wpilib_test_mode.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 

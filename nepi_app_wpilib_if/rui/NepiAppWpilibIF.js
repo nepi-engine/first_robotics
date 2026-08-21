@@ -171,6 +171,10 @@ class NepiAppWpilibIF extends Component {
     this.updateMotorsStatusListener = this.updateMotorsStatusListener.bind(this)
     this.getMotorStatus = this.getMotorStatus.bind(this)
     this.onToggleRbxEnabled = this.onToggleRbxEnabled.bind(this)
+    // TEST MODE -- delete these three binds with test mode.
+    this.onToggleTestMode = this.onToggleTestMode.bind(this)
+    this.getTestMode = this.getTestMode.bind(this)
+    this.renderTestModeWarning = this.renderTestModeWarning.bind(this)
     this.renderMotors = this.renderMotors.bind(this)
     this.renderMotorSlot = this.renderMotorSlot.bind(this)
     this.renderRobotControl = this.renderRobotControl.bind(this)
@@ -740,6 +744,44 @@ class NepiAppWpilibIF extends Component {
                                status_msg.rbx_enabled !== true)
   }
 
+  // TEST MODE -- delete onToggleTestMode, getTestMode and renderTestModeWarning
+  // with test mode.
+  onToggleTestMode() {
+    const appNamespace = this.getAppNamespace()
+    const status_msg = this.state.status_msg
+    if (appNamespace == null || status_msg == null) {
+      return
+    }
+    this.props.ros.sendBoolMsg(appNamespace + '/set_test_mode',
+                               status_msg.test_mode !== true)
+  }
+
+  getTestMode() {
+    const status_msg = this.state.status_msg
+    return (status_msg != null) ? status_msg.test_mode === true : false
+  }
+
+  // Rendered at the top of BOTH the Motors and Robot Control boxes, because
+  // those are the two boxes showing manufactured numbers while test mode is on.
+  // A warning that appears only beside its own switch is a warning an operator
+  // scrolls past on the way to reading motor telemetry as if it were real.
+  renderTestModeWarning() {
+    if (this.getTestMode() === false) {
+      return null
+    }
+    return (
+      <div style={{
+        marginTop: Styles.vars.spacing.xs,
+        marginBottom: Styles.vars.spacing.small,
+        fontSize: Styles.vars.fontSize.small,
+        fontWeight: 'bold',
+        color: Styles.vars.colors.orange
+      }}>
+        {"TEST MODE: these values are synthetic. Commands ARE sent to the robot network, and logged."}
+      </div>
+    )
+  }
+
 
   componentDidMount() {
     // Re-render on a fixed tick so the Robot Network indicator notices status
@@ -979,6 +1021,9 @@ class NepiAppWpilibIF extends Component {
     return (
       <Section title={"Motors"}>
 
+        {/* TEST MODE */}
+        {this.renderTestModeWarning()}
+
         <Label title={"Motor Slots"}>
           <Input
             id={"WpilibMotorSlotCount"}
@@ -1109,13 +1154,26 @@ class NepiAppWpilibIF extends Component {
     const request_type = (status_msg != null) ? status_msg.active_request_type : ""
     const status_message = (status_msg != null) ? status_msg.status_message : ""
 
+    const test_mode = this.getTestMode()  // TEST MODE
+
     return (
       <Section title={"Robot Control"}>
+
+        {/* TEST MODE */}
+        {this.renderTestModeWarning()}
 
         <Label title={this.renderSubLabel("Robot Device", "present this robot to NEPI as RBX")}>
           <AsyncToggle
             checked={rbx_enabled}
             onClick={this.onToggleRbxEnabled}>
+          </AsyncToggle>
+        </Label>
+
+        {/* TEST MODE -- delete this Label block with test mode. */}
+        <Label title={this.renderSubLabel("Test Mode", "fake robot telemetry, commands still sent")}>
+          <AsyncToggle
+            checked={test_mode}
+            onClick={this.onToggleTestMode}>
           </AsyncToggle>
         </Label>
 

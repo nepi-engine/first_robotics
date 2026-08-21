@@ -45,6 +45,8 @@ from nepi_api.connect_obstacles_if import ConnectObstaclesIF
 # them from this script's own directory.
 import nepi_wpilib
 from wpilib_rbx_if import WpilibRbxIF
+# TEST MODE -- delete this import with test mode.
+from wpilib_test_mode import WpilibTestMode, FACTORY_TEST_MODE
 
 
 #########################################
@@ -125,6 +127,40 @@ RBX_COMMAND_TYPES = {
 }
 
 #########################################
+# TEST MODE
+#
+# TEMPORARY SCAFFOLDING, meant to be deleted once the RoboRIO connection works.
+# Every touch point in this file is marked with the token TEST MODE, and the
+# removal recipe is in the header of scripts/wpilib_test_mode.py.
+#
+# Test mode exercises the RBX control path with no RoboRIO on the other end by
+# synthesizing the robot side of the contract -- the five NetworkTables INPUT
+# groups -- so the RBX device builds and becomes commandable.
+#
+# It does NOT intercept outbound commands. Motor commands and RBX command
+# requests go to the real nepi_wpilib writers and the real NetworkTables keys
+# exactly as they always do; test mode only adds a log line as they go past.
+# Checking those writes are correct is the point of the exercise, so
+# short-circuiting them would defeat it.
+#
+# WHY THE RBX FEEDBACK GROUP HAS TO BE SYNTHESIZED TOO. updateRbxIF builds the
+# device only when rbx_enabled is true AND getSupportedCapabilities() is
+# non-empty, and that list is read from the RBX Feedback group. Faking motor
+# feedback alone leaves updateRbxIF returning early forever and no RBX device is
+# ever created, so there is nothing to command.
+#
+# Test mode does NOT enable the RBX device. rbx_enabled stays the operator
+# switch that presents this robot to NEPI; test mode only makes the
+# preconditions true so that flipping it actually builds something.
+#
+# All test mode constants, state and synthetic telemetry live in
+# wpilib_test_mode.py, including FACTORY_TEST_MODE.
+
+# Reverse of RBX_COMMAND_TYPES, so a logged command request names its type
+# instead of printing the wire code.
+RBX_COMMAND_TYPE_NAMES = dict((code, name) for (name, code) in RBX_COMMAND_TYPES.items())
+
+#########################################
 # Example Controls
 #
 # Controls name of the example control set: the <app>/example_controls namespace
@@ -182,6 +218,11 @@ class NepiWpilibApp(object):
     motor_ids = []
     motor_names = []
     rbx_enabled = FACTORY_RBX_ENABLED
+    # TEST MODE -- the flag and the synthetic telemetry source. None whenever
+    # test mode is off, so nothing manufactured can survive into a real
+    # connection. All of its behavior is in wpilib_test_mode.py.
+    test_mode = FACTORY_TEST_MODE
+    test_mode_if = None
 
     # The one NetworkTables client this process owns.
     nt_instance = None
@@ -288,6 +329,14 @@ class NepiWpilibApp(object):
             'rbx_enabled': {
                 'namespace': self.node_namespace,
                 'factory_val': FACTORY_RBX_ENABLED
+            },
+            # Persisted like every other switch, which means a node that comes
+            # up with it true is still in test mode. initCb warns about exactly
+            # that case.
+            # TEST MODE -- delete this param entry with test mode.
+            'test_mode': {
+                'namespace': self.node_namespace,
+                'factory_val': FACTORY_TEST_MODE
             }
         }
 
@@ -393,6 +442,15 @@ class NepiWpilibApp(object):
                 'qsize': 10,
                 'callback': self.setRbxEnabledCb,
                 'callback_args': ()
+            },
+            # TEST MODE -- delete this subscriber with test mode.
+            'set_test_mode': {
+                'namespace': self.node_namespace,
+                'topic': 'set_test_mode',
+                'msg': Bool,
+                'qsize': 10,
+                'callback': self.setTestModeCb,
+                'callback_args': ()
             }
         }
 
@@ -451,7 +509,6 @@ class NepiWpilibApp(object):
     ## App Callbacks
 
     def setEnabledCb(self, msg):
-        self.msg_if.pub_info(str(msg))
         self.enabled = msg.data
         self.publish_status()
         if self.node_if is not None:
@@ -459,7 +516,6 @@ class NepiWpilibApp(object):
             self.node_if.save_config()
 
     def setOptionCb(self, msg):
-        self.msg_if.pub_info(str(msg))
         option = msg.data
         if option in self.options:
             self.selected_option = option
@@ -469,7 +525,6 @@ class NepiWpilibApp(object):
                 self.node_if.save_config()
 
     def setValueCb(self, msg):
-        self.msg_if.pub_info(str(msg))
         self.value = msg.data
         self.publish_status()
         if self.node_if is not None:
@@ -477,7 +532,12 @@ class NepiWpilibApp(object):
             self.node_if.save_config()
 
     def setObstaclesNamespaceCb(self, msg):
-        self.msg_if.pub_info(str(msg))
+        # Change-gated. The RUI republishes its current selection continuously,
+        # so acting on every message would tear down and rebuild the same
+        # connection a couple of times a second -- and log it each time.
+        namespace = str(msg.data)
+        if namespace == str(self.obstacles_namespace):
+            return
         self.connectObstacles(msg.data)
         self.publish_status()
 
@@ -498,7 +558,6 @@ class NepiWpilibApp(object):
     ## Robot Interface Callbacks
 
     def setTeamNumberCb(self, msg):
-        self.msg_if.pub_info(str(msg))
         team_number = int(msg.data)
         if team_number < 1:
             self.msg_if.pub_warn("Ignoring team number " + str(team_number) +
@@ -515,7 +574,6 @@ class NepiWpilibApp(object):
             self.node_if.save_config()
 
     def setMotorSlotCountCb(self, msg):
-        self.msg_if.pub_info(str(msg))
         slot_count = int(msg.data)
         if slot_count < 0 or slot_count > MAX_MOTOR_SLOT_COUNT:
             self.msg_if.pub_warn("Ignoring motor slot count " + str(slot_count) +
@@ -535,20 +593,25 @@ class NepiWpilibApp(object):
             self.node_if.save_config()
 
     def setMotorIdsCb(self, msg):
-        self.msg_if.pub_info(str(msg))
         motor_ids = self.parseMotorIdList(msg.data)
         if motor_ids is None:
             self.msg_if.pub_warn("Ignoring motor ids '" + str(msg.data) +
                                  "': expected a comma separated list of integers")
             return
-        self.motor_ids = self.resizeMotorIds(motor_ids, self.motor_slot_count)
+        motor_ids = self.resizeMotorIds(motor_ids, self.motor_slot_count)
+        # Logged on CHANGE only. The RUI republishes the current selection on a
+        # timer, so logging every message received turns a 2 Hz heartbeat into a
+        # log flood and buries the one line that matters -- the edit an operator
+        # actually made.
+        if motor_ids != self.motor_ids:
+            self.msg_if.pub_info("Motor ids set to " + str(motor_ids))
+        self.motor_ids = motor_ids
         self.publish_status()
         if self.node_if is not None:
             self.node_if.set_param('motor_ids', self.motor_ids)
             self.node_if.save_config()
 
     def setMotorNamesCb(self, msg):
-        self.msg_if.pub_info(str(msg))
         motor_names = [name.strip() for name in str(msg.data).split(',')]
         if str(msg.data).strip() == '':
             motor_names = []
@@ -559,7 +622,6 @@ class NepiWpilibApp(object):
             self.node_if.save_config()
 
     def setRbxEnabledCb(self, msg):
-        self.msg_if.pub_info(str(msg))
         self.rbx_enabled = bool(msg.data)
         if self.rbx_enabled is False:
             self.teardownRbxIF()
@@ -567,6 +629,34 @@ class NepiWpilibApp(object):
         if self.node_if is not None:
             self.node_if.set_param('rbx_enabled', self.rbx_enabled)
             self.node_if.save_config()
+
+    # TEST MODE -- delete setTestModeCb and warnTestMode with test mode.
+    def setTestModeCb(self, msg):
+        self.test_mode = bool(msg.data)
+        if self.test_mode is True:
+            self.startTestTelemetry()
+        else:
+            # Cleared immediately rather than left to decay, so no synthetic
+            # reading can be mistaken for the first data off a real robot. The
+            # RBX device is deliberately NOT torn down here: the capability list
+            # goes empty on the next poll and updateRbxIF's existing teardown and
+            # rebuild path handles it, which is the one path that knows how.
+            self.clearTestTelemetry()
+            self.msg_if.pub_warn("TEST MODE OFF: synthetic robot telemetry cleared. "
+                                 "Motor and RBX commands go to NetworkTables again.")
+        self.publish_status()
+        if self.node_if is not None:
+            self.node_if.set_param('test_mode', self.test_mode)
+            self.node_if.save_config()
+
+    # Said the same way whether test mode was just switched on or the node came
+    # up with it already on, because the mistake it guards against is the same
+    # one: reading manufactured numbers as a working robot.
+    def warnTestMode(self):
+        self.msg_if.pub_warn("TEST MODE ON: robot telemetry is SYNTHETIC. Nothing this "
+                             "app reports about the robot is real. Motor and RBX "
+                             "commands ARE still written to the robot network, and are "
+                             "logged here as they go out.")
 
 
     #######################
@@ -585,11 +675,22 @@ class NepiWpilibApp(object):
             self.motor_names = self.resizeMotorNames(self.node_if.get_param('motor_names'),
                                                      self.motor_slot_count)
             self.rbx_enabled = bool(self.node_if.get_param('rbx_enabled'))
+            # TEST MODE
+            self.test_mode = bool(self.node_if.get_param('test_mode'))
         if do_updates:
             if self.nt_instance is not None:
                 nepi_wpilib.set_server_team(self.nt_instance, self.team_number)
             if self.rbx_enabled is False:
                 self.teardownRbxIF()
+            # A node that starts up with the param already true is in test mode
+            # from its first poll, with nothing on screen to say so until the
+            # status message arrives. Warn on the way in.
+            if self.test_mode is True:
+                self.startTestTelemetry()
+            elif self.test_mode_if is not None:
+                # Only when there is synthetic state to drop. A config reset on
+                # a live robot must not blank the NT caches this shares.
+                self.clearTestTelemetry()
         self.publish_status()
 
     def resetCb(self, do_updates=True):
@@ -861,6 +962,19 @@ class NepiWpilibApp(object):
         # RBX device, the motors producer and the status publisher all read those
         # caches, so NetworkTables is touched at exactly this one rate no matter
         # how many consumers there are.
+
+        # Test mode fills the same caches from the synthetic source instead, and
+        # takes precedence over a live client rather than racing it: if both are
+        # somehow present, one poll must not overwrite what the other just
+        # wrote. The NT client itself is left entirely alone -- not stopped, not
+        # read -- so turning test mode off returns to a client that never knew.
+        # TEST MODE -- delete this branch with test mode.
+        if self.test_mode is True:
+            self.updateTestTelemetry()
+            self.logFirstGroups()
+            self.updateRbxIF()
+            return
+
         if self.nt_instance is None:
             self.heartbeat_waiting_for_response = False
             self.setDemoBool(False)
@@ -911,6 +1025,17 @@ class NepiWpilibApp(object):
             self.got_first_rbx_feedback = True
             self.msg_if.pub_info("RBX feedback first data: " + str(self.rbx_feedback_dict))
 
+    # The one connection question every telemetry gate below asks. It is asked
+    # here rather than by calling nepi_wpilib.is_connected directly because test
+    # mode has no NT client at all: the synthetic groups are as live as they are
+    # ever going to be, and gating them on a client that was never started would
+    # discard every one of them.
+    def isRobotConnected(self):
+        # TEST MODE -- delete this override with test mode.
+        if self.test_mode is True:
+            return True
+        return nepi_wpilib.is_connected(self.nt_instance)
+
     # A group counts as live when the robot network is up, the group's own valid
     # flag is set, and its last observed change is inside NAVPOSE_STALE_SEC.
     # All three are required: an absent group reads back as its defaults, so
@@ -918,7 +1043,7 @@ class NepiWpilibApp(object):
     def isGroupLive(self, group_dict, stale_sec=NAVPOSE_STALE_SEC):
         if group_dict is None:
             return False
-        if nepi_wpilib.is_connected(self.nt_instance) is False:
+        if self.isRobotConnected() is False:
             return False
         if bool(group_dict.get('valid', False)) is False:
             return False
@@ -929,9 +1054,90 @@ class NepiWpilibApp(object):
         # connection plus a timestamp that has actually been stamped.
         if self.rbx_feedback_dict is None:
             return False
-        if nepi_wpilib.is_connected(self.nt_instance) is False:
+        if self.isRobotConnected() is False:
             return False
         return float(self.rbx_feedback_dict.get('timestamp', 0.0)) > 0.0
+
+
+    ###################
+    ## TEST MODE Telemetry
+    #
+    # Delete this whole section with test mode. It is three thin wrappers around
+    # wpilib_test_mode.py; the synthetic robot itself is in that file, along with
+    # the removal recipe.
+    #
+    # These fill exactly the same in-memory caches the NT read helpers fill,
+    # with dicts of exactly the same shape, so nothing downstream -- the motors
+    # producer, the navpose fusion, the RBX device, the status message -- can
+    # tell the difference or needs to know. That is the point: what test mode
+    # exercises is the real path, not a parallel one.
+
+    def startTestTelemetry(self):
+        self.warnTestMode()
+        if self.test_mode_if is None:
+            self.test_mode_if = WpilibTestMode(msg_if=self.msg_if)
+        self.test_mode_if.start()
+        # Record the full key path of every NetworkTables field written, so a
+        # command can be checked against the RoboRIO contract key by key.
+        nepi_wpilib.set_write_trace(True)
+        # Reset so the first synthetic dict per group logs once, the same way
+        # the first real dict per group does.
+        self.resetFirstGroupFlags()
+        self.updateTestTelemetry()
+
+    def clearTestTelemetry(self):
+        self.test_mode_if = None
+        nepi_wpilib.set_write_trace(False)
+        # The caches go back to never-seen, not to their last synthetic values.
+        # A stale synthetic group left behind would read as live for
+        # NAVPOSE_STALE_SEC after the switch and as a real robot forever after
+        # in anything that only samples the status message.
+        self.motor_feedback_dict = dict()
+        self.nt_motor_ids = []
+        self.position_dict = None
+        self.velocity_dict = None
+        self.orientation_dict = None
+        self.rbx_feedback_dict = None
+        self.resetFirstGroupFlags()
+
+    def resetFirstGroupFlags(self):
+        self.got_first_motor_feedback = False
+        self.got_first_position = False
+        self.got_first_velocity = False
+        self.got_first_orientation = False
+        self.got_first_rbx_feedback = False
+
+    # One grouped entry per command: what was sent, and the exact
+    # NetworkTables key each field landed on. The key paths come from the write
+    # layer itself (the table's own getPath()), not from what this node believed
+    # it was writing, so a field going to the wrong key shows up here as a wrong
+    # key rather than as a value that looks correct.
+    def logWriteTrace(self, label, success):
+        lines = nepi_wpilib.take_write_trace()
+        if len(lines) == 0:
+            return
+        header = "TEST MODE SENT: " + str(label)
+        if success is False:
+            header = "TEST MODE SEND FAILED: " + str(label)
+        self.msg_if.pub_info(header + "\n    " + "\n    ".join(lines))
+
+    def updateTestTelemetry(self):
+        # Called from the NT poll timer in place of the NT reads, so the caches
+        # refresh at NT_POLL_RATE_HZ exactly as they would from the robot. The
+        # group dicts are built in wpilib_test_mode.py and are shaped exactly as
+        # the nepi_wpilib read helpers shape them, so everything downstream of
+        # these caches is unaware test mode exists.
+        if self.test_mode_if is None:
+            self.test_mode_if = WpilibTestMode(msg_if=self.msg_if)
+        groups = self.test_mode_if.build_groups(self.motor_ids,
+                                                self.motor_slot_count,
+                                                UNMAPPED_MOTOR_ID)
+        self.motor_feedback_dict = groups['motor_feedback']
+        self.nt_motor_ids = sorted(self.motor_feedback_dict.keys())
+        self.position_dict = groups['position']
+        self.velocity_dict = groups['velocity']
+        self.orientation_dict = groups['orientation']
+        self.rbx_feedback_dict = groups['rbx_feedback']
 
 
     ###################
@@ -1017,7 +1223,7 @@ class NepiWpilibApp(object):
 
             seen = feedback is not None
             fresh = False
-            if seen is True and nepi_wpilib.is_connected(self.nt_instance) is True:
+            if seen is True and self.isRobotConnected() is True:
                 fresh = float(feedback.get('age_s', MOTOR_STALE_SEC + 1.0)) <= MOTOR_STALE_SEC
 
             slots.append(dict(slot=slot,
@@ -1033,6 +1239,21 @@ class NepiWpilibApp(object):
     def getSlotByName(self, motor_name):
         for slot_dict in self.get_motor_slots():
             if slot_dict['nepi_motor_name'] == str(motor_name):
+                return slot_dict
+        return None
+
+    # Resolve a RoboRIO motor_id back to its slot. The outbound writer is given
+    # a motor_id, but a reader of the log wants the slot index it came from --
+    # that is the index the RBX motor control was aimed at. First match wins:
+    # nothing stops an operator mapping one motor_id into two slots, and the
+    # command is the same command either way.
+    def getSlotByMotorId(self, motor_id):
+        try:
+            motor_id = int(motor_id)
+        except Exception:
+            return None
+        for slot_dict in self.get_motor_slots():
+            if slot_dict['motor_id'] == motor_id:
                 return slot_dict
         return None
 
@@ -1130,11 +1351,34 @@ class NepiWpilibApp(object):
     def writeMotorCommand(self, motor_id, speed_ratio):
         # The single writer for per-motor commands, shared by the standard motor
         # command topics and by the RBX device's manual motor control.
+
+        # Test mode logs the command and then sends it down the SAME path a
+        # command takes with a RoboRIO attached. It does not intercept the
+        # write: the whole point of the exercise is to confirm commands reach
+        # the right NetworkTables keys with the right fields, and a test mode
+        # that returns before nepi_wpilib is the one thing that cannot confirm
+        # that. Only inbound telemetry is synthetic.
+        # TEST MODE -- delete this logging block with test mode.
+        if self.test_mode is True:
+            slot_dict = self.getSlotByMotorId(motor_id)
+            slot_text = "no slot"
+            if slot_dict is not None:
+                slot_text = ("slot " + str(slot_dict['slot']) + " " +
+                             str(slot_dict['nepi_motor_name']))
+                if slot_dict['display_name'] != '':
+                    slot_text = slot_text + " (" + str(slot_dict['display_name']) + ")"
+            self.msg_if.pub_info("TEST MODE motor command: motor_id " +
+                                 str(motor_id) + "  " + slot_text +
+                                 "  speed_ratio " + str(round(float(speed_ratio), 4)))
+
         if self.nt_instance is None:
             self.msg_if.pub_warn("Motor command dropped: no NetworkTables client",
                                  throttle_s=10.0)
             return False
-        return nepi_wpilib.write_motor_command(self.nt_instance, motor_id, speed_ratio)
+        success = nepi_wpilib.write_motor_command(self.nt_instance, motor_id, speed_ratio)
+        # TEST MODE -- delete this line with test mode.
+        self.logWriteTrace("motor command  motor_id " + str(motor_id), success)
+        return success
 
     def commandMotorByName(self, motor_name, speed_ratio):
         if str(motor_name) == 'all':
@@ -1404,15 +1648,43 @@ class NepiWpilibApp(object):
 
     def writeRbxCommandRequest(self, request_id, command_type, chassis_speeds,
                                target_pose, named_action):
+        # Test mode logs the whole request and then sends it, down the same path
+        # and to the same NetworkTables keys it would take with a RoboRIO
+        # attached. Every field is logged, including the ones this command type
+        # does not use, because what is being checked is that the app assembled
+        # the request the RoboRIO contract expects -- and a field silently left
+        # out of the log is a field nobody checks.
+        # TEST MODE -- delete this logging block with test mode.
+        if self.test_mode is True:
+            self.msg_if.pub_info("TEST MODE RBX command request: id " +
+                                 str(request_id) +
+                                 "  type " + self.getCommandTypeName(command_type) +
+                                 "  chassis_speeds " + str(chassis_speeds) +
+                                 "  target_pose " + str(target_pose) +
+                                 "  named_action '" + str(named_action) + "'")
+            if self.test_mode_if is not None:
+                self.test_mode_if.note_command_request(request_id,
+                                                       self.getCommandTypeName(command_type))
+
         if self.nt_instance is None:
             self.msg_if.pub_warn("RBX command request dropped: no NetworkTables client")
             return False
-        return nepi_wpilib.write_rbx_command_request(self.nt_instance,
-                                                    request_id,
-                                                    command_type,
-                                                    chassis_speeds=chassis_speeds,
-                                                    target_pose=target_pose,
-                                                    named_action=named_action)
+        success = nepi_wpilib.write_rbx_command_request(self.nt_instance,
+                                                       request_id,
+                                                       command_type,
+                                                       chassis_speeds=chassis_speeds,
+                                                       target_pose=target_pose,
+                                                       named_action=named_action)
+        # TEST MODE -- delete this line with test mode.
+        self.logWriteTrace("RBX command request  id " + str(request_id) +
+                           "  type " + self.getCommandTypeName(command_type), success)
+        return success
+
+    # Wire code back to the name the RBX module used, so a logged request reads
+    # as 'target_pose' rather than as '2'. An unrecognised code is printed as
+    # itself rather than guessed at.
+    def getCommandTypeName(self, command_type):
+        return str(RBX_COMMAND_TYPE_NAMES.get(command_type, command_type))
 
     def getRbxNamespace(self):
         if self.rbx_if is None:
@@ -1554,6 +1826,15 @@ class NepiWpilibApp(object):
         Args:
             connected (bool): True if the app is connected to the robot network.
         """
+        # Test mode reports connected regardless of what either caller found.
+        # Both of the RBX device's own gates -- manualControlsReady and
+        # autonomousControlsReady -- read this through get_connected, so a false
+        # here leaves the robot uncommandable no matter how good the synthetic
+        # telemetry is. The status message reports test_mode beside connected,
+        # so the claim is never made without the qualifier next to it.
+        # TEST MODE -- delete this override with test mode.
+        if self.test_mode is True:
+            connected = True
         self.connected = connected
 
     def get_connected(self):
@@ -1572,6 +1853,7 @@ class NepiWpilibApp(object):
         status_msg.selected_option = self.selected_option
         status_msg.value = self.value
         status_msg.connected = self.connected
+        status_msg.test_mode = self.test_mode  # TEST MODE
         status_msg.selected_obstacles_namespace = self.obstacles_namespace
 
         # Robot interface configuration and live state

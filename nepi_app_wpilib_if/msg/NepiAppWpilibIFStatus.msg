@@ -12,6 +12,14 @@ float32 value
 # App connection state to the robot network (WPILib NetworkTables)
 bool connected
 
+# TEST MODE -- delete this field with test mode, then rebuild the messages.
+# True while the app is synthesizing the robot side of the contract instead of
+# reading it from NetworkTables, so everything below that describes robot state
+# is manufactured. Outbound commands are NOT faked: they are logged and then
+# written to the real NetworkTables keys exactly as always. Off by default;
+# nothing sets it but an operator.
+bool test_mode
+
 # Obstacles app namespace the node is currently connected to, or "None". The RUI
 # Obstacles selector reads this back so the row shows the node's actual
 # selection rather than only what the page last sent.

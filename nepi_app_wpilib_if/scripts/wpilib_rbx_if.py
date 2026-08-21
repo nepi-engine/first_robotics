@@ -162,6 +162,10 @@ class WpilibRbxIF:
 
         self.stop_triggered = False
         self.last_request_status = 'None'
+        # Last process name actually pushed to RBXRobotIF. Deliberately seeded
+        # to a value the device can never report, so the first real update
+        # always goes through.
+        self.last_process_name = None
 
         # Manual motor-control set points, in slot order. This is the index
         # space RBXRobotIF bounds-checks MotorControl.motor_ind against, so its
@@ -422,10 +426,31 @@ class WpilibRbxIF:
             self.last_request_id = request_id
         return request_id
 
+    # TEST MODE -- added for it, but NOT dependent on it and safe to keep after
+    # test mode is removed. This is plain command tracing: it is not gated on
+    # test mode and cannot be, because this module never learns test mode
+    # exists. Delete logCommandEntry and its call sites only if the tracing
+    # itself is unwanted.
+    #
+    # Every RBX command entry point announces itself here, in one shape, before
+    # it does anything. This module stays transport-blind: it does not know
+    # whether the injected writer reaches a robot, a log line or nothing at all,
+    # and it must not learn -- so it logs what it was ASKED to do and leaves what
+    # was actually written to whoever owns the transport. Read together, the two
+    # halves say what RBXRobotIF wanted and what went out.
+    def logCommandEntry(self, command_name, detail):
+        self.msg_if.pub_info("RBX command in: " + str(command_name) + "  " + str(detail))
+
     def sendCommandRequest(self, command_type, chassis_speeds=None,
                            target_pose=None, named_action='', request_type='None'):
         request_id = self.allocateRequestId()
         self.last_request_type = request_type
+        self.msg_if.pub_info("RBX command request out: id " + str(request_id) +
+                             "  " + str(request_type) +
+                             "  command_type " + str(command_type) +
+                             "  chassis_speeds " + str(chassis_speeds) +
+                             "  target_pose " + str(target_pose) +
+                             "  named_action '" + str(named_action) + "'")
         try:
             success = self.writeCommandRequestFunction(request_id, command_type,
                                                        chassis_speeds, target_pose,
@@ -493,6 +518,13 @@ class WpilibRbxIF:
         # Maps a NEPI motor index (slot order) to a RoboRIO motor_id through the
         # mapping and writes the command out. A command aimed at a slot with no
         # mapped motor_id is rejected with a warning and nothing is written.
+        #
+        # Logged on the way in, before any of the rejections below, so what
+        # RBXRobotIF asked for is on the record next to what the app went on to
+        # write -- including the cases where it wrote nothing. Command entry
+        # points are operator-driven, not periodic, so this is not a log flood.
+        self.logCommandEntry("set_motor_control_ratio", "motor_ind " + str(motor_ind) +
+                             "  speed_ratio " + str(speed_ratio))
         self.syncMotorRatios()
         slots = self.getSlots()
         if motor_ind < 0 or motor_ind >= len(slots):
@@ -514,6 +546,8 @@ class WpilibRbxIF:
                                  str(motor_ind) + ": " + str(e))
 
     def goStop(self):
+        self.logCommandEntry("go_stop", "zeroing " + str(len(self.motor_ratios)) +
+                             " motor ratios")
         self.stop_triggered = True
         for i in range(len(self.motor_ratios)):
             self.motor_ratios[i] = 0.0
@@ -524,6 +558,7 @@ class WpilibRbxIF:
                                        request_type='Stop')
 
     def goHome(self):
+        self.logCommandEntry("go_home", "named action " + CAPABILITY_GO_HOME)
         return self.sendCommandRequest(self.command_types['named_action'],
                                        named_action=CAPABILITY_GO_HOME,
                                        request_type='Go Home')
@@ -533,6 +568,7 @@ class WpilibRbxIF:
         # in degrees. target_pose carries heading only, so yaw is what is sent
         # and the robot holds its current x/y -- taken from the fused navpose so
         # the RoboRIO is given an absolute pose, not an offset.
+        self.logCommandEntry("goto_pose", "attitude ENU degs " + str(list(attitude_enu_degs)))
         navpose_dict = self.getNavPoseCb()
         if navpose_dict is None:
             self.msg_if.pub_warn("GoTo Pose ignored: no valid robot pose")
@@ -550,6 +586,10 @@ class WpilibRbxIF:
         # check adds current + offset the same way), so the absolute target is
         # computed here from the same fused navpose it measures against. z is
         # dropped: target_pose has no vertical field.
+        self.logCommandEntry("goto_position",
+                             "offset ENU m [" + str(point_enu_m.x) + ", " +
+                             str(point_enu_m.y) + ", " + str(point_enu_m.z) + "]" +
+                             "  orientation ENU degs " + str(list(orientation_enu_deg)))
         navpose_dict = self.getNavPoseCb()
         if navpose_dict is None:
             self.msg_if.pub_warn("GoTo Position ignored: no valid robot pose")
@@ -565,6 +605,8 @@ class WpilibRbxIF:
         # action_ind is already bounds-checked against go_actions by RBXRobotIF.
         go_actions = self.getGoActions()
         action = go_actions[action_ind]
+        self.logCommandEntry("set_go_action", "action_ind " + str(action_ind) +
+                             "  action " + str(action))
         return self.sendCommandRequest(self.command_types['named_action'],
                                        named_action=action,
                                        request_type=action)
@@ -617,6 +659,15 @@ class WpilibRbxIF:
             process_name = request_status
             if active_request_type != '':
                 process_name = active_request_type + ': ' + request_status
+
+        # Edge-triggered. This runs on every status tick, and RBXRobotIF logs a
+        # line each time setProcessNameCb is called, so re-sending an unchanged
+        # name (almost always 'None', since IDLE is the resting state) floods
+        # the log at the status rate and drowns out the command tracing this
+        # module exists to produce.
+        if process_name == self.last_process_name:
+            return
+        self.last_process_name = process_name
 
         try:
             self.rbx_if.setProcessNameCb(String(data=process_name))
