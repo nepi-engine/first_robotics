@@ -544,6 +544,14 @@ def solve_stereo(objpoints, imgpoints_l, imgpoints_r, image_size, out_path, alph
     # cameras are separated horizontally. A pair mounted one above the other
     # rectifies and solves perfectly well and then yields no depth at all, for the
     # same reason a reversed pair does -- reported so that outcome has a name.
+    #
+    # This is NOT a measurement of the rig. It reads the translation the solve
+    # produced, so it is only evidence about the hardware if the solve itself is
+    # trustworthy -- see where it is reported in StereoCalibrator.solve(), which
+    # withholds the "remount them" advice on a solve the epipolar RMS has already
+    # condemned. The components are carried out alongside the boolean so a
+    # non-horizontal result can be READ rather than only asserted.
+    baseline_xyz_mm = tuple(float(v) for v in T.ravel())
     baseline_vec = np.abs(T.ravel())
     horizontal_rig = bool(baseline_vec[0] >= max(baseline_vec[1], baseline_vec[2]))
 
@@ -565,6 +573,28 @@ def solve_stereo(objpoints, imgpoints_l, imgpoints_r, image_size, out_path, alph
     baseline_mm = float(abs(P2[0, 3]) / P1[0, 0])
     epipolar_rms = _epipolar_rms_px(imgpoints_l, imgpoints_r,
                                     KL, DL, KR, DR, R1, R2, P1, P2)
+
+    # THE ONE INTRINSIC AN OPERATOR CAN CHECK BY EYE.
+    #
+    # A focal length in pixels means nothing on its own -- 4332 px is correct for a
+    # narrow lens on a 4K sensor and absurd for a 1080p webcam -- so it cannot be
+    # sanity-checked as printed, and a runaway f is exactly what a degenerate
+    # capture set produces: views all at one distance and one angle let f, the
+    # distortion coefficients and the board's depth trade off against each other
+    # and STILL fit every corner, so the mono RMS comes back beautiful with the
+    # focal length several times off. CALIB_FIX_INTRINSIC above then freezes that
+    # error and leaves stereoCalibrate no way to absorb it except by bending R and
+    # T, which is what turns a good-looking mono solve into a huge epipolar RMS and
+    # a nonsense baseline direction.
+    #
+    # Restated as a field of view it becomes checkable against the thing the
+    # operator is holding: a webcam is 60-90 degrees across, and a value far off
+    # that says the intrinsics are wrong no matter how low the mono RMS went.
+    # Computed from the RAW left intrinsic, not P1, because it is a claim about the
+    # physical lens -- alpha rescales the rectified focal length and would move
+    # this number for reasons that have nothing to do with the camera.
+    fov_h_deg = float(np.degrees(2.0 * np.arctan(
+        float(image_size[0]) / (2.0 * float(KL[0, 0])))))
 
     folder = os.path.dirname(os.path.abspath(out_path))
     if folder and not os.path.isdir(folder):
@@ -589,10 +619,14 @@ def solve_stereo(objpoints, imgpoints_l, imgpoints_r, image_size, out_path, alph
         "rms_stereo": float(rms_s),
         "focal_length_px": focal_length_px,
         "baseline_mm": baseline_mm,
+        "fov_h_deg": fov_h_deg,
         "epipolar_rms_px": epipolar_rms,
         "good": bool(epipolar_rms < GOOD_EPIPOLAR_RMS_PX),
         "swap_lr": swap_lr,
         "horizontal_rig": horizontal_rig,
+        # Signed (x, y, z) mm of the solved camera-to-camera translation, so the
+        # horizontal_rig verdict above can be shown its evidence.
+        "baseline_xyz_mm": baseline_xyz_mm,
         "out_path": out_path,
     }
 
@@ -772,7 +806,8 @@ class StereoCalibrator:
                    f"rms {info['rms_stereo']:.3f} px "
                    f"(mono L {info['rms_left']:.3f} / R {info['rms_right']:.3f}), "
                    f"epipolar {info['epipolar_rms_px']:.3f} px ({quality}), "
-                   f"f {info['focal_length_px']:.1f} px, "
+                   f"f {info['focal_length_px']:.1f} px "
+                   f"({info['fov_h_deg']:.0f} deg horizontal FOV), "
                    f"baseline {info['baseline_mm']:.1f} mm")
         # Both of these produce a calibration that reports success and a depth map
         # with nothing in it, so neither can be left to the numbers above to imply.
@@ -780,10 +815,31 @@ class StereoCalibrator:
             message += ("; NOTE the Left/Right camera selections are REVERSED -- "
                         "corrected in this calibration, but swap the two selectors "
                         "so the raw viewers and any future solve match the rig")
+        # WHEN THE BASELINE DIRECTION IS WORTH ACTING ON.
+        #
+        # horizontal_rig reads the translation the solve produced, so it only says
+        # something about the hardware if the solve is trustworthy. On a solve the
+        # epipolar RMS has already condemned, T's direction is as wrong as
+        # everything else derived from it -- and "remount them side by side" is then
+        # not merely unhelpful, it is a confident instruction to rebuild a rig that
+        # was never the problem. So the advice is given only on a GOOD solve, where
+        # a non-horizontal baseline really does mean a stacked pair; on a bad one the
+        # same fact is reported as what it actually is, a symptom of the bad solve,
+        # with the components shown so it can be checked against the real rig.
         if not info["horizontal_rig"]:
-            message += ("; WARNING the two cameras are not separated HORIZONTALLY -- "
-                        "block matching searches along image rows, so a stacked pair "
-                        "yields no depth; remount them side by side")
+            x_mm, y_mm, z_mm = info["baseline_xyz_mm"]
+            if info["good"]:
+                message += ("; WARNING the two cameras are not separated "
+                            "HORIZONTALLY (baseline x/y/z "
+                            f"{x_mm:.0f}/{y_mm:.0f}/{z_mm:.0f} mm) -- block "
+                            "matching searches along image rows, so a stacked pair "
+                            "yields no depth; remount them side by side")
+            else:
+                message += ("; the solved baseline also came out non-horizontal "
+                            f"(x/y/z {x_mm:.0f}/{y_mm:.0f}/{z_mm:.0f} mm), which "
+                            "on a solve this poor is a SYMPTOM of it rather than a "
+                            "mounting problem -- fix the epipolar RMS first and "
+                            "only believe this if it survives")
         return True, message, info
 
 
