@@ -113,7 +113,7 @@ if [ "${NEPI_REMOTE_SETUP}" == "0" ]; then
     echo "Build Updates Deployed"
   fi
 elif [ "${NEPI_REMOTE_SETUP}" == "1" ]; then
-  rsync -avzhe "ssh -i ${NEPI_SSH_KEY} -o StrictHostKeyChecking=no  -p 22" ${RSYNC_EXCLUDES} ${SOURCE_PATH}/* ${nepi_user_build}@${NEPI_TARGET_IP}:${DEST_PATH}/
+  rsync -avzhe "ssh -i ${NEPI_SSH_KEY} -o StrictHostKeyChecking=no  -p 22" --delete ${RSYNC_EXCLUDES} ${SOURCE_PATH}/* ${nepi_user_build}@${NEPI_TARGET_IP}:${DEST_PATH}/
   echo ""
   if [[ $? -ne 0 ]]; then
     echo "Failed connect to NEPI host: ${NEPI_TARGET_IP}"
@@ -126,8 +126,7 @@ fi
 ###############################################
 # Deploy App Scripts Live
 ###############################################
-SOURCE_PATH=${APP_FOLDER}/scripts
-DEST_PATH=/opt/nepi/nepi_engine/lib/${APP_NAME}
+
 
 RSYNC_EXCLUDES=" --exclude .git --exclude .gitmodules"
 #echo "Excluding ${RSYNC_EXCLUDES}"
@@ -136,19 +135,91 @@ echo ""
 echo "--------------------------------------------"
 echo "DEPLOYING LIVE UPDATES"
 echo ""
-echo "Syncing App ${APP_NAME} from ${SOURCE_PATH} to NEPI Live Folders at:" 
-echo "Destination Path ${DEST_PATH}"
-echo ""
-rsync -avzhe "ssh -i ${NEPI_SSH_KEY} -o StrictHostKeyChecking=no -p 2222" ${RSYNC_EXCLUDES} ${SOURCE_PATH}/* ${nepi_user_live}@${NEPI_TARGET_IP}:${DEST_PATH}/ 2> /dev/null
-echo ""
-if [[ $? -ne 0 ]]; then
-  if [ "${NEPI_REMOTE_SETUP}" == "0" ]; then
-    local_host_ip="localhost"
-  elif [ "${NEPI_REMOTE_SETUP}" == "1" ]; then
-    local_host_ip=$NEPI_TARGET_IP
+
+SUCCESS=1
+
+
+############################
+# Deploy Live Scripts
+SOURCE_PATH=${APP_FOLDER}/scripts
+DEST_PATH=/opt/nepi/nepi_engine/lib/${APP_NAME}
+if [[ $SUCCESS -eq 1 && -d $SOURCE_PATH ]]; then
+  echo ""
+  echo "Sending Live Updates from Source Path ${SOURCE_PATH}"
+  echo "to Destination Path ${DEST_PATH}"
+  rsync -avzhe "ssh -i ${NEPI_SSH_KEY} -o StrictHostKeyChecking=no -p 2222" --delete ${RSYNC_EXCLUDES} ${SOURCE_PATH}/* ${nepi_user_live}@${NEPI_TARGET_IP}:${DEST_PATH}/ 2> /dev/null
+  if [[ $? -ne 0 ]]; then
+    if [ "${NEPI_REMOTE_SETUP}" == "0" ]; then
+      local_host_ip="localhost"
+    elif [ "${NEPI_REMOTE_SETUP}" == "1" ]; then
+      local_host_ip=$NEPI_TARGET_IP
+    fi
+    echo "Failed connect to a running NEPI container on host: ${local_host_ip}"
+    echo "Live Updates Failed"
+    SUCCESS=0
   fi
-  echo "Failed connect to a running NEPI container on host: ${local_host_ip}"
-  echo "Live Updates Failed"
-else
-  echo "Live Updates Deployed"
+fi
+
+############################
+# Deploy Live SDK
+SOURCE_PATH=${APP_FOLDER}/sdk
+DEST_PATH=/opt/nepi/nepi_engine/lib/python3/dist-packages/nepi_sdk
+if [[ $SUCCESS -eq 1 && -d $SOURCE_PATH ]]; then
+  echo ""
+  echo "Sending Live Updates from Source Path ${SOURCE_PATH}"
+  echo "to Destination Path ${DEST_PATH}"
+  rsync -avzhe "ssh -i ${NEPI_SSH_KEY} -o StrictHostKeyChecking=no -p 2222" ${RSYNC_EXCLUDES} ${SOURCE_PATH}/* ${nepi_user_live}@${NEPI_TARGET_IP}:${DEST_PATH}/ 2> /dev/null
+  if [[ $? -ne 0 ]]; then
+    if [ "${NEPI_REMOTE_SETUP}" == "0" ]; then
+      local_host_ip="localhost"
+    elif [ "${NEPI_REMOTE_SETUP}" == "1" ]; then
+      local_host_ip=$NEPI_TARGET_IP
+    fi
+    echo "Failed connect to a running NEPI container on host: ${local_host_ip}"
+    echo "Live Updates Failed"
+    SUCCESS=0
+  fi
+fi
+
+############################
+# Deploy Live API
+SOURCE_PATH=${APP_FOLDER}/api
+DEST_PATH=/opt/nepi/nepi_engine/lib/python3/dist-packages/nepi_api
+if [[ $SUCCESS -eq 1 && -d $SOURCE_PATH ]]; then
+  echo ""
+  echo "Sending Live Updates from Source Path ${SOURCE_PATH}"
+  echo "to Destination Path ${DEST_PATH}"
+  rsync -avzhe "ssh -i ${NEPI_SSH_KEY} -o StrictHostKeyChecking=no -p 2222" ${RSYNC_EXCLUDES} ${SOURCE_PATH}/* ${nepi_user_live}@${NEPI_TARGET_IP}:${DEST_PATH}/ 2> /dev/null
+  if [[ $? -ne 0 ]]; then
+    if [ "${NEPI_REMOTE_SETUP}" == "0" ]; then
+      local_host_ip="localhost"
+    elif [ "${NEPI_REMOTE_SETUP}" == "1" ]; then
+      local_host_ip=$NEPI_TARGET_IP
+    fi
+    echo "Failed connect to a running NEPI container on host: ${local_host_ip}"
+    echo "Live Updates Failed"
+    SUCCESS=0
+  fi
+fi
+
+
+############################
+# Deploy Live RUI
+SOURCE_PATH=${APP_FOLDER}/rui
+DEST_PATH="${NEPI_BASE}/nepi_rui/src/rui_webserver/rui-app/src"
+if [[ $SUCCESS -eq 1 && -d $SOURCE_PATH ]]; then
+  echo ""
+  echo "Sending Live Updates from Source Path ${SOURCE_PATH}"
+  echo "to Destination Path ${DEST_PATH}"
+  rsync -avzhe "ssh -i ${NEPI_SSH_KEY} -o StrictHostKeyChecking=no -p 2222" ${RSYNC_EXCLUDES} ${SOURCE_PATH}/* ${nepi_user_live}@${NEPI_TARGET_IP}:${DEST_PATH}/ 2> /dev/null
+  if [[ $? -ne 0 ]]; then
+    if [ "${NEPI_REMOTE_SETUP}" == "0" ]; then
+      local_host_ip="localhost"
+    elif [ "${NEPI_REMOTE_SETUP}" == "1" ]; then
+      local_host_ip=$NEPI_TARGET_IP
+    fi
+    echo "Failed connect to a running NEPI container on host: ${local_host_ip}"
+    echo "Live Updates Failed"
+    SUCCESS=0
+  fi
 fi
