@@ -104,6 +104,52 @@ MIN_PAIRS = 5
 # Rectified rows must line up this well or block matching will produce mush.
 GOOD_EPIPOLAR_RMS_PX = 1.0
 
+# HOW MUCH DISTORTION MODEL THE LENS CAN ACTUALLY SUPPORT.
+#
+# OpenCV's default is 5 coefficients (k1 k2 p1 p2 k3), and asking for all five is
+# a mistake on a NARROW lens. Radial distortion is only observable through the
+# spread of field angles in the images, and the k2/k3 terms act at r^4 and r^6, so
+# on a long lens they have almost no signal to fit -- the solver then drives them
+# to whatever suits THIS capture set and is wrong everywhere else. It costs
+# nothing on the reprojection RMS (the coefficients are fitted to make exactly
+# that number small) and shows up instead as a stubborn rectified epipolar error,
+# plus an undistortion map that balloons the frame -- which stereoRectify at
+# alpha=0 then has to crop back hard, inflating the reported focal length.
+#
+# A wide lens is the opposite case: it has real distortion AND the field angles to
+# identify it, so constraining the model there would leave genuine barrel
+# distortion unmodelled. So the model is chosen from the solved field of view
+# rather than fixed either way -- see _calibrate_pair_intrinsics.
+NARROW_LENS_FLAGS = cv2.CALIB_FIX_K3 | cv2.CALIB_ZERO_TANGENT_DIST
+# Horizontal FOV at or above which the full 5-coefficient model is used instead.
+WIDE_FOV_DEG = 60.0
+# MISMATCHED CAMERAS.
+#
+# Two webcams of different models -- or the same model at different driver
+# defaults -- routinely deliver different resolutions, so the pair is supported
+# rather than refused. Everything from the solve onward lives at ONE working
+# resolution (the smaller of the two, so no camera is ever upsampled into
+# resolution it does not have); each camera's corners are scaled from its own
+# native pixels into that, and Rectifier scales the live frames the same way.
+#
+# Scaling corner COORDINATES is exact for this camera model, not an
+# approximation: distortion is defined on x' = (u - cx) / fx and y' = (v - cy) /
+# fy, so scaling u and v by (sx, sy) alongside (fx, cx) and (fy, cy) leaves the
+# normalized coordinates -- and therefore every distortion term -- untouched. It
+# is the same camera, described in different pixel units.
+#
+# Different ASPECT RATIOS are also allowed, and are still exact for the same
+# reason, but they mean the scale is non-uniform and the two cameras almost
+# certainly have different fields of view, which limits the overlap depth can be
+# computed in. Worth naming rather than silently accepting.
+ASPECT_MISMATCH_TOL = 0.02
+# Rectification zoom (rectified focal / raw focal at alpha=0) above which the
+# undistortion maps are warping the frames enough to say so. At alpha=0
+# stereoRectify crops to the all-valid region, so a large zoom means that region
+# is small -- an over-fitted distortion model, or a big relative rotation between
+# the two cameras. Either way the calibration is fighting itself.
+HIGH_RECTIFY_ZOOM = 1.5
+
 # Where calibration files live on a NEPI device: EXACTLY the folder the ZED
 # driver keeps its camera calibration in (idx_zed_node.ZedCamNode.CAL_BACKUP_PATH
 # = /mnt/nepi_storage/user_cfg/cals), so every camera calibration on the box is in
@@ -474,15 +520,121 @@ def _epipolar_rms_px(imgpoints_l, imgpoints_r, KL, DL, KR, DR, R1, R2, P1, P2):
     return float(np.sqrt(np.mean(np.concatenate(diffs) ** 2)))
 
 
+def working_size(size_l, size_r):
+    """The single (w, h) the solve, the maps and the depth map all live at.
+
+    The SMALLER of the two frames by pixel count. Block matching needs a pair of
+    identical size, so one resolution has to win, and choosing the smaller means
+    no camera is ever upsampled into detail it never captured -- matching quality
+    is set by the worse camera either way, and the cheaper map is the honest one.
+    """
+    return tuple(size_l if (size_l[0] * size_l[1]) <= (size_r[0] * size_r[1])
+                 else size_r)
+
+
+def _scale_corners(corners, from_size, to_size):
+    """Re-express detected corners in another resolution's pixel units.
+
+    Exact for the pinhole + radial model -- see the ASPECT_MISMATCH_TOL comment.
+    Applied AFTER the ordering helpers, so those keep deciding orientation on the
+    native pixels the detector actually saw.
+    """
+    if tuple(from_size) == tuple(to_size):
+        return corners
+    scaled = np.asarray(corners, dtype=np.float32).copy()
+    scaled[..., 0] *= float(to_size[0]) / float(from_size[0])
+    scaled[..., 1] *= float(to_size[1]) / float(from_size[1])
+    return scaled
+
+
+def _fit_to(image, size):
+    """Resize a frame to size (w, h), or return it untouched if already there.
+
+    INTER_AREA on the way down: this is the ONLY resampling of the live frames
+    that happens before block matching, and area-averaging both antialiases the
+    downscale and suppresses the sensor noise a linear resize would keep.
+    """
+    if image is None or (image.shape[1], image.shape[0]) == tuple(size):
+        return image
+    shrinking = size[0] * size[1] < image.shape[1] * image.shape[0]
+    return cv2.resize(image, tuple(size),
+                      interpolation=cv2.INTER_AREA if shrinking else cv2.INTER_LINEAR)
+
+
+def _aspect_mismatch(size_l, size_r):
+    """Fractional difference between the two frames' aspect ratios."""
+    aspect_l = float(size_l[0]) / float(size_l[1])
+    aspect_r = float(size_r[0]) / float(size_r[1])
+    return abs(aspect_l - aspect_r) / max(aspect_l, aspect_r)
+
+
+def _fov_h_deg(K, image_size):
+    """Horizontal field of view in degrees implied by an intrinsic matrix.
+
+    THE ONE INTRINSIC AN OPERATOR CAN CHECK BY EYE. A focal length in pixels means
+    nothing on its own -- 6205 px is correct for a long lens on a big sensor and
+    absurd for a 1080p webcam -- so it cannot be sanity-checked as printed, and a
+    runaway focal length is exactly what a degenerate capture set produces. As a
+    field of view it becomes checkable against the thing in the operator's hand: a
+    webcam is 60-90 degrees across, and a value far off that says the intrinsics
+    are wrong however low the reprojection RMS went.
+
+    Pass a RAW camera matrix, not P1: this is a claim about the physical lens, and
+    the rectified focal length carries the alpha crop zoom on top of it.
+    """
+    return float(np.degrees(2.0 * np.arctan(
+        float(image_size[0]) / (2.0 * float(K[0, 0])))))
+
+
+def _calibrate_pair_intrinsics(objpoints, imgpoints_l, imgpoints_r, image_size):
+    """Both cameras' intrinsics, using a distortion model the lenses can support.
+
+    Fits the CONSTRAINED model first (see NARROW_LENS_FLAGS), then reads the field
+    of view back out of it to decide whether these are in fact wide lenses with
+    real distortion to model -- in which case both cameras are re-fitted with the
+    full 5-coefficient model. The FOV is what decides it because that is what
+    determines whether the higher-order radial terms are identifiable at all.
+
+    Deliberately one decision for BOTH cameras rather than one each: rms_left and
+    rms_right are read against each other to work out which camera has bad corners,
+    which they cannot be if the two were fitted with different numbers of free
+    parameters. The wider of the two lenses decides, so a mixed pair keeps the
+    model that the more distorted lens needs.
+
+    Returns (rms_l, KL, DL, rms_r, KR, DR, narrow_model).
+    """
+    def fit(flags):
+        return [cv2.calibrateCamera(objpoints, points, image_size, None, None,
+                                    flags=flags)
+                for points in (imgpoints_l, imgpoints_r)]
+
+    fits = fit(NARROW_LENS_FLAGS)
+    narrow_model = max(_fov_h_deg(K, image_size)
+                       for _, K, _, _, _ in fits) < WIDE_FOV_DEG
+    if not narrow_model:
+        fits = fit(0)
+    (rms_l, KL, DL, _, _), (rms_r, KR, DR, _, _) = fits
+    return float(rms_l), KL, DL, float(rms_r), KR, DR, narrow_model
+
+
 # Stage 1: the solve (shared by the RUI capture flow and the on-disk flow)
-def solve_stereo(objpoints, imgpoints_l, imgpoints_r, image_size, out_path, alpha=0.0):
+def solve_stereo(objpoints, imgpoints_l, imgpoints_r, image_size, out_path, alpha=0.0,
+                 native_size_l=None, native_size_r=None):
     """Solve a stereo pair from matched corner sets and save the .npz.
 
     Produces exactly what Rectifier() loads: map1x/1y, map2x/2y, Q, and the
     scalars focal_length_px + baseline_mm.
 
-    image_size is (w, h). alpha is the stereoRectify zoom: 0 crops to
-    all-valid pixels, 1 keeps every source pixel (with black wedges).
+    image_size is (w, h), the WORKING resolution every corner set is already
+    expressed in. alpha is the stereoRectify zoom: 0 crops to all-valid pixels,
+    1 keeps every source pixel (with black wedges).
+
+    native_size_l / native_size_r are the resolutions the two cameras actually
+    deliver, when they differ from the working size (see working_size). They are
+    not used in the solve -- the corners arrive already scaled -- only recorded,
+    so Rectifier knows what to expect from each live stream and can scale it the
+    same way the corners were. Default to image_size, i.e. a matched pair.
+
     Returns a diagnostics dict.
     """
     pairs = len(objpoints)
@@ -493,8 +645,8 @@ def solve_stereo(objpoints, imgpoints_l, imgpoints_r, image_size, out_path, alph
             "corners."
         )
 
-    rms_l, KL, DL, _, _ = cv2.calibrateCamera(objpoints, imgpoints_l, image_size, None, None)
-    rms_r, KR, DR, _, _ = cv2.calibrateCamera(objpoints, imgpoints_r, image_size, None, None)
+    rms_l, KL, DL, rms_r, KR, DR, narrow_model = _calibrate_pair_intrinsics(
+        objpoints, imgpoints_l, imgpoints_r, image_size)
 
     # Intrinsics are already solved above, so only R/T are estimated here.
     rms_s, KL, DL, KR, DR, R, T, _, _ = cv2.stereoCalibrate(
@@ -534,11 +686,18 @@ def solve_stereo(objpoints, imgpoints_l, imgpoints_r, image_size, out_path, alph
     # They are how the operator is told which camera has bad corners, and the only
     # handle they have on a camera is the selector it is plugged into, so those two
     # stay named after the SELECTED streams.
+    # Recorded in MAP order below, not selector order, so they have to follow the
+    # swap with everything else: after it, map1 is built from the stream the node
+    # calls RIGHT, and it is map1's source frame whose size has to match.
+    native_size_1 = tuple(native_size_l or image_size)
+    native_size_2 = tuple(native_size_r or image_size)
+
     swap_lr = bool(float(T.ravel()[0]) > 0.0)
     if swap_lr:
         R, T = R.T, -R.T.dot(T)
         KL, DL, KR, DR = KR, DR, KL, DL
         imgpoints_l, imgpoints_r = imgpoints_r, imgpoints_l
+        native_size_1, native_size_2 = native_size_2, native_size_1
 
     # Block matching searches along image ROWS, so it can only measure a rig whose
     # cameras are separated horizontally. A pair mounted one above the other
@@ -574,27 +733,23 @@ def solve_stereo(objpoints, imgpoints_l, imgpoints_r, image_size, out_path, alph
     epipolar_rms = _epipolar_rms_px(imgpoints_l, imgpoints_r,
                                     KL, DL, KR, DR, R1, R2, P1, P2)
 
-    # THE ONE INTRINSIC AN OPERATOR CAN CHECK BY EYE.
+    # WHAT THE REPORTED FOCAL LENGTH IS MADE OF.
     #
-    # A focal length in pixels means nothing on its own -- 4332 px is correct for a
-    # narrow lens on a 4K sensor and absurd for a 1080p webcam -- so it cannot be
-    # sanity-checked as printed, and a runaway f is exactly what a degenerate
-    # capture set produces: views all at one distance and one angle let f, the
-    # distortion coefficients and the board's depth trade off against each other
-    # and STILL fit every corner, so the mono RMS comes back beautiful with the
-    # focal length several times off. CALIB_FIX_INTRINSIC above then freezes that
-    # error and leaves stereoCalibrate no way to absorb it except by bending R and
-    # T, which is what turns a good-looking mono solve into a huge epipolar RMS and
-    # a nonsense baseline direction.
+    # focal_length_px above is P1's, which is the RAW focal length times whatever
+    # zoom stereoRectify applied. At alpha=0 that zoom is set by cropping to the
+    # all-valid region, so it is not a free parameter -- it is a MEASUREMENT of how
+    # much of the frame survives undistortion and rectification. A large value
+    # means very little does, which happens when the distortion model has been
+    # over-fitted (see NARROW_LENS_FLAGS) or when the two cameras are rotated well
+    # apart. Both leave a stubborn epipolar error, and neither is visible in the
+    # rectified focal length alone -- it just reads as a big number.
     #
-    # Restated as a field of view it becomes checkable against the thing the
-    # operator is holding: a webcam is 60-90 degrees across, and a value far off
-    # that says the intrinsics are wrong no matter how low the mono RMS went.
-    # Computed from the RAW left intrinsic, not P1, because it is a claim about the
-    # physical lens -- alpha rescales the rectified focal length and would move
-    # this number for reasons that have nothing to do with the camera.
-    fov_h_deg = float(np.degrees(2.0 * np.arctan(
-        float(image_size[0]) / (2.0 * float(KL[0, 0])))))
+    # Separating the two makes the honest lens property (fov_h_deg, from the raw
+    # intrinsic) checkable against the camera in the operator's hand, and the crop
+    # cost (rectify_zoom) checkable against 1.0.
+    raw_focal_px = float(KL[0, 0])
+    fov_h_deg = _fov_h_deg(KL, image_size)
+    rectify_zoom = focal_length_px / raw_focal_px if raw_focal_px > 0.0 else float("nan")
 
     folder = os.path.dirname(os.path.abspath(out_path))
     if folder and not os.path.isdir(folder):
@@ -609,17 +764,35 @@ def solve_stereo(objpoints, imgpoints_l, imgpoints_r, image_size, out_path, alph
              KL=KL, DL=DL, KR=KR, DR=DR, R=R, T=T,
              R1=R1, R2=R2, P1=P1, P2=P2,
              roi1=np.array(roi1), roi2=np.array(roi2),
-             image_size=np.array(image_size))
+             image_size=np.array(image_size),
+             # Source resolution each map expects, in MAP order (post-swap_lr).
+             # Equal to image_size on a matched pair; different when the two
+             # cameras deliver different resolutions, in which case Rectifier
+             # scales each live frame into image_size before remapping.
+             native_size_1=np.array(native_size_1),
+             native_size_2=np.array(native_size_2))
 
     return {
         "pairs_used": pairs,
         "image_size": tuple(image_size),
+        # Selector order here, unlike the .npz, because this dict is read by the
+        # operator-facing message and "left" there means the LEFT selector.
+        "native_size_l": tuple(native_size_l or image_size),
+        "native_size_r": tuple(native_size_r or image_size),
         "rms_left": float(rms_l),
         "rms_right": float(rms_r),
         "rms_stereo": float(rms_s),
         "focal_length_px": focal_length_px,
         "baseline_mm": baseline_mm,
+        # Raw left-camera focal length and the field of view it implies, kept apart
+        # from focal_length_px (which is P1's, i.e. after the alpha crop zoom).
+        "raw_focal_px": raw_focal_px,
         "fov_h_deg": fov_h_deg,
+        "rectify_zoom": rectify_zoom,
+        # False when the lenses were wide enough to justify the full 5-coefficient
+        # distortion model. Recorded because it changes what the RMS values mean:
+        # more free parameters always fit the captured corners better.
+        "narrow_model": narrow_model,
         "epipolar_rms_px": epipolar_rms,
         "good": bool(epipolar_rms < GOOD_EPIPOLAR_RMS_PX),
         "swap_lr": swap_lr,
@@ -673,6 +846,11 @@ class StereoCalibrator:
         self._objpoints = []
         self._imgpoints_l = []
         self._imgpoints_r = []
+        # What each camera delivers, and the one resolution the stored corners are
+        # expressed in. All three are equal for a matched pair; image_size is the
+        # smaller of the two natives otherwise (see working_size).
+        self.native_size_l = None
+        self.native_size_r = None
         self.image_size = None
         return True, "captures cleared"
 
@@ -684,15 +862,20 @@ class StereoCalibrator:
         """Find the board in a live L/R pair and keep it. Returns (ok, message)."""
         if left_image is None or right_image is None:
             return False, "no camera frames -- select both cameras first"
-        if left_image.shape[:2] != right_image.shape[:2]:
-            return False, (f"L/R resolution mismatch: {left_image.shape[:2]} vs "
-                           f"{right_image.shape[:2]}")
-
-        size = (left_image.shape[1], left_image.shape[0])   # (w, h)
-        if self.image_size is not None and size != self.image_size:
-            # Mixed resolutions would silently produce nonsense intrinsics.
-            return False, (f"frame size {size} != captured {self.image_size}; "
-                           "clear captures before changing resolution")
+        size_l = (left_image.shape[1], left_image.shape[0])   # (w, h)
+        size_r = (right_image.shape[1], right_image.shape[0])
+        # A resolution CHANGE mid-set is still refused, per camera: the stored
+        # corners are in the working resolution the earlier captures fixed, and
+        # mixing in views measured against a different frame would silently
+        # produce nonsense intrinsics. A resolution DIFFERENCE between the two
+        # cameras is fine -- that is what the working size exists for.
+        for label, size, kept in (("left", size_l, self.native_size_l),
+                                  ("right", size_r, self.native_size_r)):
+            if kept is not None and size != kept:
+                return False, (f"{label} frame is now {size[0]}x{size[1]}, but the "
+                               f"{self.count} captured view(s) were taken at "
+                               f"{kept[0]}x{kept[1]} -- clear captures before "
+                               "changing resolution")
 
         found_l, corners_l, method_l = _detect_board(_as_grayscale(left_image),
                                                      self.cols, self.rows)
@@ -712,17 +895,33 @@ class StereoCalibrator:
                            "and squarer to both cameras; "
                            f"kept {self.count}")
 
+        # Scaled AFTER the ordering helpers above, so those still decide
+        # orientation on the native pixels the detector actually saw. A matched
+        # pair scales by 1.0 in both cameras and nothing moves.
+        work = working_size(size_l, size_r)
         self._objpoints.append(board_object_points(self.cols, self.rows, self.square_mm))
-        self._imgpoints_l.append(corners_l)
-        self._imgpoints_r.append(corners_r)
-        self.image_size = size
+        self._imgpoints_l.append(_scale_corners(corners_l, size_l, work))
+        self._imgpoints_r.append(_scale_corners(corners_r, size_r, work))
+        self.native_size_l, self.native_size_r = size_l, size_r
+        self.image_size = work
         remaining = MIN_PAIRS - self.count
         hint = f" (need {remaining} more)" if remaining > 0 else " (ready to solve)"
         # Which detector path found it: a board only the fallbacks can see is
         # marginal (too small in frame, or badly lit), which is worth knowing
         # before the solve comes back with a poor epipolar RMS.
         detail = "" if method_l == method_r == "sb" else f" [{method_l}/{method_r}]"
-        return True, f"captured pair {self.count}{hint}{detail}"
+        message = f"captured pair {self.count}{hint}{detail}"
+        # Said on every capture, not once: the operator can only act on it while
+        # still capturing, and a mismatched pair is easy to create by accident
+        # (two camera models, or one driver defaulting differently).
+        if size_l != size_r:
+            message += (f" [L {size_l[0]}x{size_l[1]} / R {size_r[0]}x{size_r[1]} "
+                        f"-> working {work[0]}x{work[1]}]")
+            if _aspect_mismatch(size_l, size_r) > ASPECT_MISMATCH_TOL:
+                message += (" (NOTE different aspect ratios, so the two cameras "
+                            "likely see different fields of view -- depth only "
+                            "exists where the views overlap)")
+        return True, message
 
     def _failure_message(self, found_l, found_r, left_image, right_image):
         """Explain a failed capture rather than only reporting it.
@@ -785,7 +984,9 @@ class StereoCalibrator:
         """Solve + save. Returns (ok, message, info_dict_or_None)."""
         try:
             info = solve_stereo(self._objpoints, self._imgpoints_l, self._imgpoints_r,
-                                self.image_size, out_path, alpha=alpha)
+                                self.image_size, out_path, alpha=alpha,
+                                native_size_l=self.native_size_l,
+                                native_size_r=self.native_size_r)
         # OSError belongs here with the solve errors: the solve ENDS in np.savez, so
         # an unwritable calibration folder (a path typed into the RUI, a read-only
         # mount) fails after all the work is done. Without it that failure escapes
@@ -807,14 +1008,43 @@ class StereoCalibrator:
                    f"(mono L {info['rms_left']:.3f} / R {info['rms_right']:.3f}), "
                    f"epipolar {info['epipolar_rms_px']:.3f} px ({quality}), "
                    f"f {info['focal_length_px']:.1f} px "
-                   f"({info['fov_h_deg']:.0f} deg horizontal FOV), "
+                   f"(raw {info['raw_focal_px']:.0f} px = {info['fov_h_deg']:.0f} deg "
+                   f"horizontal FOV, rectify zoom {info['rectify_zoom']:.2f}x), "
                    f"baseline {info['baseline_mm']:.1f} mm")
+        # Stated on a mismatched pair because it changes what every pixel number
+        # in this message is measured in: the solve, the epipolar RMS and the
+        # depth map are all at the working resolution, not at either camera's
+        # native one, and the focal length above is in working pixels too.
+        if info["native_size_l"] != info["native_size_r"]:
+            message += ("; cameras differ in resolution (L {}x{} / R {}x{}), solved "
+                        "and rectified at {}x{} -- every px above is in those "
+                        "pixels".format(*info["native_size_l"],
+                                        *info["native_size_r"],
+                                        *info["image_size"]))
         # Both of these produce a calibration that reports success and a depth map
         # with nothing in it, so neither can be left to the numbers above to imply.
         if info["swap_lr"]:
             message += ("; NOTE the Left/Right camera selections are REVERSED -- "
                         "corrected in this calibration, but swap the two selectors "
                         "so the raw viewers and any future solve match the rig")
+        # A heavy rectification crop is the one cause of a stubborn epipolar error
+        # that leaves no trace in any of the RMS numbers -- the distortion
+        # coefficients are fitted to make the reprojection RMS small, so an
+        # over-fitted model shows up ONLY as an undistortion map that balloons the
+        # frame, which alpha=0 then crops back. Reported whenever it is large,
+        # good solve or bad: on a bad one it names the likely cause, and on a good
+        # one it explains why the usable field of view shrank.
+        if info["rectify_zoom"] > HIGH_RECTIFY_ZOOM:
+            message += (f"; NOTE rectification had to zoom {info['rectify_zoom']:.2f}x "
+                        "to find an all-valid window, so most of each frame was "
+                        "cropped away -- the undistortion maps are warping the "
+                        "images heavily, from an over-fitted distortion model or a "
+                        "large relative rotation between the cameras")
+            if not info["narrow_model"]:
+                # The constrained model is already the fix for the first cause, so
+                # only a solve that DIDN'T use it has that fix still available.
+                message += (f" (these lenses solved at {info['fov_h_deg']:.0f} deg, "
+                            "wide enough that the full distortion model was used)")
         # WHEN THE BASELINE DIRECTION IS WORTH ACTING ON.
         #
         # horizontal_rig reads the translation the solve produced, so it only says
@@ -869,7 +1099,9 @@ def solve_from_globs(left_glob, right_glob, cols, rows, square_mm, out_path, alp
         if not ok:
             skipped.append((left_path, message))
     info = solve_stereo(cal._objpoints, cal._imgpoints_l, cal._imgpoints_r,
-                        cal.image_size, out_path, alpha=alpha)
+                        cal.image_size, out_path, alpha=alpha,
+                        native_size_l=cal.native_size_l,
+                        native_size_r=cal.native_size_r)
     return info, skipped
 
 
@@ -891,25 +1123,61 @@ class Rectifier:
         # and right, so rectify() hands them over swapped. Absent in a .npz written
         # before this existed, which by definition was not corrected -- default False.
         self.swap_lr = bool(data["swap_lr"]) if "swap_lr" in data.files else False
-        # (w, h) the maps were built for; raw frames must match this.
+        # (w, h) the maps were built for -- the working resolution, and the size of
+        # the rectified pair that comes out of rectify().
         self.image_size = (int(self.map1x.shape[1]), int(self.map1x.shape[0]))
+        # Source resolution each map expects, in MAP order (already swapped if the
+        # solve found the selections reversed). Different from image_size only for
+        # a mismatched pair, where the bigger camera's frames are scaled down into
+        # the working resolution exactly as its corners were during calibration.
+        # Absent in a .npz written before this existed, which by definition was a
+        # matched pair -- default to the working size and nothing scales.
+        self.native_size_1 = self._saved_size(data, "native_size_1")
+        self.native_size_2 = self._saved_size(data, "native_size_2")
         self.calib_path = calib_path
 
-    def matches(self, image):
-        """True if this frame is the resolution the maps were built for."""
-        if image is None:
-            return False
-        return (image.shape[1], image.shape[0]) == self.image_size
+    def _saved_size(self, data, key):
+        """A (w, h) stored in the .npz, or the working size if it predates the key."""
+        if key not in data.files:
+            return self.image_size
+        return (int(data[key][0]), int(data[key][1]))
+
+    @property
+    def native_sizes(self):
+        """(left, right) source sizes in SELECTOR order, for operator messages."""
+        if self.swap_lr:
+            return self.native_size_2, self.native_size_1
+        return self.native_size_1, self.native_size_2
+
+    def matches(self, left_image, right_image):
+        """True if BOTH raw frames are the resolutions this calibration expects.
+
+        Both, not just the left: with two independent cameras only one of them may
+        have changed mode, and a right frame of the wrong size still remaps without
+        error -- straight into confidently wrong depth, since map2 would be reading
+        source coordinates scaled for a different frame.
+        """
+        expect_l, expect_r = self.native_sizes
+        for image, expected in ((left_image, expect_l), (right_image, expect_r)):
+            if image is None or (image.shape[1], image.shape[0]) != expected:
+                return False
+        return True
 
     def rectify(self, left_image, right_image):
         """Return (rect_left, rect_right), ready for compute_depth_map().
 
         The returned pair is always in TRUE left/right order -- the order block
         matching needs to produce positive disparity -- whichever way round the two
-        camera selections happen to be (see swap_lr).
+        camera selections happen to be (see swap_lr) -- and always at image_size,
+        whatever the two cameras natively deliver.
         """
         if self.swap_lr:
             left_image, right_image = right_image, left_image
+        # No-ops on a matched pair. On a mismatched one this is the same scaling
+        # the corners went through in StereoCalibrator.capture, which is what makes
+        # the maps applicable to a camera they were not natively measured in.
+        left_image = _fit_to(left_image, self.image_size)
+        right_image = _fit_to(right_image, self.image_size)
         left = cv2.remap(left_image, self.map1x, self.map1y, cv2.INTER_LINEAR)
         right = cv2.remap(right_image, self.map2x, self.map2y, cv2.INTER_LINEAR)
         return left, right
@@ -1029,16 +1297,23 @@ def run_tuner(left_path, right_path, calib_path=None, max_width=1600):
     right = cv2.imread(right_path, cv2.IMREAD_COLOR)
     if left is None or right is None:
         raise ValueError(f"Could not read {left_path!r} / {right_path!r}")
-    if left.shape[:2] != right.shape[:2]:
-        raise ValueError(f"L/R resolution mismatch: {left.shape[:2]} vs {right.shape[:2]}")
+    # NOT required to be the same size as each other: rectify() scales both into
+    # the calibration's working resolution. Only the ALREADY-RECTIFIED path below
+    # needs a matched pair, since there is nothing there to scale them.
+    if not calib_path and left.shape[:2] != right.shape[:2]:
+        raise ValueError(f"L/R resolution mismatch with no calib_path to scale "
+                         f"them: {left.shape[:2]} vs {right.shape[:2]}")
 
     # Block matching needs RECTIFIED input.
     base = {}
     if calib_path:
         rectifier = Rectifier(calib_path)
-        if not rectifier.matches(left):
-            raise ValueError(f"Image size {(left.shape[1], left.shape[0])} does not "
-                             f"match the calibration size {rectifier.image_size}.")
+        if not rectifier.matches(left, right):
+            expect_l, expect_r = rectifier.native_sizes
+            raise ValueError(
+                f"Image sizes L {(left.shape[1], left.shape[0])} / "
+                f"R {(right.shape[1], right.shape[0])} do not match the "
+                f"calibration's L {expect_l} / R {expect_r}.")
         left, right = rectifier.rectify(left, right)
         base = rectifier.settings_overrides()   # true focal/baseline -> real mm
         print(f"Rectified with {calib_path}: "

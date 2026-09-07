@@ -700,6 +700,12 @@ class NepiStereoCamApp(object):
                    ': f %.1f px, baseline %.1f mm, %dx%d' % (
                        rectifier.focal_length_px, rectifier.baseline_mm,
                        rectifier.image_size[0], rectifier.image_size[1]))
+        # Only worth saying when the cameras differ -- otherwise the size above
+        # already is both of them.
+        expect_l, expect_r = rectifier.native_sizes
+        if expect_l != expect_r or expect_l != rectifier.image_size:
+            message += (' (from L %dx%d / R %dx%d)'
+                        % (expect_l[0], expect_l[1], expect_r[0], expect_r[1]))
         self.msg_if.pub_info(message)
         self.calib_message = message
         return True, message
@@ -972,14 +978,19 @@ class NepiStereoCamApp(object):
                 'frames. Capture board views and press Solve + Save, or press '
                 'Load Saved.', warn=True)
 
-        if not self.rectifier.matches(left):
-            # Camera resolution changed since calibration -- the maps no
+        if not self.rectifier.matches(left, right):
+            # A camera's resolution changed since calibration -- the maps no
             # longer apply, and matching unrectified frames would produce
             # confidently wrong depth. Refuse rather than publish garbage.
+            # BOTH frames are checked (and named): the two cameras are
+            # independent devices, so only one of them may have changed mode,
+            # and the message is only actionable if it says which.
+            expect_l, expect_r = self.rectifier.native_sizes
             message = (
-                'frame %dx%d does not match calibration %dx%d -- recalibrate'
-                % (left.shape[1], left.shape[0],
-                   self.rectifier.image_size[0], self.rectifier.image_size[1]))
+                'frames L %dx%d / R %dx%d do not match calibration '
+                'L %dx%d / R %dx%d -- recalibrate'
+                % (left.shape[1], left.shape[0], right.shape[1], right.shape[0],
+                   expect_l[0], expect_l[1], expect_r[0], expect_r[1]))
             # Warn once per distinct problem instead of every update tick.
             if message != self.calib_message:
                 self.msg_if.pub_warn(message)
