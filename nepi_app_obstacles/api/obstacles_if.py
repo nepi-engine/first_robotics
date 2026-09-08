@@ -673,8 +673,6 @@ class ObstaclesIF:
                         controls_display_name = 'Obstacles Controls',
                         controls_description = self.description,
                         controls_init_dict = self.controls_dict,
-                        show_controls = True,
-                        has_show_control = False,
                         log_name = 'controls',
                         log_name_list = self.log_name_list,
                         msg_if = self.msg_if)

@@ -1605,8 +1605,6 @@ class NepiStereoCamApp(object):
                         controls_description = 'Controls for stereo process ' + str(process_name),
                         controls_init_dict = stereo_settings.PROCESSES_DICT[process_name]['default_controls_dict'],
                         controls_updated_callback = self.makeProcessControlsUpdatedCb(process_name),
-                        show_controls = True,
-                        has_show_control = False,
                         log_name = process_name,
                         msg_if = self.msg_if)
             controls_if.wait_for_controls_ready()

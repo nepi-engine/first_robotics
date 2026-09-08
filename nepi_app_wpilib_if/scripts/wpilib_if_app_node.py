@@ -732,8 +732,6 @@ class NepiWpilibApp(object):
                         controls_description = 'One control of every supported type',
                         controls_init_dict = self.createExampleControlsInitDict(),
                         controls_updated_callback = self.exampleControlsUpdatedCb,
-                        show_controls = True,
-                        has_show_control = False,
                         log_name = EXAMPLE_CONTROLS_NAME,
                         msg_if = self.msg_if)
         self.example_controls_if.wait_for_controls_ready()

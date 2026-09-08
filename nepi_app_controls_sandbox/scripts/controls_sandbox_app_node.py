@@ -155,8 +155,6 @@ class NepiControlsSandboxApp(object):
                     controls_description = 'One control of every supported type',
                     controls_init_dict = controls_init_dict,
                     controls_updated_callback = self.controlsUpdatedCb,
-                    show_controls = True,
-                    has_show_control = False,
                     log_name = 'controls',
                     msg_if = self.msg_if
     )
@@ -175,11 +173,6 @@ class NepiControlsSandboxApp(object):
                     data_display_name = 'Data Sandbox',
                     data_description = 'One datum of every supported type',
                     data_init_dict = data_init_dict,
-                    data_updated_callback = self.dataUpdatedCb,
-                    data_updater_max_rate = 1,
-                    data_updater_callback = self.dataUpdaterCb,
-                    show_data = True,
-                    has_show_control = False,
                     log_name = 'data',
                     msg_if = self.msg_if
     )
@@ -432,6 +425,7 @@ class NepiControlsSandboxApp(object):
       self.node_if.publish_pub('status_pub', status_msg)
 
   def publishStatusCb(self, timer):
+    self.dataUpdaterCb()
     self.publish_status()
 
 

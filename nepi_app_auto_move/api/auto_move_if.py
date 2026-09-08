@@ -554,8 +554,6 @@ class AutoMoveIF:
                         controls_display_name = 'Auto Move Controls',
                         controls_description = self.description,
                         controls_init_dict = self.controls_dict,
-                        show_controls = True,
-                        has_show_control = False,
                         log_name = CONTROLS_NAME,
                         log_name_list = self.log_name_list,
                         msg_if = self.msg_if)
