@@ -443,13 +443,13 @@ def process_results(np_depth_map, status_dict, navpose_dict, data_dict, controls
 
 
 def getControlValue(controls_dict, control_name, default_value = None):
-    # nepi_controls.get_control_value returns None for a control that is not in
+    # nepi_controls.get_value returns None for a control that is not in
     # the dict -- including one that create_controls_dict silently dropped for an
     # out-of-bounds default. Every caller here needs a usable number, so the
     # default stands in rather than propagating a None into the geometry.
     value = None
     try:
-        value = nepi_controls.get_control_value(controls_dict, control_name)
+        value = nepi_controls.get_value(controls_dict, control_name)
     except Exception:
         value = None
     if value is None:

@@ -46,7 +46,7 @@ fixed legal set, and stereo_library rejects or silently ignores anything else:
                       odd and >= 3. An even value is not an error, it just quietly
                       turns the filter off, which is worse than an error.
 A free Int box lets an operator type an illegal value and find out from a log
-line. A Selection cannot express one: nepi_controls.set_control_value rejects any
+line. A Selection cannot express one: nepi_controls.set_value rejects any
 string not in string_options. The values come back as STRINGS and are int()ed in
 _build_cfg below.
 
@@ -61,7 +61,7 @@ Three nepi_controls types are deliberately unused:
                   set_trigger_control_value, which ControlsIF subscribes to as
                   UpdateTrigger, so a Trigger control cannot be fired from the
                   RUI today. Nothing here depends on one.
-  runtime hiding -- nepi_controls.set_control_hidden() does `hidden = str(hidden)`,
+  runtime hiding -- nepi_controls.set_hidden() does `hidden = str(hidden)`,
                   writing 'True'/'False' into a field nepi_interfaces/Control
                   declares bool, and Nepi_IF_Controls ignores ControlsStatus.hidden
                   anyway. A control's 'hidden' works only as authored below.

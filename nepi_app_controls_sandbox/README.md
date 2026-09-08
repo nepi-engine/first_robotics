@@ -168,7 +168,7 @@ any app that uses `ControlsIF`.
   `Store.js` has no `sendUpdateTriggerMsg` to send the right type with. A
   trigger needs its own plain app topic and a `Button`, the way
   `nepi_app_stereo_cam` does its Reload Processes.
-- **Runtime hiding does not work.** `nepi_controls.set_control_hidden()` does
+- **Runtime hiding does not work.** `nepi_controls.set_hidden()` does
   `hidden = str(hidden)`, writing `'True'`/`'False'` into a bool field.
   `hidden` is usable only as authored in the init dict. To suppress a control at
   runtime, do not mount the component.

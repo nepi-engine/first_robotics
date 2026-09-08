@@ -52,7 +52,7 @@ import { onChangeSwitchStateValue } from "./Utilities"
 // The node owns one controls namespace PER PROCESS and only the active one is
 // mounted here; the inactive process's component is never mounted at all, which is
 // what actually suppresses it. Per-control 'hidden' cannot do that job --
-// nepi_controls.set_control_hidden() stringifies the bool, and Nepi_IF_Controls
+// nepi_controls.set_hidden() stringifies the bool, and Nepi_IF_Controls
 // reads each control's own hidden flag rather than ControlsStatus.hidden.
 //
 // The parent (NepiAppStereoCam.js) owns the status subscription and passes

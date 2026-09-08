@@ -1566,7 +1566,7 @@ class NepiStereoCamApp(object):
     # and only one process is active at a time, so the operator is shown just the
     # active one. The alternative, a single union set with the inactive half hidden,
     # cannot work: hiding a control at runtime goes through
-    # nepi_controls.set_control_hidden(), which does `hidden = str(hidden)` and so
+    # nepi_controls.set_hidden(), which does `hidden = str(hidden)` and so
     # writes 'True'/'False' into a field nepi_interfaces/Control declares bool. That
     # string breaks the ControlsStatus publish and never satisfies
     # Nepi_IF_Controls.js's `control_msg.hidden === true` test either. A control's
@@ -1636,7 +1636,7 @@ class NepiStereoCamApp(object):
     # replaced that IF's controls dict with None. Fixed in nepi_api/system_if.py
     # (prefixed key, plus a guard so a missing param cannot overwrite a live dict).
     # The check stays because a None dict would make
-    # nepi_controls.get_control_value() raise rather than return a default, and the
+    # nepi_controls.get_value() raise rather than return a default, and the
     # caller, not this helper, decides what a controls-less depth pass means.
     def getControlsValues(self, controls_if):
         if controls_if is None:
@@ -1731,7 +1731,7 @@ class NepiStereoCamApp(object):
     # ms ('L/R capture gap 34 ms') and a control the operator cannot compare against
     # the number they were just shown is a control they will set wrong.
     #
-    # Bounds are ENFORCED by nepi_controls.set_control_value, which rejects an
+    # Bounds are ENFORCED by nepi_controls.set_value, which rejects an
     # out-of-range value outright (logs a warning, leaves the control as it was)
     # rather than clamping it. The RUI box then re-syncs to the unchanged value on
     # the next status publish, so a refused edit visibly snaps back.
