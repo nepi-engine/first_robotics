@@ -1710,14 +1710,14 @@ class NepiWpilibApp(object):
                         show_selector = True,
                         show_controls = False,
                         show_data = False,
-                        dataCB = self.detectionsConnectCb,
+                        data_callback = self.detectionsConnectCb,
                         msg_if = self.msg_if)
 
         self.navpose_if = ConnectNavPoseIF(
                         show_selector = True,
                         show_controls = False,
                         show_data = False,
-                        dataCB = self.navposeConnectCb,
+                        data_callback = self.navposeConnectCb,
                         msg_if = self.msg_if)
 
     # Point the obstacles connect path at an obstacles app namespace, or tear it
@@ -1747,7 +1747,7 @@ class NepiWpilibApp(object):
         try:
             self.obstacles_if = ConnectObstaclesIF(
                             namespace = namespace,
-                            dataCB = self.obstaclesConnectCb)
+                            data_callback = self.obstaclesConnectCb)
         except Exception as e:
             self.obstacles_if = None
             self.msg_if.pub_warn("Failed to connect obstacles app at " +
@@ -1757,12 +1757,12 @@ class NepiWpilibApp(object):
     ###################
     ## Connect IF First-Connection Callbacks
     #
-    # Each connect IF invokes its dataCB with a single data dict. The
+    # Each connect IF invokes its data_callback with a single data dict. The
     # callback stores that dict and the IF's current status message (via
     # get_status_msg()) on every invocation. On the FIRST invocation per IF it
     # also logs both, then sets the got_first flag so it logs only once. The
     # Obstacles app publishes no data product this consumer subscribes to, so
-    # ConnectObstaclesIF fires its dataCB with the status dict instead.
+    # ConnectObstaclesIF fires its data_callback with the status dict instead.
 
     def detectionsConnectCb(self, data_dict):
         self.detections_dict = data_dict

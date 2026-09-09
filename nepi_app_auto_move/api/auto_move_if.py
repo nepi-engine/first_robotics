@@ -804,7 +804,7 @@ class AutoMoveIF:
                         show_selector = True,
                         show_controls = False,
                         show_data = False,
-                        statusCb = self.imageStatusCb,
+                        status_callback = self.imageStatusCb,
                         msg_if = self.msg_if)
 
     def systemStatusCb(self, msg):
