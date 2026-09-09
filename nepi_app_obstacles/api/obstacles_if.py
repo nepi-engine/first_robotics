@@ -161,11 +161,11 @@ class ObstaclesIF:
     cur_source_topic = "None"
 
     # The active source order getProcessStatus last used to build
-    # imaging_source_topics / imaging_pub_topics. publish_status maps the two
+    # image_source_topics / image_pub_topics. publish_status maps the two
     # segmentation topic lists over this same list rather than re-walking
     # sources_info_dict, so all four lists stay index-aligned even if a source
     # is added or purged between the two calls.
-    imaging_source_topics = []
+    image_source_topics = []
 
     get_source_topic = "None"
     got_source_topic = None
@@ -863,13 +863,13 @@ class ObstaclesIF:
         self.obstacles_status_msg.color_image_topic_connected = self.color_image_topic_connected
 
         # Advertise the two segmentation render topics the same way
-        # process_status.imaging_pub_topics advertises the overlay one, walking
+        # process_status.image_pub_topics advertises the overlay one, walking
         # the active source list getProcessStatus just built so index i of all
         # four lists names the same source.
         sources_info_dict = copy.deepcopy(self.sources_info_dict)
         ground_image_pub_topics = []
         obstacles_image_pub_topics = []
-        for source_topic in self.imaging_source_topics:
+        for source_topic in self.image_source_topics:
             # An empty entry rather than a skipped one: dropping an element
             # would shift every later index out of step with the process_status
             # lists, which is the one thing these lists promise.
@@ -1804,15 +1804,15 @@ class ObstaclesIF:
         self.process_status_msg.max_image_pub_rate_hz = self.max_image_pub_rate_hz
         self.process_status_msg.use_last_image = self.use_last_image
 
-        imaging_source_topics = []
-        imaging_pub_topics = []
+        image_source_topics = []
+        image_pub_topics = []
         for source_topic in sources_info_dict.keys():
             if source_topic in active_source_topics:
-                imaging_source_topics.append(source_topic)
-                imaging_pub_topics.append(sources_info_dict[source_topic]['img_pub_topic'])
-        self.process_status_msg.imaging_source_topics = imaging_source_topics
-        self.process_status_msg.imaging_pub_topics = imaging_pub_topics
-        self.imaging_source_topics = imaging_source_topics
+                image_source_topics.append(source_topic)
+                image_pub_topics.append(sources_info_dict[source_topic]['img_pub_topic'])
+        self.process_status_msg.image_source_topics = image_source_topics
+        self.process_status_msg.image_pub_topics = image_pub_topics
+        self.image_source_topics = image_source_topics
 
         #################
         self.process_status_msg.enabled = self.enabled

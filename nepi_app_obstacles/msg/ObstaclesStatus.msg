@@ -30,7 +30,7 @@ float32 obstacles_transparency
 
 # Colourized renders of the per-cycle depth map segmentation, one entry per
 # active imaging source. Both lists are built from the same active source order
-# as process_status.imaging_source_topics and imaging_pub_topics, so index i of
+# as process_status.image_source_topics and image_pub_topics, so index i of
 # all four lists describes the same source. Each topic carries a bgr8 image, not
 # range data -- the raw segmentation ships on the obstacles_depth_map topic.
 string[] ground_image_pub_topics

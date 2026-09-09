@@ -559,7 +559,7 @@ class NepiAppObstacles extends Component {
   // Image viewer
 
   // The overlay image topics are reported by the node in
-  // process_status.imaging_pub_topics, one per active source.
+  // process_status.image_pub_topics, one per active source.
   getDisplayImgOptions() {
     const { imageTopics } = this.props.ros
     var items = []
@@ -573,7 +573,7 @@ class NepiAppObstacles extends Component {
       return items
     }
 
-    const image_pub_topics = process_status_msg.imaging_pub_topics
+    const image_pub_topics = process_status_msg.image_pub_topics
     const image_names = createMenuFirstLastNames(image_pub_topics)
     if (image_pub_topics.length === 0) {
       items.push(<Option value={"None"}>{"None"}</Option>)
@@ -610,7 +610,7 @@ class NepiAppObstacles extends Component {
   }
 
   // The two segmentation viewers follow whatever source the main viewer is on,
-  // so the operator picks a source once. The node builds imaging_pub_topics and
+  // so the operator picks a source once. The node builds image_pub_topics and
   // the two segmentation lists from the same active source order, so the index
   // of the selected overlay topic indexes both pairs. A selection that is not in
   // the list yet -- first render, or a source that has just been purged --
@@ -621,7 +621,7 @@ class NepiAppObstacles extends Component {
     if (status_msg == null || process_status_msg == null) {
       return ["None", "None"]
     }
-    const image_pub_topics = process_status_msg.imaging_pub_topics
+    const image_pub_topics = process_status_msg.image_pub_topics
     const ground_topics = status_msg.ground_image_pub_topics
     const obstacles_topics = status_msg.obstacles_image_pub_topics
     var index = image_pub_topics.indexOf(this.state.selected_display_topic)
