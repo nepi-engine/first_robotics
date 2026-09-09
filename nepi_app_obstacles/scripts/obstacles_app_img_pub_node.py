@@ -1156,7 +1156,7 @@ class ObstaclesImgPub:
             img_height = cv2_shape[0]
             img_width = cv2_shape[1]
             scale = 1.5e-3 - 0.1e-3 * math.ceil(max([img_height, img_width]) / 700)
-            [font_scale, font_thickness] = nepi_img.optimal_font_dims(cv2_img, font_scale = scale, thickness_scale = scale)
+            [font_scale, font_thickness] = nepi_img.get_optimal_font_dims(cv2_img, font_scale = scale, thickness_scale = scale)
             line_thickness = 1 + math.ceil(max([img_height, img_width]) / 2000)
             font_dims = [font_scale, font_thickness, line_thickness]
             if len(self.font_dims_cache) >= MAX_RENDER_CACHE_LEN:
