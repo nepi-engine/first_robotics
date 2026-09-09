@@ -1722,8 +1722,6 @@ class NepiStereoCamApp(object):
                     controls_description = 'Stereo pipeline tuning: frame pairing, frame time source, calibration capture gates',
                     controls_init_dict = self.createAdvancedControlsInitDict(),
                     controls_updated_callback = self.advancedControlsUpdatedCb,
-                    show_controls = True,
-                    has_show_control = False,
                     log_name = ADVANCED_CONTROLS_NAME,
                     msg_if = self.msg_if)
         self.advanced_controls_if.wait_for_controls_ready()
