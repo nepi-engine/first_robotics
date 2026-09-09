@@ -908,15 +908,14 @@ class NepiAppWpilibIF extends Component {
   // depend on nepi_app_controls_sandbox being installed.
   renderExampleControls() {
     return (
-      null
-      // <Section title={"Example Controls"}>
+      <Section title={"Example Controls"}>
 
-      //   <NepiIFControls
-      //     namespace={this.getExampleControlsNamespace()}
-      //     make_section={false}
-      //   />
+        <NepiIFControls
+          namespace={this.getExampleControlsNamespace()}
+          make_section={false}
+        />
 
-      // </Section>
+      </Section>
     )
   }
 
