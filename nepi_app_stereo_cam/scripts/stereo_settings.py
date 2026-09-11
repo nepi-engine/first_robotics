@@ -221,7 +221,7 @@ sgbm_1_controls = {
         'hidden': False},
 
     'convert_to_grayscale': {
-        'type': 'Bool', 'default': True,
+        'type': 'Toggle', 'default': True,
         'display_name': 'Match In Grayscale',
         'description': 'Convert the pair to grayscale before matching. Off matches all three color channels: slower, and only worth it on low-texture color scenes.',
         'hidden': False},

@@ -96,7 +96,7 @@ PROCESS_CONTROLS_DICT = {
         'hidden': False},
 
     'use_navpose': {
-        'type': 'Bool', 'default': True,
+        'type': 'Toggle', 'default': True,
         'display_name': 'Use NavPose',
         'description': 'Level the height calculation using the connected NavPose roll and pitch.',
         'hidden': False},

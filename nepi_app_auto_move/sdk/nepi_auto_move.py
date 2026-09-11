@@ -20,6 +20,8 @@
 import copy
 import math
 
+from nepi_sdk import nepi_controls
+
 from nepi_sdk.nepi_sdk import logger as Logger
 log_name = "nepi_auto_move"
 logger = Logger(log_name = log_name)
@@ -32,10 +34,12 @@ logger = Logger(log_name = log_name)
 # this and hands it to a ControlsIF, which turns it into a live controls dict
 # and passes that dict back to plan_move on every goto.
 #
-# Every default must sit inside its own bounds. nepi_controls.create_controls_dict
-# raises NameError on an out-of-bounds Float default and the bare except around
-# the per-control body silently DROPS the control, so an out-of-bounds default
-# does not clamp -- it makes the control disappear.
+# Every default should sit inside its own bounds. nepi_controls.create_controls_dict
+# CLAMPS an out-of-bounds Int or Float default to the nearer bound and registers
+# the control -- it does not drop it, and it does not log. A default of 99.0 under
+# bounds [0.0, 10.0] comes back as 10.0, so the operator sees a starting value
+# nothing in this file asked for. Keep the defaults inside the bounds and the
+# question does not arise.
 #
 # These are the controls a real planner needs. The placeholder planner below
 # reads only max_step_m; the rest are declared now so the operator-facing
@@ -62,20 +66,20 @@ MOVE_CONTROLS_DICT = {
         'hidden': False},
 
     'hold_altitude': {
-        'type': 'Bool', 'default': True,
+        'type': 'Toggle', 'default': True,
         'display_name': 'Hold Altitude',
         'description': 'Keep the current height, ignoring the vertical part of '
                        'the clicked offset.',
         'hidden': False},
 
     'face_target': {
-        'type': 'Bool', 'default': False,
+        'type': 'Toggle', 'default': False,
         'display_name': 'Face Target',
         'description': 'Turn to face the clicked bearing before moving.',
         'hidden': False},
 
     'avoid_obstacles': {
-        'type': 'Bool', 'default': False,
+        'type': 'Toggle', 'default': False,
         'display_name': 'Avoid Obstacles',
         'description': 'Plan around known obstacles instead of moving straight '
                        'to the clicked point.',
@@ -140,18 +144,50 @@ MOVE_CONTROLS_DICT = {
 ##############################################################################
 
 def _control_value(controls_dict, name, default):
-    """Read a value from either a live ControlsIF dict or the factory dict."""
+    """Read a value from either a live ControlsIF dict or the factory dict.
+
+    Live dicts go through nepi_controls.get_value(), which is the only thing
+    that returns a control's NATIVE value. Reading controls_dict[name]['value']
+    directly does not: nepi_controls stores every value as a list of strings, so
+    a Float came back as ['7.5'] -- float() of a list raises and _as_float fell
+    back to the hardcoded default, discarding every edit the operator made --
+    and a Toggle came back as ['False'], which is neither a bool, a str nor
+    None, so _as_bool ended at bool(['False']) and a NON-EMPTY LIST IS TRUTHY.
+    A Toggle switched off read as True. avoid_obstacles and face_target are both
+    declared False, so the planner took paths nobody asked for and hold_altitude
+    could not be turned off.
+
+    The factory-dict path stays: MOVE_CONTROLS_DICT above is a plain init dict
+    whose entries carry 'default' and no 'value', and plan_move() is documented
+    to accept either form.
+    """
     if controls_dict is None or name not in controls_dict:
         return default
+    value = None
+    try:
+        value = nepi_controls.get_value(controls_dict, name)
+    except Exception:
+        value = None
+    if value is not None:
+        return value
     entry = controls_dict.get(name)
-    if isinstance(entry, dict):
-        if 'value' in entry:
-            return entry.get('value')
-        if 'data' in entry:
-            return entry.get('data')
-        if 'default' in entry:
-            return entry.get('default')
-    return entry
+    if not isinstance(entry, dict):
+        return entry
+    # 'length' is set on every entry create_controls_dict() builds and on no
+    # entry an init dict carries, so it is what tells the two apart. A LIVE
+    # control that nepi_controls could not resolve has nothing readable here --
+    # its 'default' is the same list of strings its 'value' is -- so the caller's
+    # default stands rather than handing a list to _as_float / _as_bool.
+    if 'length' in entry:
+        return default
+    # An init dict entry: 'default' is the authored native value.
+    if 'default' in entry:
+        return entry.get('default')
+    if 'data' in entry:
+        return entry.get('data')
+    if 'value' in entry:
+        return entry.get('value')
+    return default
 
 
 def _as_float(value, default):

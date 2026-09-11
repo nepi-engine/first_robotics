@@ -1902,11 +1902,11 @@ class NepiStereoCamApp(object):
                 'display_name': 'Demo Selections', 'description': 'Select any number of options.', 'hidden': False},
 
             'demo_trigger': {
-                'type': 'Trigger', 'default': 0,
+                'type': 'Button', 'default': 0,
                 'display_name': 'Demo Trigger', 'description': 'Fire a one-shot trigger.', 'hidden': False},
 
             'demo_bool': {
-                'type': 'Bool', 'default': True,
+                'type': 'Toggle', 'default': True,
                 'display_name': 'Demo Bool', 'description': 'Toggle a boolean on or off.', 'hidden': False},
 
             'demo_string': {
@@ -1926,7 +1926,7 @@ class NepiStereoCamApp(object):
                 'display_name': 'Demo Float Slider', 'description': 'Single-value slider over [0, 100].', 'hidden': False},
 
             'demo_floats_slider': {
-                'type': 'FloatSliders', 'default': [0.25, 0.75], 'bounds': [0.0, 1.0], 'round_value': 2,
+                'type': 'RangeSlider', 'default': [0.25, 0.75], 'bounds': [0.0, 1.0], 'round_value': 2,
                 'display_name': 'Demo Floats Slider', 'description': 'Dual-value range slider (0.0-1.0 ratio).', 'hidden': False},
         }
         return controls_init_dict
