@@ -152,7 +152,7 @@ class NepiAppControlsSandboxSettings extends Component {
 
     const display_name = (control_msg.display_name && control_msg.display_name !== '') ? control_msg.display_name : name
     const description = control_msg.description || ''
-    const hidden = (control_msg.hidden === true)
+    const hidden = (control_msg.display_hidden === true)
 
     const dnKey = name + '_dn'
     const descKey = name + '_desc'

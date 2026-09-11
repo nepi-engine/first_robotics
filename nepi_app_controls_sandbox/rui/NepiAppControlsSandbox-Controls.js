@@ -522,7 +522,7 @@ class NepiAppControlsSandboxControls extends Component {
             if (control_msg == null) { return null }
             // Hidden controls are not shown in the Controls box (they remain
             // manageable from the Controls Settings box).
-            if (control_msg.hidden === true) { return null }
+            if (control_msg.display_hidden === true) { return null }
             if (type_filter !== undefined && type_filter.indexOf(types[i]) === -1) { return null }
             return this.renderControl(name, types[i], control_msg, i)
           })}
