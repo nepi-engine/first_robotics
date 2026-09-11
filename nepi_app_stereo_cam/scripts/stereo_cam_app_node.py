@@ -1581,7 +1581,7 @@ class NepiStereoCamApp(object):
     # writes 'True'/'False' into a field nepi_interfaces/Control declares bool. That
     # string breaks the ControlsStatus publish and never satisfies
     # Nepi_IF_Controls.js's `control_msg.hidden === true` test either. A control's
-    # 'hidden' works only as authored in the init dict, which is a startup value.
+    # 'display_hidden' works only as authored in the init dict, which is a startup value.
     # What the operator actually sees is the RUI mounting ONE Nepi_IF_Controls, on
     # the active_controls_namespace this node publishes.
     #
@@ -1750,34 +1750,34 @@ class NepiStereoCamApp(object):
                 'bounds': [1.0, 500.0], 'round_value': 1,
                 'display_name': 'Frame Sync Tolerance (ms) [1-500]',
                 'description': 'Largest L/R capture-time gap depth will still match. Too tight and no pair ever qualifies, so no depth comes out; too loose and anything moving gets confidently wrong depth. Start near one frame period of the slower camera.',
-                'hidden': False},
+                'display_hidden': False},
 
             'frame_buffer_len': {
                 'type': 'Int', 'default': FRAME_BUFFER_LEN, 'bounds': [2, 60],
                 'display_name': 'Frame Buffer Length [2-60]',
                 'description': 'Frames kept per camera to pair from. Raise when the two cameras arrive unevenly and pairs are being missed; costs memory (one decoded frame each) and nothing else.',
-                'hidden': False},
+                'display_hidden': False},
 
             'frame_time_source': {
                 'type': 'Selection', 'default': FRAME_TIME_SOURCE_HEADER,
                 'options': FRAME_TIME_SOURCE_OPTIONS,
                 'display_name': 'Frame Time Source',
                 'description': 'Which clock frames are paired on. Header Stamp is the capture time and is right unless a driver publishes a wrong one -- if depth stops with both cameras clearly publishing, switch to Arrival Time. Doing so also disables the calibration L/R gap check, which arrival time cannot support.',
-                'hidden': False},
+                'display_hidden': False},
 
             'calib_sync_max_ms': {
                 'type': 'Float', 'default': CALIB_SYNC_MAX_S * 1000.0,
                 'bounds': [1.0, 200.0], 'round_value': 1,
                 'display_name': 'Calib Sync Max (ms) [1-200]',
                 'description': 'Largest L/R gap a calibration capture is accepted at -- much tighter than the depth tolerance, because a captured pair becomes a permanent constraint in the solve. Only applied when both frames carry real header stamps.',
-                'hidden': False},
+                'display_hidden': False},
 
             'calib_motion_max': {
                 'type': 'Float', 'default': CALIB_MOTION_MAX, 'bounds': [0.1, 50.0],
                 'round_value': 1,
                 'display_name': 'Calib Motion Max [0.1-50]',
                 'description': 'How much the scene may move (mean 8-bit frame difference) during a calibration capture. Sensor noise alone sits near 1; a board moving by hand is far above it. Raise it only if a genuinely still board keeps being refused.',
-                'hidden': False},
+                'display_hidden': False},
 
             }
         return controls_init_dict
@@ -1891,43 +1891,43 @@ class NepiStereoCamApp(object):
         controls_init_dict = {
             'demo_menu': {
                 'type': 'Menu', 'default': 1, 'options': ['Off', 'Low', 'High'],
-                'display_name': 'Demo Menu', 'description': 'Pick one menu option (index based).', 'hidden': False},
+                'display_name': 'Demo Menu', 'description': 'Pick one menu option (index based).', 'display_hidden': False},
 
             'demo_selection': {
                 'type': 'Selection', 'default': 'Bravo', 'options': ['Alpha', 'Bravo', 'Charlie'],
-                'display_name': 'Demo Selection', 'description': 'Select a single option by name.', 'hidden': False},
+                'display_name': 'Demo Selection', 'description': 'Select a single option by name.', 'display_hidden': False},
 
             'demo_selections': {
                 'type': 'Selections', 'default': ['Red', 'Blue'], 'options': ['Red', 'Green', 'Blue'],
-                'display_name': 'Demo Selections', 'description': 'Select any number of options.', 'hidden': False},
+                'display_name': 'Demo Selections', 'description': 'Select any number of options.', 'display_hidden': False},
 
             'demo_trigger': {
                 'type': 'Button', 'default': 0,
-                'display_name': 'Demo Trigger', 'description': 'Fire a one-shot trigger.', 'hidden': False},
+                'display_name': 'Demo Trigger', 'description': 'Fire a one-shot trigger.', 'display_hidden': False},
 
             'demo_bool': {
                 'type': 'Toggle', 'default': True,
-                'display_name': 'Demo Bool', 'description': 'Toggle a boolean on or off.', 'hidden': False},
+                'display_name': 'Demo Bool', 'description': 'Toggle a boolean on or off.', 'display_hidden': False},
 
             'demo_string': {
                 'type': 'String', 'default': 'hello nepi',
-                'display_name': 'Demo String', 'description': 'Free-form text value.', 'hidden': False},
+                'display_name': 'Demo String', 'description': 'Free-form text value.', 'display_hidden': False},
 
             'demo_int': {
                 'type': 'Int', 'default': 5, 'bounds': [0, 10],
-                'display_name': 'Demo Int', 'description': 'Integer value within [0, 10].', 'hidden': False},
+                'display_name': 'Demo Int', 'description': 'Integer value within [0, 10].', 'display_hidden': False},
 
             'demo_float': {
                 'type': 'Float', 'default': 2.5, 'bounds': [0.0, 10.0], 'round_value': 2,
-                'display_name': 'Demo Float', 'description': 'Float value within [0.0, 10.0].', 'hidden': False},
+                'display_name': 'Demo Float', 'description': 'Float value within [0.0, 10.0].', 'display_hidden': False},
 
             'demo_float_slider': {
                 'type': 'FloatSlider', 'default': 50.0, 'bounds': [0.0, 100.0], 'round_value': 1,
-                'display_name': 'Demo Float Slider', 'description': 'Single-value slider over [0, 100].', 'hidden': False},
+                'display_name': 'Demo Float Slider', 'description': 'Single-value slider over [0, 100].', 'display_hidden': False},
 
             'demo_floats_slider': {
                 'type': 'RangeSlider', 'default': [0.25, 0.75], 'bounds': [0.0, 1.0], 'round_value': 2,
-                'display_name': 'Demo Floats Slider', 'description': 'Dual-value range slider (0.0-1.0 ratio).', 'hidden': False},
+                'display_name': 'Demo Floats Slider', 'description': 'Dual-value range slider (0.0-1.0 ratio).', 'display_hidden': False},
         }
         return controls_init_dict
 

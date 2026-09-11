@@ -29,7 +29,7 @@ Init dict key schema, per nepi_controls.create_controls_dict():
   'options'   REQUIRED by Menu / Selection / Selections.
   'bounds'    [min, max] for Int / Float / FloatSlider. -999 means no limit.
   Any remaining key is copied through only if it is also a nepi_interfaces/Control
-  field: 'display_name', 'description', 'hidden', 'round_value', 'round_display'.
+  field: 'display_name', 'description', 'display_hidden', 'round_value', 'round_display'.
   ('value_round' / 'display_round', as spelled in nepi_controls.EXAMPLE_INIT_DICT,
   are NOT Control fields and are ignored.)
 
@@ -64,7 +64,7 @@ Three nepi_controls types are deliberately unused:
   runtime hiding -- nepi_controls.set_hidden() does `hidden = str(hidden)`,
                   writing 'True'/'False' into a field nepi_interfaces/Control
                   declares bool, and Nepi_IF_Controls ignores ControlsStatus.hidden
-                  anyway. A control's 'hidden' works only as authored below.
+                  anyway. A control's 'display_hidden' works only as authored below.
 
 Each process_function(left_image, right_image, stereo_data_dict,
 process_controls_dict) is called once per depth cycle by stereo_cam_app_node.py.
@@ -212,85 +212,85 @@ sgbm_1_controls = {
         'type': 'Float', 'default': 60.0, 'bounds': [1.0, 5000.0], 'round_value': 2,
         'display_name': 'Baseline (mm)',
         'description': 'Distance between the two camera optical centers. Written by the calibration solve; edit only to run without a calibration.',
-        'hidden': False},
+        'display_hidden': False},
 
     'focal_length_px': {
         'type': 'Float', 'default': 700.0, 'bounds': [1.0, 100000.0], 'round_value': 2,
         'display_name': 'Focal Length (px)',
         'description': 'Rectified focal length in pixels. Written by the calibration solve; edit only to run without a calibration.',
-        'hidden': False},
+        'display_hidden': False},
 
     'convert_to_grayscale': {
         'type': 'Toggle', 'default': True,
         'display_name': 'Match In Grayscale',
         'description': 'Convert the pair to grayscale before matching. Off matches all three color channels: slower, and only worth it on low-texture color scenes.',
-        'hidden': False},
+        'display_hidden': False},
 
     'min_disparity': {
         'type': 'Int', 'default': 0, 'bounds': [0, 256],
         'display_name': 'Min Disparity',
         'description': 'Smallest disparity searched. Raise only when nothing in the scene is close enough to produce a near-zero disparity.',
-        'hidden': False},
+        'display_hidden': False},
 
     'num_disparities': {
         'type': 'Selection', 'default': '128', 'options': NUM_DISPARITIES_OPTIONS,
         'display_name': 'Num Disparities',
         'description': 'Width of the disparity search, in pixels. Must be a multiple of 16, so the legal values are offered as a list. Larger measures closer objects and costs more.',
-        'hidden': False},
+        'display_hidden': False},
 
     'block_size': {
         'type': 'Selection', 'default': '5', 'options': BLOCK_SIZE_OPTIONS_SGBM,
         'display_name': 'Block Size',
         'description': 'Side length of the matching window. Must be odd, so the legal values are offered as a list. Larger is smoother and blurs depth edges.',
-        'hidden': False},
+        'display_hidden': False},
 
     'uniqueness_ratio': {
         'type': 'Int', 'default': 10, 'bounds': [0, 100],
         'display_name': 'Uniqueness Ratio (%)',
         'description': 'A match must beat the second-best candidate by this percent margin or it is rejected. 0 disables the check.',
-        'hidden': False},
+        'display_hidden': False},
 
     'speckle_window_size': {
         'type': 'Int', 'default': 100, 'bounds': [0, 500],
         'display_name': 'Speckle Window Size (px)',
         'description': 'Largest connected disparity blob treated as noise and cleared. 0 disables speckle filtering.',
-        'hidden': False},
+        'display_hidden': False},
 
     'speckle_range': {
         'type': 'Int', 'default': 2, 'bounds': [0, 64],
         'display_name': 'Speckle Range',
         'description': 'Disparity variation allowed within one blob while speckle filtering.',
-        'hidden': False},
+        'display_hidden': False},
 
     'disp12_max_diff': {
         'type': 'Int', 'default': 1, 'bounds': [-1, 128],
         'display_name': 'Disp12 Max Diff (px)',
         'description': 'Left-right consistency tolerance, in disparity pixels. -1 disables the occlusion check.',
-        'hidden': False},
+        'display_hidden': False},
 
     'pre_filter_cap': {
         'type': 'Int', 'default': 63, 'bounds': [1, 63],
         'display_name': 'Pre-Filter Cap',
         'description': 'Clamp applied to image gradients before matching. Higher keeps sharper texture detail; 1-63 is the legal range.',
-        'hidden': False},
+        'display_hidden': False},
 
     'min_depth_mm': {
         'type': 'Float', 'default': 50.0, 'bounds': [1.0, 100000.0], 'round_value': 1,
         'display_name': 'Min Depth (mm)',
         'description': 'Depths closer than this are marked invalid. Also the near end of the colorized depth image range.',
-        'hidden': False},
+        'display_hidden': False},
 
     'max_depth_mm': {
         'type': 'Float', 'default': 20000.0, 'bounds': [1.0, 100000.0], 'round_value': 1,
         'display_name': 'Max Depth (mm)',
         'description': 'Depths farther than this are marked invalid. Also the far end of the colorized depth image range.',
-        'hidden': False},
+        'display_hidden': False},
 
     'median_filter_size': {
         'type': 'Selection', 'default': '5', 'options': MEDIAN_FILTER_OPTIONS,
         'display_name': 'Median Filter Size (px)',
         'description': 'Median filter applied to the depth map to drop isolated pixels without blurring edges. 0 disables it; every other value is odd because an even one would silently disable it.',
-        'hidden': False},
+        'display_hidden': False},
 
     }
 
@@ -318,79 +318,79 @@ bm_1_controls = {
         'type': 'Float', 'default': 60.0, 'bounds': [1.0, 5000.0], 'round_value': 2,
         'display_name': 'Baseline (mm)',
         'description': 'Distance between the two camera optical centers. Written by the calibration solve; edit only to run without a calibration.',
-        'hidden': False},
+        'display_hidden': False},
 
     'focal_length_px': {
         'type': 'Float', 'default': 700.0, 'bounds': [1.0, 100000.0], 'round_value': 2,
         'display_name': 'Focal Length (px)',
         'description': 'Rectified focal length in pixels. Written by the calibration solve; edit only to run without a calibration.',
-        'hidden': False},
+        'display_hidden': False},
 
     'min_disparity': {
         'type': 'Int', 'default': 0, 'bounds': [0, 256],
         'display_name': 'Min Disparity',
         'description': 'Smallest disparity searched. Raise only when nothing in the scene is close enough to produce a near-zero disparity.',
-        'hidden': False},
+        'display_hidden': False},
 
     'num_disparities': {
         'type': 'Selection', 'default': '128', 'options': NUM_DISPARITIES_OPTIONS,
         'display_name': 'Num Disparities',
         'description': 'Width of the disparity search, in pixels. Must be a multiple of 16, so the legal values are offered as a list. Larger measures closer objects and costs more.',
-        'hidden': False},
+        'display_hidden': False},
 
     'block_size': {
         'type': 'Selection', 'default': '15', 'options': BLOCK_SIZE_OPTIONS_BM,
         'display_name': 'Block Size',
         'description': 'Side length of the matching window. Must be odd and at least 5 for BM, so the legal values are offered as a list. BM wants a larger window than SGBM.',
-        'hidden': False},
+        'display_hidden': False},
 
     'uniqueness_ratio': {
         'type': 'Int', 'default': 10, 'bounds': [0, 100],
         'display_name': 'Uniqueness Ratio (%)',
         'description': 'A match must beat the second-best candidate by this percent margin or it is rejected. 0 disables the check.',
-        'hidden': False},
+        'display_hidden': False},
 
     'speckle_window_size': {
         'type': 'Int', 'default': 100, 'bounds': [0, 500],
         'display_name': 'Speckle Window Size (px)',
         'description': 'Largest connected disparity blob treated as noise and cleared. 0 disables speckle filtering.',
-        'hidden': False},
+        'display_hidden': False},
 
     'speckle_range': {
         'type': 'Int', 'default': 2, 'bounds': [0, 64],
         'display_name': 'Speckle Range',
         'description': 'Disparity variation allowed within one blob while speckle filtering.',
-        'hidden': False},
+        'display_hidden': False},
 
     'disp12_max_diff': {
         'type': 'Int', 'default': 1, 'bounds': [-1, 128],
         'display_name': 'Disp12 Max Diff (px)',
         'description': 'Left-right consistency tolerance, in disparity pixels. -1 disables the occlusion check.',
-        'hidden': False},
+        'display_hidden': False},
 
     'pre_filter_cap': {
         'type': 'Int', 'default': 63, 'bounds': [1, 63],
         'display_name': 'Pre-Filter Cap',
         'description': 'Clamp applied to image gradients before matching. Higher keeps sharper texture detail; 1-63 is the legal range.',
-        'hidden': False},
+        'display_hidden': False},
 
     'min_depth_mm': {
         'type': 'Float', 'default': 50.0, 'bounds': [1.0, 100000.0], 'round_value': 1,
         'display_name': 'Min Depth (mm)',
         'description': 'Depths closer than this are marked invalid. Also the near end of the colorized depth image range.',
-        'hidden': False},
+        'display_hidden': False},
 
     'max_depth_mm': {
         'type': 'Float', 'default': 20000.0, 'bounds': [1.0, 100000.0], 'round_value': 1,
         'display_name': 'Max Depth (mm)',
         'description': 'Depths farther than this are marked invalid. Also the far end of the colorized depth image range.',
-        'hidden': False},
+        'display_hidden': False},
 
     'median_filter_size': {
         'type': 'Selection', 'default': '5', 'options': MEDIAN_FILTER_OPTIONS,
         'display_name': 'Median Filter Size (px)',
         'description': 'Median filter applied to the depth map to drop isolated pixels without blurring edges. 0 disables it; every other value is odd because an even one would silently disable it.',
-        'hidden': False},
+        'display_hidden': False},
 
     }
 

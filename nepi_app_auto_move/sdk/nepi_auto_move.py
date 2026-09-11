@@ -51,39 +51,39 @@ MOVE_CONTROLS_DICT = {
         'display_name': 'Max Step (m)',
         'description': 'Longest single move the plan may contain. A longer '
                        'request is split into several steps.',
-        'hidden': False},
+        'display_hidden': False},
 
     'standoff_m': {
         'type': 'Float', 'default': 0.5, 'bounds': [0.0, 20.0], 'round_value': 2,
         'display_name': 'Standoff (m)',
         'description': 'Stop this far short of the clicked point.',
-        'hidden': False},
+        'display_hidden': False},
 
     'clearance_m': {
         'type': 'Float', 'default': 0.5, 'bounds': [0.0, 20.0], 'round_value': 2,
         'display_name': 'Obstacle Clearance (m)',
         'description': 'Closest the planned path may pass to a known obstacle.',
-        'hidden': False},
+        'display_hidden': False},
 
     'hold_altitude': {
         'type': 'Toggle', 'default': True,
         'display_name': 'Hold Altitude',
         'description': 'Keep the current height, ignoring the vertical part of '
                        'the clicked offset.',
-        'hidden': False},
+        'display_hidden': False},
 
     'face_target': {
         'type': 'Toggle', 'default': False,
         'display_name': 'Face Target',
         'description': 'Turn to face the clicked bearing before moving.',
-        'hidden': False},
+        'display_hidden': False},
 
     'avoid_obstacles': {
         'type': 'Toggle', 'default': False,
         'display_name': 'Avoid Obstacles',
         'description': 'Plan around known obstacles instead of moving straight '
                        'to the clicked point.',
-        'hidden': False},
+        'display_hidden': False},
 
     }
 

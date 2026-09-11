@@ -298,7 +298,7 @@ class NepiAppControlsSandboxData extends Component {
             const datum_msg = msgs[i]
             if (datum_msg == null) { return null }
             // Hidden data are not shown in the Data box.
-            if (hiddens[i] === true || datum_msg.hidden === true) { return null }
+            if (hiddens[i] === true || datum_msg.display_hidden === true) { return null }
             return this.renderDatum(name, types[i], datum_msg, i)
           })}
         </div>

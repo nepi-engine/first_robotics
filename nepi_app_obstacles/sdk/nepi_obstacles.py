@@ -48,13 +48,13 @@ PROCESS_CONTROLS_DICT = {
         'type': 'Float', 'default': 0.5, 'bounds': [0.1, 100.0], 'round_value': 2,
         'display_name': 'Min Range (m)',
         'description': 'Ignore depth map returns closer than this range.',
-        'hidden': False},
+        'display_hidden': False},
 
     'max_range_m': {
         'type': 'Float', 'default': 10.0, 'bounds': [0.2, 100.0], 'round_value': 2,
         'display_name': 'Max Range (m)',
         'description': 'Ignore depth map returns farther than this range.',
-        'hidden': False},
+        'display_hidden': False},
 
     'no_return_range_m': {
         'type': 'Float', 'default': 0.0, 'bounds': [0.0, 200.0], 'round_value': 2,
@@ -62,56 +62,56 @@ PROCESS_CONTROLS_DICT = {
         'description': 'Range a source reports for a pixel that got no return. '
                        'Zero detects it from the depth map; set above the '
                        'sensor range to keep every return.',
-        'hidden': False},
+        'display_hidden': False},
 
     'ground_max_height_m': {
         'type': 'Float', 'default': -0.3, 'bounds': [-10.0, 10.0], 'round_value': 2,
         'display_name': 'Ground Height (m)',
         'description': 'Returns at or below this height relative to the sensor are ground, not obstacles.',
-        'hidden': False},
+        'display_hidden': False},
 
     'obstacle_max_height_m': {
         'type': 'Float', 'default': 100.0, 'bounds': [-10.0, 100.0], 'round_value': 2,
         'display_name': 'Obstacle Max Height (m)',
         'description': 'Returns above this height relative to the sensor are overhead, '
                        'not obstacles. Leave at 100 for no limit.',
-        'hidden': False},
+        'display_hidden': False},
 
     'range_step_m': {
         'type': 'Float', 'default': 0.5, 'bounds': [0.05, 20.0], 'round_value': 2,
         'display_name': 'Range Step (m)',
         'description': 'Neighbouring returns further apart than this in range belong to separate obstacles.',
-        'hidden': False},
+        'display_hidden': False},
 
     'min_obstacle_size_ratio': {
         'type': 'FloatSlider', 'default': 0.02, 'bounds': [0.0, 1.0], 'round_value': 3,
         'display_name': 'Min Obstacle Size',
         'description': 'Smallest obstacle to report, as a fraction of the depth map area.',
-        'hidden': False},
+        'display_hidden': False},
 
     'max_obstacles': {
         'type': 'Int', 'default': 10, 'bounds': [1, 50],
         'display_name': 'Max Obstacles',
         'description': 'Report at most this many obstacles per cycle, largest first.',
-        'hidden': False},
+        'display_hidden': False},
 
     'use_navpose': {
         'type': 'Toggle', 'default': True,
         'display_name': 'Use NavPose',
         'description': 'Level the height calculation using the connected NavPose roll and pitch.',
-        'hidden': False},
+        'display_hidden': False},
 
     'mount_pitch_deg': {
         'type': 'Float', 'default': 0.0, 'bounds': [-90.0, 90.0], 'round_value': 2,
         'display_name': 'Mount Pitch (deg)',
         'description': 'Sensor pitch on its mount, positive nose up. Added to the NavPose pitch.',
-        'hidden': False},
+        'display_hidden': False},
 
     'mount_roll_deg': {
         'type': 'Float', 'default': 0.0, 'bounds': [-90.0, 90.0], 'round_value': 2,
         'display_name': 'Mount Roll (deg)',
         'description': 'Sensor roll on its mount, positive right side down. Added to the NavPose roll.',
-        'hidden': False},
+        'display_hidden': False},
 
     # The optical axis does not generally pierce the middle pixel. Every
     # calibration reports where it does land as the principal point (cx, cy),
@@ -134,13 +134,13 @@ PROCESS_CONTROLS_DICT = {
         'type': 'Float', 'default': 0.5, 'bounds': [0.0, 1.0], 'round_value': 4,
         'display_name': 'Principal Point X',
         'description': 'Optical axis column as a fraction of image width (cx / width). 0.5 is frame centre.',
-        'hidden': False},
+        'display_hidden': False},
 
     'principal_y_ratio': {
         'type': 'Float', 'default': 0.5, 'bounds': [0.0, 1.0], 'round_value': 4,
         'display_name': 'Principal Point Y',
         'description': 'Optical axis row as a fraction of image height (cy / height). 0.5 is frame centre.',
-        'hidden': False},
+        'display_hidden': False},
 
     }
 
