@@ -282,9 +282,6 @@ class NepiControlsSandboxApp(object):
             'type': 'String', 'value': 'starting',
             'display_name': 'Demo String', 'description': 'A wall-clock timestamp string.', 'display_hidden': False},
 
-        'demo_strings_data': {
-            'type': 'Strings', 'value': ['starting', 'tick 0'],
-            'display_name': 'Demo Strings', 'description': 'Timestamp plus update counter.', 'display_hidden': False},
 
         'demo_int_data': {
             'type': 'Int', 'value': 0,
