@@ -801,6 +801,7 @@ class AutoMoveIF:
 
         self.image_if = ConnectImageIF(
                         connect_name = IMAGE_CONNECT_NAME,
+                        filter_topic_list = ['color_image'],
                         show_selector = True,
                         show_controls = False,
                         show_data = False,
