@@ -29,8 +29,7 @@ from nepi_app_controls_sandbox.msg import ControlsSandboxStatus
 
 from nepi_api.node_if import NodeClassIF
 from nepi_api.messages_if import MsgIF
-from nepi_api.system_if import ControlsIF
-from nepi_api.data_if import DataIF
+from nepi_api.system_if import ControlsIF, DataIF
 from nepi_api.connect_data_if import ConnectImageIF
 
 

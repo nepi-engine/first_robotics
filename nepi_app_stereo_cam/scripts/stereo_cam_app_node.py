@@ -1529,9 +1529,6 @@ class NepiStereoCamApp(object):
             pass
         self.initCb(do_updates=do_updates)
 
-    # Route the app's reset paths into every ControlsIF it owns -- the per-process
-    # sets and the example set alike -- as the obstacles app does.
-    #
     # Both routes fall through to ControlsIF.init(), which reloads each IF's
     # controls from its own param.
     def resetControlsIFs(self, factory=False):
@@ -1567,32 +1564,7 @@ class NepiStereoCamApp(object):
         self.setupAdvancedControlsIF()
         self.setupExampleControlsIF()
 
-    # One ControlsIF per process in stereo_settings.PROCESSES_DICT, named after that
-    # process. Called at startup and again on reload_processes, so it must be
-    # idempotent: a process already holding an IF keeps it, because releasing one is
-    # not possible (see reloadProcessesCb).
-    #
-    # ONE PER PROCESS, not one shared set. Each process authors its own control set
-    # -- bm_1 has no convert_to_grayscale and a different block_size option list --
-    # and only one process is active at a time, so the operator is shown just the
-    # active one. The alternative, a single union set with the inactive half hidden,
-    # cannot work: hiding a control at runtime goes through
-    # nepi_controls.set_hidden(), which does `hidden = str(hidden)` and so
-    # writes 'True'/'False' into a field nepi_interfaces/Control declares bool. That
-    # string breaks the ControlsStatus publish and never satisfies
-    # Nepi_IF_Controls.js's `control_msg.hidden === true` test either. A control's
-    # 'display_hidden' works only as authored in the init dict, which is a startup value.
-    # What the operator actually sees is the RUI mounting ONE Nepi_IF_Controls, on
-    # the active_controls_namespace this node publishes.
-    #
-    # The process SELECTOR is not among them and is deliberately not a control. It
-    # stays this app's own state on this app's own topics -- set_selected_process
-    # (String, the process NAME) and reload_processes (Empty) -- because which
-    # process runs outlives any one control set, a reload trigger is unreachable
-    # through Nepi_IF_Controls (it publishes UpdateString to a topic ControlsIF
-    # subscribes as UpdateTrigger), and a selector on a plain topic still works when
-    # a ControlsIF does not. Turning it into a Selection control was tried in the
-    # obstacles migration and dropped.
+  
     def setupProcessControlsIFs(self):
         if self.process_controls_ifs is None:
             self.process_controls_ifs = dict()
