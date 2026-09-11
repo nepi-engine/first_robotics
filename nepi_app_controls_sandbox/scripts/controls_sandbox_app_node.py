@@ -22,6 +22,8 @@ import math
 
 from nepi_sdk import nepi_sdk
 from nepi_sdk import nepi_utils
+from nepi_sdk import nepi_controls
+from nepi_sdk import nepi_data
 
 from nepi_interfaces.msg import MgrSystemStatus
 
@@ -143,7 +145,7 @@ class NepiControlsSandboxApp(object):
 
     ##############################
     # Build the demonstration controls: one control of each CONTROL_TYPE.
-    controls_init_dict = self.createControlsInitDict()
+    controls_init_dict = nepi_controls.EXAMPLE_INIT_DICT
 
     # Instantiate a single ControlsIF. node_if is left as None so the IF builds
     # and owns its own NodeClassIF (the current device-IF convention); the app
@@ -161,7 +163,7 @@ class NepiControlsSandboxApp(object):
 
     ##############################
     # Build the demonstration data: one datum of each DATUM_TYPE.
-    data_init_dict = self.createDataInitDict()
+    data_init_dict = nepi_data.EXAMPLE_INIT_DICT
 
     # Instantiate a single DataIF. node_if is left as None so the IF builds and
     # owns its own NodeClassIF, the same sharing choice made for ControlsIF
@@ -192,7 +194,7 @@ class NepiControlsSandboxApp(object):
                     show_selector = True,
                     show_controls = False,
                     show_data = False,
-                    dataCB = self.imageConnectCb,
+                    data_callback = self.imageConnectCb,
                     msg_if = self.msg_if
     )
 
@@ -214,92 +216,6 @@ class NepiControlsSandboxApp(object):
 
   #######################
   ### Controls Definition
-
-  def createControlsInitDict(self):
-    # One entry per CONTROL_TYPE, each with a sensible default, bounds/options,
-    # display_name and description. Insertion order sets the initial display order.
-    controls_init_dict = {
-        'demo_menu': {
-            'type': 'Menu', 'default': 1, 'options': ['Off', 'Low', 'High'],
-            'display_name': 'Demo Menu', 'description': 'Pick one menu option (index based).', 'display_hidden': False},
-
-        'demo_selection': {
-            'type': 'Selection', 'default': 'Bravo', 'options': ['Alpha', 'Bravo', 'Charlie'],
-            'display_name': 'Demo Selection', 'description': 'Select a single option by name.', 'display_hidden': False},
-
-        'demo_selections': {
-            'type': 'Selections', 'default': ['Red', 'Blue'], 'options': ['Red', 'Green', 'Blue'],
-            'display_name': 'Demo Selections', 'description': 'Select any number of options.', 'display_hidden': False},
-
-        'demo_trigger': {
-            'type': 'Button', 'default': 0,
-            'display_name': 'Demo Trigger', 'description': 'Fire a one-shot trigger.', 'display_hidden': False},
-
-        'demo_bool': {
-            'type': 'Toggle', 'default': True,
-            'display_name': 'Demo Bool', 'description': 'Toggle a boolean on or off.', 'display_hidden': False},
-
-        'demo_string': {
-            'type': 'String', 'default': 'hello nepi',
-            'display_name': 'Demo String', 'description': 'Free-form text value.', 'display_hidden': False},
-
-        'demo_int': {
-            'type': 'Int', 'default': 5, 'bounds': [0, 10],
-            'display_name': 'Demo Int', 'description': 'Integer value within [0, 10].', 'display_hidden': False},
-
-        'demo_float': {
-            'type': 'Float', 'default': 2.5, 'bounds': [0.0, 10.0], 'round_value': 2,
-            'display_name': 'Demo Float', 'description': 'Float value within [0.0, 10.0].', 'display_hidden': False},
-
-        'demo_float_slider': {
-            'type': 'FloatSlider', 'default': 50.0, 'bounds': [0.0, 100.0], 'round_value': 1,
-            'display_name': 'Demo Float Slider', 'description': 'Single-value slider over [0, 100].', 'display_hidden': False},
-
-        'demo_floats_slider': {
-            'type': 'RangeSlider', 'default': [0.25, 0.75], 'bounds': [0.0, 1.0], 'round_value': 2,
-            'display_name': 'Demo Floats Slider', 'description': 'Dual-value range slider (0.0-1.0 ratio).', 'display_hidden': False},
-    }
-    return controls_init_dict
-
-  #######################
-  ### Data Definition
-
-  def createDataInitDict(self):
-    # One entry per DATUM_TYPE. A datum has a value and a timestamp only -- no
-    # bounds, options, factory or default values. Insertion order sets the
-    # initial display order. round_value rounds the stored float;
-    # round_display is the decimal count the RUI formats it to.
-    data_init_dict = {
-        'demo_bool_data': {
-            'type': 'Bool', 'value': True,
-            'display_name': 'Demo Bool', 'description': 'A boolean that toggles every update.', 'display_hidden': False},
-
-        'demo_bools_data': {
-            'type': 'Bools', 'value': [True, False],
-            'display_name': 'Demo Bools', 'description': 'Two booleans, always opposite.', 'display_hidden': False},
-
-        'demo_string_data': {
-            'type': 'String', 'value': 'starting',
-            'display_name': 'Demo String', 'description': 'A wall-clock timestamp string.', 'display_hidden': False},
-
-
-        'demo_int_data': {
-            'type': 'Int', 'value': 0,
-            'display_name': 'Demo Int', 'description': 'A monotonic update counter.', 'display_hidden': False},
-
-        'demo_ints_data': {
-            'type': 'Ints', 'value': [0, 0],
-            'display_name': 'Demo Ints', 'description': 'The counter and its negation.', 'display_hidden': False},
-
-        'demo_float_data': {
-            'type': 'Float', 'value': 0.0, 'round_value': 3, 'round_display': 3,
-            'display_name': 'Demo Float', 'description': 'A sine wave over the update counter.', 'display_hidden': False},
-
-        'demo_floats_data': {
-            'type': 'Floats', 'value': [0.0, 0.0], 'round_value': 3, 'round_display': 3,
-            'display_name': 'Demo Floats', 'description': 'The sine wave and its negation.', 'display_hidden': False},
-    }
-    return data_init_dict
 
   #######################
   ### App Config Functions
