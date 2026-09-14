@@ -148,6 +148,12 @@ MAX_MOVE_SPEED_MPS = 20.0
 MIN_GOTO_DURATION_SEC = 0.1
 MAX_GOTO_DURATION_SEC = 60.0
 
+# Turn below which a click is reported as needing no rotation, in radians
+# (~0.06 deg). Reporting only -- the yaw rate is still commanded, it is simply
+# not worth a line of operator-facing text at this size. Far under one pixel of
+# image centring either way.
+MIN_TURN_RAD = 0.001
+
 # Fallback field of view when neither the depth map status nor the image status
 # reports one. Same numbers nepi_obstacles falls back to.
 DEFAULT_WIDTH_DEG = 110.0
@@ -1449,13 +1455,38 @@ class AutoMoveIF:
         self.goto_x_mps = x_m / duration_s
         self.goto_y_mps = y_m / duration_s
         self.goto_z_mps = z_m / duration_s
-        # A click gives a translation, not a rotation. Stays operator-editable
-        # in the RUI.
-        self.goto_yaw_degps = 0.0
+
+        # Turn the clicked point onto the image centre line over the same
+        # duration. Recovered from the vector rather than passed in, so it stays
+        # consistent with whatever vector is actually commanded -- the
+        # max_move_m clamp scales x, y and z together, leaving the bearing
+        # untouched, so this is the same angle applyClick computed.
+        #
+        # azimuth is positive to the RIGHT of centre and body yaw is positive to
+        # PORT, hence the negation: a target on the right needs a right turn.
+        # Only the horizontal bearing is corrected -- yaw cannot centre a point
+        # vertically, and a ground robot has no axis that can.
+        #
+        # KNOWN LIMITATION, left for on-robot evaluation rather than corrected
+        # here: vx and vy are ROBOT-relative and the robot frame rotates under
+        # them while the turn runs, so the path is an arc and the robot does not
+        # finish exactly on the clicked point. The endpoint is off by roughly
+        # half the turn angle in bearing -- order of 0.8 m sideways on a 3 m
+        # move at 30 degrees, negligible for a nearly centred click. The heading
+        # is unaffected and always lands correctly, because it depends only on
+        # the yaw rate and the duration. Whoever tunes this on the robot should
+        # decide whether the endpoint error matters before it is compensated.
+        azimuth_rad = math.atan2(-y_m, x_m)
+        yaw_rad = -azimuth_rad
+        self.goto_yaw_degps = math.degrees(yaw_rad) / duration_s
         self.goto_duration_s = duration_s
 
-        return (', ' + str(round(move_speed_mps, 2)) + 'm/s for ' +
-                str(round(duration_s, 2)) + 's')
+        msg = (', ' + str(round(move_speed_mps, 2)) + 'm/s for ' +
+               str(round(duration_s, 2)) + 's')
+        if abs(yaw_rad) >= MIN_TURN_RAD:
+            msg = msg + (', turning ' + str(round(math.degrees(yaw_rad), 1)) +
+                         ' deg to centre')
+        return msg
 
     def getSourceFovDeg(self):
         # The depth map's own status is the geometry authority for depth data.

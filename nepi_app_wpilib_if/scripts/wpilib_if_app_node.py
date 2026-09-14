@@ -742,9 +742,10 @@ class NepiWpilibApp(object):
     # createControlsInitDict() so the box renders identically to the sandbox page.
     # Insertion order sets the display order.
     #
-    # demo_floats_slider is carried for fidelity with the sandbox but does not
-    # reach the RUI: nepi_controls' FloatSliders branch references an undefined
-    # name and silently drops the control. It is dropped on the sandbox page too.
+    # Taken straight from nepi_controls.EXAMPLE_INIT_DICT rather than restated
+    # here, so this page tracks the SDK's control vocabulary automatically
+    # instead of drifting onto retired type names the way a hand-copied dict
+    # does. The sandbox page reads the same constant.
     def createExampleControlsInitDict(self):
         controls_init_dict = nepi_controls.EXAMPLE_INIT_DICT
         return controls_init_dict

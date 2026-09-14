@@ -194,10 +194,14 @@ class WpilibRbxIF:
             # on the device itself (motor mapping and team number are the app's
             # own params). SettingsIF substitutes its NONE_* defaults for each
             # None, so the settings panel renders empty rather than fake.
-            capSettings=None,
-            factorySettings=None,
-            settingUpdateFunction=None,
+            #
+            # These two are the ONLY settings arguments RBXRobotIF accepts.
+            # capSettings / factorySettings / settingUpdateFunction are the PTX
+            # DRIVER signature (ptx_servos_node.py), not this one -- passing them
+            # here raised "unexpected keyword argument 'capSettings'" on every
+            # build attempt, so the device was never created.
             getSettingsFunction=None,
+            setSettingFunction=None,
             axisControls=self.buildAxisControls(),
             # None: the RBX Feedback group carries no battery field, so there is
             # no battery state to report.
