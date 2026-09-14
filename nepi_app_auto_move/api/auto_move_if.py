@@ -130,6 +130,24 @@ DEFAULT_MAX_MOVE_M = 5.0
 MIN_MAX_MOVE_M = 0.1
 MAX_MAX_MOVE_M = 100.0
 
+# How fast the operator says this robot moves, in METERS PER SECOND, and the
+# bounds the setter clamps an entry into. The click math divides a clicked
+# distance by this to get a duration.
+#
+# The ceiling is a SANITY BOUND, not a hardware limit. Nothing here knows what
+# the robot can do -- the RBX contract reports no chassis speed to compare
+# against -- so this only catches a typo like 200 for 2.0. The real limit is
+# applied downstream by whatever drives the robot.
+DEFAULT_MOVE_SPEED_MPS = 1.0
+MIN_MOVE_SPEED_MPS = 0.1
+MAX_MOVE_SPEED_MPS = 20.0
+
+# Bounds on a derived velocity-move duration, in seconds. Below the floor the
+# move is too short to be worth issuing; the ceiling keeps one click from
+# committing the robot to a minute-long open-loop run.
+MIN_GOTO_DURATION_SEC = 0.1
+MAX_GOTO_DURATION_SEC = 60.0
+
 # Fallback field of view when neither the depth map status nor the image status
 # reports one. Same numbers nepi_obstacles falls back to.
 DEFAULT_WIDTH_DEG = 110.0
@@ -179,6 +197,9 @@ class AutoMoveIF:
     rbx_namespace = 'None'
     rbx_connected = False
     rbx_ready = False
+    # Namespace the capability report currently held was read from, so a
+    # selection change forces a re-read and a steady selection does not.
+    rbx_caps_read_namespace = 'None'
 
     # Resolved companion topics. Each is what the app looked for; the matching
     # found flag says whether it is live.
@@ -236,6 +257,17 @@ class AutoMoveIF:
     goto_z_m = 0.0
     goto_clamped = False
 
+    # Velocity mode. The same click resolves to both a position and, when the
+    # mode is on, a velocity plus a duration; the mode picks which one a Goto
+    # issues.
+    goto_velocity_enabled = False
+    goto_x_mps = 0.0
+    goto_y_mps = 0.0
+    goto_z_mps = 0.0
+    goto_yaw_degps = 0.0
+    goto_duration_s = 0.0
+    rbx_has_goto_velocity = False
+
     goto_state = NepiAppAutoMoveStatus.GOTO_STATE_IDLE
     goto_msg = 'Idle'
     goto_step = 0
@@ -258,6 +290,7 @@ class AutoMoveIF:
     )
 
     max_move_m = DEFAULT_MAX_MOVE_M
+    move_speed_mps = DEFAULT_MOVE_SPEED_MPS
 
     active_nodes = []
     active_topics = []
@@ -278,6 +311,7 @@ class AutoMoveIF:
                 description,
                 controls_dict,
                 planMoveFunction,
+                planVelocityMoveFunction = None,
                 enable_image_pub = True,
                 log_name = None,
                 log_name_list = [],
@@ -313,6 +347,11 @@ class AutoMoveIF:
         self.enable_image_pub = enable_image_pub
         self.description = description
         self.planMove = planMoveFunction
+        # Velocity mode is inert without a velocity planner. Left optional so a
+        # host that only drives position gotos constructs unchanged; startGoto
+        # refuses a velocity goto on capability anyway, and runPlanning refuses
+        # one with no planner.
+        self.planVelocityMove = planVelocityMoveFunction
 
         ##############################
         # Get System Folders
@@ -348,6 +387,14 @@ class AutoMoveIF:
             self.node_if_prefix + 'max_move_m': {
                 'namespace': self.namespace,
                 'factory_val': DEFAULT_MAX_MOVE_M
+            },
+            self.node_if_prefix + 'goto_velocity_enabled': {
+                'namespace': self.namespace,
+                'factory_val': False
+            },
+            self.node_if_prefix + 'move_speed_mps': {
+                'namespace': self.namespace,
+                'factory_val': DEFAULT_MOVE_SPEED_MPS
             },
             self.node_if_prefix + 'image_controls': {
                 'namespace': self.namespace,
@@ -412,6 +459,57 @@ class AutoMoveIF:
                 'msg': Float32,
                 'qsize': 10,
                 'callback': self.setMaxMoveCb,
+                'callback_args': ()
+            },
+            ############
+            # Velocity mode
+            ############
+            self.node_if_prefix + 'set_goto_velocity_enabled': {
+                'namespace': self.namespace,
+                'topic': 'set_goto_velocity_enabled',
+                'msg': Bool,
+                'qsize': 10,
+                'callback': self.setGotoVelocityEnabledCb,
+                'callback_args': ()
+            },
+            self.node_if_prefix + 'set_move_speed': {
+                'namespace': self.namespace,
+                'topic': 'set_move_speed',
+                'msg': Float32,
+                'qsize': 10,
+                'callback': self.setMoveSpeedCb,
+                'callback_args': ()
+            },
+            self.node_if_prefix + 'set_goto_vx': {
+                'namespace': self.namespace,
+                'topic': 'set_goto_vx',
+                'msg': Float32,
+                'qsize': 10,
+                'callback': self.setGotoVxCb,
+                'callback_args': ()
+            },
+            self.node_if_prefix + 'set_goto_vy': {
+                'namespace': self.namespace,
+                'topic': 'set_goto_vy',
+                'msg': Float32,
+                'qsize': 10,
+                'callback': self.setGotoVyCb,
+                'callback_args': ()
+            },
+            self.node_if_prefix + 'set_goto_yaw_rate': {
+                'namespace': self.namespace,
+                'topic': 'set_goto_yaw_rate',
+                'msg': Float32,
+                'qsize': 10,
+                'callback': self.setGotoYawRateCb,
+                'callback_args': ()
+            },
+            self.node_if_prefix + 'set_goto_duration': {
+                'namespace': self.namespace,
+                'topic': 'set_goto_duration',
+                'msg': Float32,
+                'qsize': 10,
+                'callback': self.setGotoDurationCb,
                 'callback_args': ()
             },
             self.node_if_prefix + 'goto_trigger': {
@@ -752,6 +850,15 @@ class AutoMoveIF:
         status_msg.max_move_m = float(self.max_move_m)
         status_msg.goto_clamped = self.goto_clamped
 
+        status_msg.goto_velocity_enabled = self.goto_velocity_enabled
+        status_msg.move_speed_mps = float(self.move_speed_mps)
+        status_msg.goto_x_mps = float(self.goto_x_mps)
+        status_msg.goto_y_mps = float(self.goto_y_mps)
+        status_msg.goto_z_mps = float(self.goto_z_mps)
+        status_msg.goto_yaw_degps = float(self.goto_yaw_degps)
+        status_msg.goto_duration_s = float(self.goto_duration_s)
+        status_msg.rbx_has_goto_velocity = self.rbx_has_goto_velocity
+
         status_msg.goto_state = self.goto_state
         status_msg.goto_msg = self.goto_msg
         status_msg.goto_step = int(self.goto_step)
@@ -816,6 +923,8 @@ class AutoMoveIF:
     def initCb(self, do_updates = False):
         if self.node_if is not None:
             self.max_move_m = self.node_if.get_param(self.node_if_prefix + 'max_move_m')
+            self.goto_velocity_enabled = self.node_if.get_param(self.node_if_prefix + 'goto_velocity_enabled')
+            self.move_speed_mps = self.node_if.get_param(self.node_if_prefix + 'move_speed_mps')
 
             image_controls_dict = self.node_if.get_param(self.node_if_prefix + 'image_controls')
             if isinstance(image_controls_dict, dict):
@@ -852,9 +961,19 @@ class AutoMoveIF:
         selected_topic = self.rbx_if.get_selected_topic()
         if selected_topic is None or selected_topic == '':
             selected_topic = 'None'
+        selection_changed = (selected_topic != self.rbx_namespace)
         self.rbx_namespace = selected_topic
         self.rbx_connected = self.rbx_if.check_connection()
         self.rbx_ready = self.rbx_connected and (self.rbx_if.check_ready() == True)
+
+        # Capabilities are a service call, so they are read on a selection
+        # change and on the first connection of a selection -- not every tick.
+        if selection_changed == True:
+            self.rbx_has_goto_velocity = False
+            self.rbx_caps_read_namespace = 'None'
+        if self.rbx_connected == True and self.rbx_caps_read_namespace != self.rbx_namespace:
+            self.updateRbxCapabilities()
+            self.rbx_caps_read_namespace = self.rbx_namespace
 
     def updateImageSelection(self):
         if self.image_if is None:
@@ -1093,6 +1212,50 @@ class AutoMoveIF:
             self.node_if.set_param(self.node_if_prefix + 'max_move_m', self.max_move_m)
             self.save_config()
 
+    def setGotoVelocityEnabledCb(self, msg):
+        self.goto_velocity_enabled = (msg.data == True)
+        self.publish_status()
+        if self.node_if is not None:
+            self.node_if.set_param(self.node_if_prefix + 'goto_velocity_enabled',
+                                   self.goto_velocity_enabled)
+            self.save_config()
+
+    def setMoveSpeedCb(self, msg):
+        # Exact twin of setMaxMoveCb above. The clamp is what guarantees a
+        # non-zero speed, which is what lets applyClick divide by it without a
+        # divide-by-zero guard on the speed.
+        move_speed_mps = msg.data
+        if move_speed_mps < MIN_MOVE_SPEED_MPS:
+            move_speed_mps = MIN_MOVE_SPEED_MPS
+        elif move_speed_mps > MAX_MOVE_SPEED_MPS:
+            move_speed_mps = MAX_MOVE_SPEED_MPS
+        self.move_speed_mps = move_speed_mps
+        self.publish_status()
+        if self.node_if is not None:
+            self.node_if.set_param(self.node_if_prefix + 'move_speed_mps', self.move_speed_mps)
+            self.save_config()
+
+    def setGotoVxCb(self, msg):
+        self.goto_x_mps = float(msg.data)
+        self.publish_status()
+
+    def setGotoVyCb(self, msg):
+        self.goto_y_mps = float(msg.data)
+        self.publish_status()
+
+    def setGotoYawRateCb(self, msg):
+        self.goto_yaw_degps = float(msg.data)
+        self.publish_status()
+
+    def setGotoDurationCb(self, msg):
+        duration_s = float(msg.data)
+        if duration_s < 0.0:
+            duration_s = 0.0
+        elif duration_s > MAX_GOTO_DURATION_SEC:
+            duration_s = MAX_GOTO_DURATION_SEC
+        self.goto_duration_s = duration_s
+        self.publish_status()
+
     def setDepthMapTransparencyCb(self, msg):
         self.setImageRatio('depth_map_transparency', msg.data)
 
@@ -1240,9 +1403,59 @@ class AutoMoveIF:
                      ' -> ' + str(round(range_m, 2)) + 'm')
         if clamped == True:
             click_msg = click_msg + ', clamped to ' + str(round(max_move_m, 2)) + 'm'
+
+        # Velocity mode. The position values above are NOT replaced -- the same
+        # click resolves to both, and the mode only picks which one a Goto
+        # issues. Everything above, including the max_move_m clamp, has already
+        # run and governs the distance this converts.
+        if self.goto_velocity_enabled == True:
+            click_msg = click_msg + self.applyClickVelocity(x_m, y_m, z_m)
+
         self.click_msg = click_msg
 
         self.publish_status()
+
+    def applyClickVelocity(self, x_m, y_m, z_m):
+        # Turns the clicked distance into a body-frame velocity and a duration.
+        # Returns the text to append to click_msg.
+        #
+        # move_speed_mps is already clamped above zero by setMoveSpeedCb, so no
+        # divide-by-zero guard is needed on the speed. The guard that IS needed
+        # is on the distance: a click that resolves to no move would otherwise
+        # produce a zero duration and then divide by it below.
+        move_speed_mps = float(self.move_speed_mps)
+        distance_m = math.sqrt((x_m * x_m) + (y_m * y_m) + (z_m * z_m))
+
+        if distance_m == 0.0:
+            self.goto_x_mps = 0.0
+            self.goto_y_mps = 0.0
+            self.goto_z_mps = 0.0
+            self.goto_yaw_degps = 0.0
+            self.goto_duration_s = 0.0
+            return ', click resolved to no move'
+
+        duration_s = distance_m / move_speed_mps
+        if duration_s < MIN_GOTO_DURATION_SEC:
+            duration_s = MIN_GOTO_DURATION_SEC
+        elif duration_s > MAX_GOTO_DURATION_SEC:
+            duration_s = MAX_GOTO_DURATION_SEC
+
+        # Derived from the CLAMPED duration, not from move_speed_mps directly.
+        # Deliberate: when the duration clamp bites, dividing the distance by
+        # the clamped duration keeps the commanded vector pointing exactly where
+        # the operator clicked -- it changes the speed, not the bearing. Using
+        # the speed directly would leave a vector that no longer reaches the
+        # clicked point in the time actually commanded.
+        self.goto_x_mps = x_m / duration_s
+        self.goto_y_mps = y_m / duration_s
+        self.goto_z_mps = z_m / duration_s
+        # A click gives a translation, not a rotation. Stays operator-editable
+        # in the RUI.
+        self.goto_yaw_degps = 0.0
+        self.goto_duration_s = duration_s
+
+        return (', ' + str(round(move_speed_mps, 2)) + 'm/s for ' +
+                str(round(duration_s, 2)) + 's')
 
     def getSourceFovDeg(self):
         # The depth map's own status is the geometry authority for depth data.
@@ -1323,6 +1536,20 @@ class AutoMoveIF:
             self.publish_status()
             return
 
+        # The selected robot is asked what it supports before a velocity goto is
+        # planned, not after it has been published into nothing. A device that
+        # does not advertise has_goto_velocity does not subscribe to the
+        # goto_velocity topic at all, so publishing to it would look like
+        # success and do nothing.
+        self.updateRbxCapabilities()
+        if self.goto_velocity_enabled == True and self.rbx_has_goto_velocity == False:
+            self.goto_state = NepiAppAutoMoveStatus.GOTO_STATE_IDLE
+            self.goto_msg = 'Connected robot does not support velocity moves'
+            self.msg_if.pub_warn("Velocity goto ignored: selected robot reports no goto_velocity capability",
+                                 log_name_list = self.log_name_list)
+            self.publish_status()
+            return
+
         self.goto_cancel_requested = False
         self.goto_plan = []
         self.goto_step = 0
@@ -1332,6 +1559,22 @@ class AutoMoveIF:
         self.goto_state = NepiAppAutoMoveStatus.GOTO_STATE_PLANNING
         self.goto_msg = 'Planning move'
         self.publish_status()
+
+    def updateRbxCapabilities(self):
+        # Reads has_goto_velocity off the selected device's RBXCapabilitiesQuery
+        # response. A device that cannot be queried reports nothing rather than
+        # defaulting to supported -- an unanswered query is not a yes.
+        self.rbx_has_goto_velocity = False
+        if self.rbx_if is None or self.rbx_connected == False:
+            return
+        try:
+            caps_dict = self.rbx_if.get_goto_capabilities()
+        except Exception as e:
+            self.msg_if.pub_warn("Failed to read robot capabilities: " + str(e),
+                                 log_name_list = self.log_name_list, throttle_s = 10.0)
+            return
+        if isinstance(caps_dict, dict):
+            self.rbx_has_goto_velocity = (caps_dict.get('has_goto_velocity', False) == True)
 
     def cancelGoto(self):
         self.goto_cancel_requested = True
@@ -1372,7 +1615,17 @@ class AutoMoveIF:
             'y_m': float(self.goto_y_m),
             'z_m': float(self.goto_z_m),
             'max_move_m': float(self.max_move_m),
+            'move_speed_mps': float(self.move_speed_mps),
         }
+        if self.goto_velocity_enabled == True:
+            # The velocity planner reads these; the position values above stay
+            # on the dict so a planner can see the distance the velocities came
+            # from.
+            goto_dict['x_mps'] = float(self.goto_x_mps)
+            goto_dict['y_mps'] = float(self.goto_y_mps)
+            goto_dict['z_mps'] = float(self.goto_z_mps)
+            goto_dict['yaw_degps'] = float(self.goto_yaw_degps)
+            goto_dict['duration_s'] = float(self.goto_duration_s)
 
         self.depth_map_lock.acquire()
         np_depth_map = self.depth_map_slot
@@ -1381,13 +1634,22 @@ class AutoMoveIF:
         robot_dict = self.getRobotDict()
         controls_dict = self.get_controls_dict()
 
-        plan = self.planMove(goto_dict,
-                             np_depth_map,
-                             copy.deepcopy(self.objects_list),
-                             copy.deepcopy(self.targets_list),
-                             robot_dict,
-                             controls_dict,
-                             copy.deepcopy(self.obstacles_list))
+        planner = self.planMove
+        if self.goto_velocity_enabled == True:
+            if self.planVelocityMove is None:
+                self.goto_state = NepiAppAutoMoveStatus.GOTO_STATE_IDLE
+                self.goto_msg = 'Velocity mode is on but this node has no velocity planner'
+                self.publish_status()
+                return
+            planner = self.planVelocityMove
+
+        plan = planner(goto_dict,
+                       np_depth_map,
+                       copy.deepcopy(self.objects_list),
+                       copy.deepcopy(self.targets_list),
+                       robot_dict,
+                       controls_dict,
+                       copy.deepcopy(self.obstacles_list))
 
         if plan is None or len(plan) == 0:
             self.goto_state = NepiAppAutoMoveStatus.GOTO_STATE_COMPLETE
@@ -1424,12 +1686,24 @@ class AutoMoveIF:
         step_dict = self.goto_plan[self.goto_step]
 
         if self.goto_step_issued == False:
-            # A relative body-frame move, in METERS. The values already carry
-            # the units the RBX interface expects, so nothing is converted here.
-            self.rbx_if.goto_position(float(step_dict.get('x_m', 0.0)),
-                                      float(step_dict.get('y_m', 0.0)),
-                                      float(step_dict.get('z_m', 0.0)),
-                                      float(step_dict.get('yaw_deg', 0.0)))
+            if self.goto_velocity_enabled == True:
+                # A timed body-frame velocity, in METERS PER SECOND and DEGREES
+                # PER SECOND. Open loop: the device holds it for duration_s and
+                # stops itself. The step tracking below is unchanged -- the
+                # device still reports busy while it runs, which is what the
+                # issued / saw_busy / ready sequence watches.
+                self.rbx_if.goto_velocity(float(step_dict.get('x_mps', 0.0)),
+                                          float(step_dict.get('y_mps', 0.0)),
+                                          float(step_dict.get('z_mps', 0.0)),
+                                          float(step_dict.get('yaw_degps', 0.0)),
+                                          float(step_dict.get('duration_s', 0.0)))
+            else:
+                # A relative body-frame move, in METERS. The values already carry
+                # the units the RBX interface expects, so nothing is converted here.
+                self.rbx_if.goto_position(float(step_dict.get('x_m', 0.0)),
+                                          float(step_dict.get('y_m', 0.0)),
+                                          float(step_dict.get('z_m', 0.0)),
+                                          float(step_dict.get('yaw_deg', 0.0)))
             self.goto_step_issued = True
             self.goto_saw_busy = False
             self.goto_step_start_time = nepi_utils.get_time()

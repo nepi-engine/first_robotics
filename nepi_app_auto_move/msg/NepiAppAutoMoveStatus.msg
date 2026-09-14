@@ -137,6 +137,48 @@ bool goto_clamped
 string click_msg
 
 #################
+# Velocity mode
+#################
+# A second way to command the same click. Position mode sends a distance and the
+# robot closes on it; velocity mode sends a body-frame velocity and a duration,
+# open loop, and the robot stops when the duration elapses. The mode picks which
+# one a Goto issues -- it does not change how the click itself is resolved.
+bool goto_velocity_enabled
+
+# The operator's statement of how fast this robot moves, in METERS PER SECOND,
+# ENTERED BY HAND. A clicked distance is divided by this to get a duration, so
+# it is the one number that turns a position into a timed move.
+#
+# NEPI does not read it from the robot and does not check it. The RBX contract
+# reports no chassis speed anywhere -- DeviceRBXStatus and DeviceRBXInfo carry
+# none, and the only speed RBX exposes is a unitless per-motor ratio -- so there
+# is nothing on this side to check it against. The only check that exists is
+# downstream: the WPILib app clamps the outgoing command to the maximum the
+# RoboRIO reports.
+#
+# Persisted PER APP, not per robot. It does not follow a change of robot
+# selection; an operator switching robots retypes it.
+float32 move_speed_mps
+
+# The velocity the last click resolved to, in the body frame of
+# nepi_interfaces/GotoVelocity: x forward, y LEFT, z up, METERS PER SECOND.
+float32 goto_x_mps
+float32 goto_y_mps
+float32 goto_z_mps
+# Yaw rate in DEGREES PER SECOND, positive to port. Operator-facing units --
+# the wire to the robot is rad/s, converted downstream. A click sets this to
+# zero: a click gives a translation, not a rotation.
+float32 goto_yaw_degps
+# How long the robot holds that velocity, in seconds. Derived as the clicked
+# distance divided by move_speed_mps, then clamped.
+float32 goto_duration_s
+
+# Whether the SELECTED ROBOT advertises timed velocity moves at all. False means
+# the robot's RBX capabilities report has_goto_velocity false, and a velocity
+# goto is refused rather than published into nothing.
+bool rbx_has_goto_velocity
+
+#################
 # Goto process
 #################
 # One of the GOTO_STATE_* constants above

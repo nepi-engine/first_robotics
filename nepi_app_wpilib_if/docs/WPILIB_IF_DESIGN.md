@@ -2,7 +2,7 @@
 
 Target repo: `nepi_app_wpilib_if` (standalone app repo, not a submodule of `nepi_engine_ws`).
 
-This memo records four decisions that turn the app scaffold into the real
+This memo records five decisions that turn the app scaffold into the real
 NEPI-to-RoboRIO interface, with the evidence each rests on. The app is the only
 NEPI process holding a WPILib NetworkTables (NT) client. Everything NEPI sees of
 the robot passes through it.
@@ -243,6 +243,83 @@ either test sets its `has_*` flag false rather than contributing zeros, and when
 no group qualifies nothing is published at all. Details and the exact staleness
 rule are in the Step 6 implementation.
 
+## Decision 5 — How a timed velocity command is delivered, and where its speed comes from
+
+**Recommendation: stream the command at 10 Hz against a RoboRIO watchdog, and
+keep `duration_s` as a second independent bound. The commanded speed is entered
+by an operator in the Auto Move app, because the RBX contract has no chassis
+speed to read.**
+
+A REV MAXSwerve drivetrain is holonomic. Its RoboRIO takes chassis velocities,
+not waypoints, so `goto_position` is the wrong shape for it — that command is a
+target the RoboRIO has to close on, and the robot's natural input is
+`ChassisSpeeds(vx, vy, omega)` straight into `SwerveDriveKinematics`. The new
+`GOTO_VELOCITY` capability adds that path beside the existing position goto
+rather than replacing it. Full contract for the RoboRIO side:
+`docs/ROBORIO_VELOCITY_CONTRACT.md`.
+
+### Streaming plus watchdog, over one fire-and-forget request
+
+The obvious alternative was one CHASSIS_SPEEDS request carrying `duration_s`,
+written once, with the RoboRIO timing the move out on its own. Rejected.
+
+**A single request puts the whole safety case on one packet arriving and on the
+RoboRIO's clock.** If the request lands and NEPI then dies, or the radio drops,
+or someone pulls the Ethernet, the robot keeps driving for the rest of
+`duration_s` with nothing left on the NEPI side able to stop it. The failure is
+not exotic: this is a competition robot on a contested 2.4/5 GHz field, and a
+link that drops mid-move is an ordinary Tuesday.
+
+Streaming fails safe on exactly that. NEPI re-writes the same velocities at
+10 Hz for the whole duration, bumping `request_id` each time; the RoboRIO zeroes
+the drivetrain if no fresh request has arrived within 250 ms. Link loss now
+stops the robot in a quarter second instead of running the command to term. The
+10 Hz rate leaves room for two missed writes before the watchdog fires, so
+ordinary jitter does not produce a stutter.
+
+**`duration_s` is kept anyway, as a second and independent bound**, and the
+belt-and-braces is justified because the two stops fail differently and neither
+covers the other:
+
+- The watchdog stops the robot when NEPI *stops talking*. It does nothing when
+  NEPI keeps talking and is wrong — a stuck stream, a wedged thread re-sending
+  a stale command.
+- `duration_s` stops the robot when the commanded time is up. It does nothing
+  when the request carrying it never arrived, or arrived truncated.
+
+One extra `double` on the wire and one timer on the RoboRIO is a cheap price for
+covering both. The cost of covering only one is a robot that does not stop.
+
+### The commanded speed is operator-entered, not read from the robot
+
+The Auto Move app converts a clicked distance into a duration by dividing by a
+speed, and that speed is typed into a plain metres-per-second box in the app. It
+is not read from the robot.
+
+**The RBX contract cannot supply it.** `DeviceRBXStatus` and `DeviceRBXInfo`
+carry no chassis speed at all, and the only speed RBX exposes anywhere is
+`MotorControl.speed_ratio` — a unitless per-motor 0.0–1.0 ratio, which says
+nothing about metres per second. There is no field to read.
+
+Deriving it from the robot's measured NavPose velocity was considered and
+deferred, not attempted: a robot sitting still reports zero, and clicking while
+stopped is the normal case, so the derivation is unavailable exactly when it is
+needed.
+
+`max_velocity_mps` and `max_angular_velocity_radps` in the RBX Feedback group
+are the fields a later change would read instead. Today they are used as a
+clamp: `WpilibRbxIF.gotoVelocity` scales an outgoing command down to them before
+writing, which is the floor under an operator mistyping a speed, and logs the
+clamp — a clamped move runs the full duration slower and therefore lands short,
+which is otherwise indistinguishable from a bad speed entry. Reading them
+*instead of* asking the operator is a one-place change in `AutoMoveIF`, and the
+plumbing is already in place for it.
+
+The operator's speed is persisted per app, not per robot, so it does not follow
+a change of robot selection. That is a known rough edge, accepted for the MVP:
+the app has one speed box, and the operator retypes it if they switch to a
+different robot.
+
 ---
 
 ## Summary of recommendations
@@ -262,3 +339,8 @@ rule are in the Step 6 implementation.
    `getNavPoseCb`. No app-owned `NavPoseIF`. NavPose is published only while
    `rbx_enabled` is true, and the reason is `RBXRobotIF`'s goto math, not
    preference.
+5. **Timed velocity** — stream the CHASSIS_SPEEDS request at 10 Hz against a
+   250 ms RoboRIO watchdog, and keep `duration_s` as a second independent bound.
+   The commanded speed is operator-entered in the Auto Move app because the RBX
+   contract exposes no chassis speed to read; `max_velocity_mps` is the field a
+   later change would read instead, and is used as a clamp today.

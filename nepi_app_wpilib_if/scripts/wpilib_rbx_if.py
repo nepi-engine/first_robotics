@@ -61,6 +61,7 @@ from nepi_api.device_if_rbx import RBXRobotIF
 # capability gets a None callback and the matching has_* flag falls out False.
 CAPABILITY_GOTO_POSITION = 'GOTO_POSITION'
 CAPABILITY_GOTO_POSE = 'GOTO_POSE'
+CAPABILITY_GOTO_VELOCITY = 'GOTO_VELOCITY'
 CAPABILITY_GO_HOME = 'GO_HOME'
 CAPABILITY_STOP = 'STOP'
 CAPABILITY_MOTOR_CONTROL = 'MOTOR_CONTROL'
@@ -83,6 +84,14 @@ FEEDBACK_UPDATE_RATE_HZ = 2.0
 # First request id issued. Ids only ever increase, so the RoboRIO can trigger on
 # request_id changing.
 FIRST_REQUEST_ID = 1
+
+# Re-send rate for an active velocity command, and the longest one this module
+# will run. A velocity command is streamed, not fired once: the RoboRIO runs a
+# 250 ms watchdog against this stream and zeroes the drivetrain if it dries up,
+# so 10 Hz leaves room for two missed writes before the robot stops itself.
+# See docs/ROBORIO_VELOCITY_CONTRACT.md.
+VELOCITY_STREAM_RATE_HZ = 10.0
+VELOCITY_MAX_DURATION_SEC = 60.0
 
 
 #########################################
@@ -236,6 +245,12 @@ class WpilibRbxIF:
                               if self.hasCapability(CAPABILITY_GOTO_POSE) else None),
             gotoPositionFunction=(self.gotoPosition
                                   if self.hasCapability(CAPABILITY_GOTO_POSITION) else None),
+            # Timed open-loop chassis velocity. Separate capability from
+            # GOTO_POSITION because it is a different RoboRIO code path -- a
+            # holonomic drivetrain takes ChassisSpeeds directly and never needs
+            # a waypoint -- so a robot can advertise either, both or neither.
+            gotoVelocityFunction=(self.gotoVelocity
+                                  if self.hasCapability(CAPABILITY_GOTO_VELOCITY) else None),
             # None: the RoboRIO has no global position reference in this
             # contract. Robot Position is a local field-frame x/y/heading, so
             # there is no lat/lon to command to.
@@ -381,6 +396,7 @@ class WpilibRbxIF:
         # RBXRobotIF control becomes a named action, so a RoboRIO can offer
         # robot-specific actions without this module knowing their names.
         control_capabilities = [CAPABILITY_GOTO_POSITION, CAPABILITY_GOTO_POSE,
+                                CAPABILITY_GOTO_VELOCITY,
                                 CAPABILITY_GO_HOME, CAPABILITY_STOP,
                                 CAPABILITY_MOTOR_CONTROL]
         return [c for c in self.supported_capabilities if c not in control_capabilities]
@@ -600,6 +616,141 @@ class WpilibRbxIF:
         return self.sendCommandRequest(self.command_types['target_pose'],
                                        target_pose=target_pose,
                                        request_type='GoTo Position')
+
+    def getMaxSpeeds(self):
+        # The drivetrain's reported limits, read straight off the RBX Feedback
+        # group the same way feedbackUpdateCb reads it -- this module caches no
+        # feedback of its own, the app node owns that cache and hands the whole
+        # dict over on every call. 0.0 means "not reported" and disables the
+        # clamp for that axis; it does not mean "no motion allowed".
+        feedback = None
+        try:
+            feedback = self.getRbxFeedbackFunction()
+        except Exception as e:
+            self.msg_if.pub_warn("Failed to read RBX feedback: " + str(e), throttle_s=10.0)
+        if feedback is None:
+            return [0.0, 0.0]
+        max_velocity_mps = 0.0
+        max_angular_velocity_radps = 0.0
+        try:
+            max_velocity_mps = float(feedback.get('max_velocity_mps', 0.0))
+            max_angular_velocity_radps = float(feedback.get('max_angular_velocity_radps', 0.0))
+        except (TypeError, ValueError):
+            return [0.0, 0.0]
+        return [max(max_velocity_mps, 0.0), max(max_angular_velocity_radps, 0.0)]
+
+    def gotoVelocity(self, x_mps, y_mps, z_mps, yaw_degps, duration_s):
+        # RBXRobotIF passes a body-frame velocity and a duration. Open loop:
+        # there is no target and nothing converges, so this method owns the
+        # timing and blocks for the whole duration, which is what RBXRobotIF's
+        # gotoVelocityCb expects of it.
+        #
+        # STREAMED, not fired once. One CHASSIS_SPEEDS request every
+        # 1/VELOCITY_STREAM_RATE_HZ seconds for the whole duration, then one
+        # stop. The RoboRIO runs a 250 ms watchdog against that stream, so a
+        # link that drops mid-move stops the robot rather than leaving it
+        # driving. duration_s rides on every request as an independent second
+        # bound. See docs/ROBORIO_VELOCITY_CONTRACT.md.
+        self.logCommandEntry("goto_velocity",
+                             "body m/s [" + str(x_mps) + ", " + str(y_mps) + ", " +
+                             str(z_mps) + "]  yaw " + str(yaw_degps) + " deg/s" +
+                             "  duration " + str(duration_s) + " s")
+
+        try:
+            x_mps = float(x_mps)
+            y_mps = float(y_mps)
+            yaw_degps = float(yaw_degps)
+            duration_s = float(duration_s)
+        except (TypeError, ValueError):
+            self.msg_if.pub_warn("GoTo Velocity ignored: non-numeric command values")
+            return False
+
+        # z is dropped: the chassis_speeds group has no vertical field. NEPI
+        # carries one for hardware agnosticism; a ground robot has nowhere to
+        # put it.
+        if float(z_mps) != 0.0:
+            self.msg_if.pub_info("GoTo Velocity: vertical component " + str(z_mps) +
+                                 " m/s dropped, this contract has no vertical axis")
+
+        if duration_s <= 0.0:
+            self.msg_if.pub_warn("GoTo Velocity ignored: duration " + str(duration_s) +
+                                 " s is not positive")
+            return False
+        if duration_s > VELOCITY_MAX_DURATION_SEC:
+            self.msg_if.pub_warn("GoTo Velocity duration clamped from " + str(duration_s) +
+                                 " s to " + str(VELOCITY_MAX_DURATION_SEC) + " s")
+            duration_s = VELOCITY_MAX_DURATION_SEC
+
+        [max_velocity_mps, max_angular_velocity_radps] = self.getMaxSpeeds()
+
+        # Linear clamp scales x and y TOGETHER, so a clamp shortens the move
+        # without swinging its bearing -- the same reason the Auto Move app
+        # scales the whole click vector rather than truncating one axis.
+        linear_mps = math.sqrt((x_mps * x_mps) + (y_mps * y_mps))
+        if max_velocity_mps > 0.0 and linear_mps > max_velocity_mps:
+            scale = max_velocity_mps / linear_mps
+            # Logged, not silent. A clamped move runs the full duration at a
+            # lower speed and therefore covers less ground than the operator
+            # asked for; without this line that is indistinguishable from a bad
+            # speed entry in the app.
+            self.msg_if.pub_warn("GoTo Velocity clamped: " + str(round(linear_mps, 3)) +
+                                 " m/s exceeds the robot's reported maximum " +
+                                 str(round(max_velocity_mps, 3)) + " m/s, scaling by " +
+                                 str(round(scale, 3)))
+            x_mps = x_mps * scale
+            y_mps = y_mps * scale
+
+        # Yaw converts to rad/s here, the same way gotoPose converts its
+        # heading. The wire is SI; the operator-facing field is deg/s.
+        yaw_radps = math.radians(yaw_degps)
+        if max_angular_velocity_radps > 0.0 and abs(yaw_radps) > max_angular_velocity_radps:
+            clamped_radps = math.copysign(max_angular_velocity_radps, yaw_radps)
+            self.msg_if.pub_warn("GoTo Velocity yaw rate clamped: " +
+                                 str(round(yaw_radps, 3)) +
+                                 " rad/s exceeds the robot's reported maximum " +
+                                 str(round(max_angular_velocity_radps, 3)) + " rad/s")
+            yaw_radps = clamped_radps
+
+        chassis_speeds = dict(velocity_x_mps=x_mps,
+                              velocity_y_mps=y_mps,
+                              angular_velocity_radps=yaw_radps,
+                              duration_s=duration_s)
+
+        self.stop_triggered = False
+        stream_interval_sec = float(1) / VELOCITY_STREAM_RATE_HZ
+        start_time = nepi_sdk.get_time()
+        completed = True
+
+        while True:
+            if self.stop_triggered == True:
+                self.msg_if.pub_info("GoTo Velocity cut short by stop")
+                completed = False
+                break
+            if nepi_sdk.is_shutdown() == True:
+                completed = False
+                break
+            if (nepi_sdk.get_time() - start_time) >= duration_s:
+                break
+            if self.sendCommandRequest(self.command_types['chassis_speeds'],
+                                       chassis_speeds=chassis_speeds,
+                                       request_type='GoTo Velocity') is False:
+                # A write that did not land means the stream has a hole in it.
+                # The RoboRIO's watchdog is what actually stops the robot; this
+                # side stops asking rather than pretending the move ran.
+                self.msg_if.pub_warn("GoTo Velocity aborted: command request was not written")
+                completed = False
+                break
+            nepi_sdk.sleep(stream_interval_sec)
+
+        # One stop on every exit path, including the aborted ones. The watchdog
+        # would get there on its own; this makes it deliberate.
+        self.sendCommandRequest(self.command_types['stop'],
+                                chassis_speeds=dict(velocity_x_mps=0.0,
+                                                    velocity_y_mps=0.0,
+                                                    angular_velocity_radps=0.0,
+                                                    duration_s=0.0),
+                                request_type='Stop')
+        return completed
 
     def setGoActionInd(self, action_ind):
         # action_ind is already bounds-checked against go_actions by RBXRobotIF.
