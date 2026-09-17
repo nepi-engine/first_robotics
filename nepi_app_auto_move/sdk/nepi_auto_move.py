@@ -447,6 +447,88 @@ def plan_move(goto_dict, np_depth_map, objects_list, targets_list, robot_dict, c
         logger.log_info('Planner produced no non-zero RBX moves')
     return steps
 
+##############################################################################
+# EXTENSION POINT
+#
+# plan_velocity_move() below is the velocity-mode twin of plan_move(). It is the
+# ONLY thing a developer adding real velocity logic has to replace.
+#
+# WHAT TO CHANGE
+#   The body of plan_velocity_move(). For the MVP it returns exactly ONE step,
+#   derived straight from goto_dict, with no obstacle awareness and no
+#   splitting. A real implementation would read the same inputs plan_move()
+#   reads -- the depth map, the object, target and obstacle lists, the robot
+#   state and the live controls -- and return several timed velocity legs.
+#
+# WHAT NOT TO CHANGE
+#   The signature and the return shape. AutoMoveIF.runPlanning() calls this with
+#   exactly the same arguments plan_move() takes, and hands each returned step
+#   straight to ConnectRBXDeviceIF.goto_velocity(). A step with an unexpected
+#   key simply commands zero on that axis -- no error, just a robot that does
+#   not move the way anyone asked.
+#
+#   Do not import ROS, nepi_sdk transport, or any interface class here, and do
+#   not block, for the same reasons stated on plan_move() above.
+#
+# UNITS -- DIFFERENT FROM plan_move()
+#   goto_dict still arrives in METRES and DEGREES, exactly as plan_move() gets
+#   it, and it additionally carries 'move_speed_mps' -- the operator's statement
+#   of how fast this robot moves, which is what turned the clicked distance into
+#   a duration. It also carries the already-derived velocity values.
+#
+#   Every value in every RETURNED step is METRES PER SECOND and DEGREES PER
+#   SECOND, plus seconds for the duration. The keys are:
+#       x_mps, y_mps, z_mps, yaw_degps, duration_s, description
+#
+#   The frame is the robot body frame from nepi_interfaces/GotoVelocity:
+#   x forward, y LEFT, z up, yaw positive to port.
+#
+# OPEN LOOP
+#   A velocity step is not a target. Nothing converges on it and nothing
+#   measures the result: the robot holds the commanded velocity for duration_s
+#   and stops. A planner that assumes a step "arrives" somewhere is assuming
+#   something this command cannot deliver.
+#
+#   Returning an empty list is a legitimate answer -- "no move needed". The
+#   process reports COMPLETE for it rather than treating it as a failure.
+##############################################################################
+
+def plan_velocity_move(goto_dict, np_depth_map, objects_list, targets_list, robot_dict, controls_dict, obstacles_list = None):
+    """Plan the sequence of timed velocity moves that satisfies a goto request.
+
+    MVP: returns exactly one step, taken from the velocity values the app
+    already derived from the click. No obstacle awareness, no splitting, no
+    turn-to-face. A step with a non-positive duration is no move at all and
+    comes back as an empty list.
+    """
+    x_mps = _as_float(goto_dict.get('x_mps', 0.0), 0.0)
+    y_mps = _as_float(goto_dict.get('y_mps', 0.0), 0.0)
+    z_mps = _as_float(goto_dict.get('z_mps', 0.0), 0.0)
+    yaw_degps = _as_float(goto_dict.get('yaw_degps', 0.0), 0.0)
+    duration_s = _as_float(goto_dict.get('duration_s', 0.0), 0.0)
+
+    if duration_s <= 0.0:
+        logger.log_info('Velocity goto request has no duration, no steps planned')
+        return []
+
+    if x_mps == 0.0 and y_mps == 0.0 and z_mps == 0.0 and yaw_degps == 0.0:
+        logger.log_info('Velocity goto request is all zeros, no steps planned')
+        return []
+
+    speed_mps = math.sqrt((x_mps * x_mps) + (y_mps * y_mps) + (z_mps * z_mps))
+    description = ('Hold ' + str(round(speed_mps, 2)) + 'm/s for ' +
+                   str(round(duration_s, 2)) + 's')
+
+    return [{
+        'x_mps': x_mps,
+        'y_mps': y_mps,
+        'z_mps': z_mps,
+        'yaw_degps': yaw_degps,
+        'duration_s': duration_s,
+        'description': description,
+    }]
+
+
 def get_controls_dict():
     """Return a copy of this module's control definition dictionary.
 

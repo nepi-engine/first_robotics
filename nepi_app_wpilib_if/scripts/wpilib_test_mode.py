@@ -71,6 +71,7 @@ from nepi_sdk import nepi_sdk
 # the other way, so deleting this file removes it.
 from wpilib_rbx_if import (CAPABILITY_GOTO_POSITION,
                            CAPABILITY_GOTO_POSE,
+                           CAPABILITY_GOTO_VELOCITY,
                            CAPABILITY_GO_HOME,
                            CAPABILITY_STOP,
                            CAPABILITY_MOTOR_CONTROL,
@@ -88,9 +89,18 @@ FACTORY_TEST_MODE = False
 # be exercised. Narrow it to test a smaller control surface.
 TEST_MODE_CAPABILITY_NAMES = [CAPABILITY_GOTO_POSITION,
                               CAPABILITY_GOTO_POSE,
+                              CAPABILITY_GOTO_VELOCITY,
                               CAPABILITY_GO_HOME,
                               CAPABILITY_STOP,
                               CAPABILITY_MOTOR_CONTROL]
+
+# What the synthetic RoboRIO reports as its drivetrain limits. A real MAXSwerve
+# on NEO free speed is about 4.8 m/s; 3.5 is a deliberately conservative stand-in
+# so a velocity command entered above it actually hits the clamp in wpilib_rbx_if
+# and logs, rather than passing through untested. Reporting zero would disable
+# the clamp entirely, which is safe but proves nothing.
+TEST_MODE_MAX_VELOCITY_MPS = 3.5
+TEST_MODE_MAX_ANGULAR_VELOCITY_RADPS = 6.28
 
 # Where the synthetic robot sits, and stays. A couple of metres onto the field,
 # level, facing 45 degrees. Units and frames are the NetworkTables groups' own
@@ -265,6 +275,8 @@ class WpilibTestMode:
     # synthesizes this group and not just the motors.
     def buildRbxFeedback(self, now):
         return dict(supported_capabilities=list(TEST_MODE_CAPABILITY_NAMES),
+                    max_velocity_mps=TEST_MODE_MAX_VELOCITY_MPS,
+                    max_angular_velocity_radps=TEST_MODE_MAX_ANGULAR_VELOCITY_RADPS,
                     active_request_id=self.request_id,
                     active_request_type=self.request_type,
                     request_status=TEST_MODE_REQUEST_STATUS,

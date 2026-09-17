@@ -107,6 +107,23 @@ RBX_COMMAND_TABLE = "/NEPI/RBX/Command"
 RBX_COMMAND_CHASSIS_PREFIX = "chassis_speeds"
 RBX_COMMAND_POSE_PREFIX = "target_pose"
 
+# TIMED VELOCITY COMMANDS. chassis_speeds carries a fourth field, duration_s,
+# alongside the three velocities. It is a HARD UPPER BOUND, not a hint: the
+# RoboRIO stops the drivetrain once duration_s has elapsed since the request
+# timestamp, whether or not NEPI has said anything since.
+#
+# NEPI does not fire one velocity request and walk away. It re-writes the same
+# velocities at 10 Hz for the whole duration, bumping request_id each time, and
+# finishes with one COMMAND_TYPE_STOP. The RoboRIO must run a 250 ms WATCHDOG
+# against that stream and zero the drivetrain if no fresh request arrives inside
+# it. duration_s and the watchdog are two INDEPENDENT stops and both are
+# required -- the watchdog covers a dropped link mid-move, which duration_s
+# cannot, and duration_s covers a request that never arrived, which the watchdog
+# cannot.
+#
+# Full contract, written for the WPILib developer and implementable without
+# reading any NEPI source: docs/ROBORIO_VELOCITY_CONTRACT.md.
+
 # command_type codes carried in an RBX Command Request. Also part of the
 # contract this module declares.
 COMMAND_TYPE_CHASSIS_SPEEDS = 1
@@ -167,6 +184,12 @@ _RBX_FEEDBACK_FIELDS = [
     ("active_request_type", "str", ""),
     ("request_status", "str", ""),
     ("status_message", "str", ""),
+    # The drivetrain's own limits. NEPI clamps an outgoing velocity command to
+    # these before writing it, which is the floor under an operator mistyping a
+    # speed in the Auto Move app. 0.0 means "not reported" and disables the
+    # clamp -- it does not mean "no motion allowed".
+    ("max_velocity_mps", "float", 0.0),
+    ("max_angular_velocity_radps", "float", 0.0),
     ("timestamp", "float", 0.0),
 ]
 
@@ -901,7 +924,9 @@ def write_rbx_command_request(nt_instance, request_id, command_type,
         request_id (int): Monotonically increasing id for this request.
         command_type (int): One of the COMMAND_TYPE_* constants.
         chassis_speeds (dict): velocity_x_mps, velocity_y_mps,
-            angular_velocity_radps. Missing keys are written as 0.0.
+            angular_velocity_radps, duration_s. Missing keys are written as
+            0.0. duration_s is the hard upper bound on how long a
+            COMMAND_TYPE_CHASSIS_SPEEDS request may run, in seconds.
         target_pose (dict): x_m, y_m, heading_rad. Missing keys are written
             as 0.0.
         named_action (str): Action name for COMMAND_TYPE_NAMED_ACTION.
@@ -923,7 +948,8 @@ def write_rbx_command_request(nt_instance, request_id, command_type,
     success = writeField(table, "command_type", "int", command_type) and success
     success = writeField(table, "named_action", "str", named_action) and success
 
-    for name in ["velocity_x_mps", "velocity_y_mps", "angular_velocity_radps"]:
+    for name in ["velocity_x_mps", "velocity_y_mps", "angular_velocity_radps",
+                 "duration_s"]:
         field = RBX_COMMAND_CHASSIS_PREFIX + "/" + name
         success = writeField(table, field, "float",
                              chassis_speeds.get(name, 0.0)) and success
@@ -1055,9 +1081,12 @@ LOOPBACK_VELOCITY = dict(velocity_x_mps=0.5, velocity_y_mps=0.0,
 LOOPBACK_ORIENTATION = dict(roll_rad=0.01, pitch_rad=-0.02, yaw_rad=0.75,
                             roll_rate_radps=0.0, pitch_rate_radps=0.0,
                             yaw_rate_radps=0.1, timestamp=0.0, valid=True)
-LOOPBACK_RBX_FEEDBACK = dict(supported_capabilities=["GOTO_POSE", "GO_HOME"],
+LOOPBACK_RBX_FEEDBACK = dict(supported_capabilities=["GOTO_POSE", "GO_HOME",
+                                                     "GOTO_VELOCITY"],
                              active_request_id="0", active_request_type="NONE",
                              request_status="IDLE", status_message="idle",
+                             max_velocity_mps=3.5,
+                             max_angular_velocity_radps=6.28,
                              timestamp=0.0)
 LOOPBACK_MOTOR_IDS = [1, 2, 3, 4]
 

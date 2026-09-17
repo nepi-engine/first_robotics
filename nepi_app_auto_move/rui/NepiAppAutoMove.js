@@ -99,6 +99,14 @@ class NepiAppAutoMove extends Component {
       goto_z: "",
       max_move: "",
 
+      // Velocity mode boxes. Same mirroring contract as the position boxes
+      // above: each follows its status field until the operator types in it.
+      move_speed: "",
+      goto_vx: "",
+      goto_vy: "",
+      goto_yaw_rate: "",
+      goto_duration: "",
+
       statusListener: null,
       needs_update: true,
     }
@@ -222,6 +230,21 @@ class NepiAppAutoMove extends Component {
       }
       if (prev_status_msg == null || prev_status_msg.max_move_m !== status_msg.max_move_m) {
         this.setState({ max_move: round(status_msg.max_move_m, 2) })
+      }
+      if (prev_status_msg == null || prev_status_msg.move_speed_mps !== status_msg.move_speed_mps) {
+        this.setState({ move_speed: round(status_msg.move_speed_mps, 2) })
+      }
+      if (prev_status_msg == null || prev_status_msg.goto_x_mps !== status_msg.goto_x_mps) {
+        this.setState({ goto_vx: round(status_msg.goto_x_mps, 2) })
+      }
+      if (prev_status_msg == null || prev_status_msg.goto_y_mps !== status_msg.goto_y_mps) {
+        this.setState({ goto_vy: round(status_msg.goto_y_mps, 2) })
+      }
+      if (prev_status_msg == null || prev_status_msg.goto_yaw_degps !== status_msg.goto_yaw_degps) {
+        this.setState({ goto_yaw_rate: round(status_msg.goto_yaw_degps, 2) })
+      }
+      if (prev_status_msg == null || prev_status_msg.goto_duration_s !== status_msg.goto_duration_s) {
+        this.setState({ goto_duration: round(status_msg.goto_duration_s, 2) })
       }
     }
   }
@@ -427,11 +450,17 @@ class NepiAppAutoMove extends Component {
     )
   }
 
-  // The goto section. The three offset boxes display what the node computed
-  // from the last click and are directly editable -- an operator can nudge a
-  // value the click got nearly right instead of hunting for a better pixel.
+  // The goto section. The offset boxes display what the node computed from the
+  // last click and are directly editable -- an operator can nudge a value the
+  // click got nearly right instead of hunting for a better pixel.
+  //
+  // Two modes, one click. The toggle at the top picks what a Goto issues: a
+  // distance the robot closes on, or a body-frame velocity held for a duration.
+  // The click resolves to both either way, so switching modes never invalidates
+  // a click. Max Move governs the click in both modes, so its clamp indicator
+  // stays visible in both.
   renderGoto() {
-    const { sendTriggerMsg } = this.props.ros
+    const { sendTriggerMsg, sendBoolMsg } = this.props.ros
     const status_msg = this.state.status_msg
     if (status_msg == null) {
       return null
@@ -441,47 +470,124 @@ class NepiAppAutoMove extends Component {
     const goto_state = status_msg.goto_state
     const goto_running = (goto_state === 'planning' || goto_state === 'moving')
 
+    const velocity_mode = (status_msg.goto_velocity_enabled === true)
+    const robot_has_velocity = (status_msg.rbx_has_goto_velocity === true)
+
     return (
       <Section title={"Goto"}>
 
         <Label title={"Click the image to set a destination"} />
 
-        <Label title={"X Forward (m)"}>
-          <Input
-            id={"AutoMoveGotoX"}
-            value={this.state.goto_x}
-            onChange={(e) => this.onUpdateGotoText(e, 'goto_x', 'AutoMoveGotoX')}
-            onKeyDown={(e) => this.onKeyGotoText(e, 'AutoMoveGotoX', appNamespace + "/set_goto_x")}
-          />
+        <Label title="Velocity Mode">
+          <AsyncToggle
+            checked={velocity_mode}
+            onClick={() => sendBoolMsg(appNamespace + "/set_goto_velocity_enabled", velocity_mode === false)}>
+          </AsyncToggle>
         </Label>
 
-        <Label title={"Y Left (m)"}>
-          <Input
-            id={"AutoMoveGotoY"}
-            value={this.state.goto_y}
-            onChange={(e) => this.onUpdateGotoText(e, 'goto_y', 'AutoMoveGotoY')}
-            onKeyDown={(e) => this.onKeyGotoText(e, 'AutoMoveGotoY', appNamespace + "/set_goto_y")}
-          />
-        </Label>
+        {/* Says what is wrong and nothing else. The toggle stays usable -- the
+            operator may be selecting the robot next -- but a Goto in this state
+            is refused by the node rather than published into nothing. */}
+        <div hidden={!(velocity_mode === true && robot_has_velocity === false)}>
+          <Label title={"The connected robot does not support velocity moves"} />
+        </div>
 
-        <Label title={"Z Up (m)"}>
-          <Input
-            id={"AutoMoveGotoZ"}
-            value={this.state.goto_z}
-            onChange={(e) => this.onUpdateGotoText(e, 'goto_z', 'AutoMoveGotoZ')}
-            onKeyDown={(e) => this.onKeyGotoText(e, 'AutoMoveGotoZ', appNamespace + "/set_goto_z")}
-          />
-        </Label>
+        {/* Position mode: exactly what was rendered before velocity mode existed. */}
+        <div hidden={velocity_mode === true}>
 
-        <Label title={"Max Move (m)"}>
-          <Input
-            id={"AutoMoveMaxMove"}
-            value={this.state.max_move}
-            onChange={(e) => this.onUpdateGotoText(e, 'max_move', 'AutoMoveMaxMove')}
-            onKeyDown={(e) => this.onKeyGotoText(e, 'AutoMoveMaxMove', appNamespace + "/set_max_move")}
-          />
-        </Label>
+          <Label title={"X Forward (m)"}>
+            <Input
+              id={"AutoMoveGotoX"}
+              value={this.state.goto_x}
+              onChange={(e) => this.onUpdateGotoText(e, 'goto_x', 'AutoMoveGotoX')}
+              onKeyDown={(e) => this.onKeyGotoText(e, 'AutoMoveGotoX', appNamespace + "/set_goto_x")}
+            />
+          </Label>
 
+          <Label title={"Y Left (m)"}>
+            <Input
+              id={"AutoMoveGotoY"}
+              value={this.state.goto_y}
+              onChange={(e) => this.onUpdateGotoText(e, 'goto_y', 'AutoMoveGotoY')}
+              onKeyDown={(e) => this.onKeyGotoText(e, 'AutoMoveGotoY', appNamespace + "/set_goto_y")}
+            />
+          </Label>
+
+          <Label title={"Z Up (m)"}>
+            <Input
+              id={"AutoMoveGotoZ"}
+              value={this.state.goto_z}
+              onChange={(e) => this.onUpdateGotoText(e, 'goto_z', 'AutoMoveGotoZ')}
+              onKeyDown={(e) => this.onKeyGotoText(e, 'AutoMoveGotoZ', appNamespace + "/set_goto_z")}
+            />
+          </Label>
+
+          <Label title={"Max Move (m)"}>
+            <Input
+              id={"AutoMoveMaxMove"}
+              value={this.state.max_move}
+              onChange={(e) => this.onUpdateGotoText(e, 'max_move', 'AutoMoveMaxMove')}
+              onKeyDown={(e) => this.onKeyGotoText(e, 'AutoMoveMaxMove', appNamespace + "/set_max_move")}
+            />
+          </Label>
+
+        </div>
+
+        {/* Velocity mode. Device Speed sits FIRST because the four boxes under
+            it are computed from it: the click distance divided by this speed is
+            the duration, and the velocities follow from that duration. */}
+        <div hidden={velocity_mode === false}>
+
+          <Label title={"Device Speed (m/s)"}>
+            <Input
+              id={"AutoMoveMoveSpeed"}
+              value={this.state.move_speed}
+              onChange={(e) => this.onUpdateGotoText(e, 'move_speed', 'AutoMoveMoveSpeed')}
+              onKeyDown={(e) => this.onKeyGotoText(e, 'AutoMoveMoveSpeed', appNamespace + "/set_move_speed")}
+            />
+          </Label>
+
+          <Label title={"X Velocity (m/s)"}>
+            <Input
+              id={"AutoMoveGotoVx"}
+              value={this.state.goto_vx}
+              onChange={(e) => this.onUpdateGotoText(e, 'goto_vx', 'AutoMoveGotoVx')}
+              onKeyDown={(e) => this.onKeyGotoText(e, 'AutoMoveGotoVx', appNamespace + "/set_goto_vx")}
+            />
+          </Label>
+
+          <Label title={"Y Velocity (m/s)"}>
+            <Input
+              id={"AutoMoveGotoVy"}
+              value={this.state.goto_vy}
+              onChange={(e) => this.onUpdateGotoText(e, 'goto_vy', 'AutoMoveGotoVy')}
+              onKeyDown={(e) => this.onKeyGotoText(e, 'AutoMoveGotoVy', appNamespace + "/set_goto_vy")}
+            />
+          </Label>
+
+          <Label title={"Rotational Velocity (deg/s)"}>
+            <Input
+              id={"AutoMoveGotoYawRate"}
+              value={this.state.goto_yaw_rate}
+              onChange={(e) => this.onUpdateGotoText(e, 'goto_yaw_rate', 'AutoMoveGotoYawRate')}
+              onKeyDown={(e) => this.onKeyGotoText(e, 'AutoMoveGotoYawRate', appNamespace + "/set_goto_yaw_rate")}
+            />
+          </Label>
+
+          <Label title={"Seconds"}>
+            <Input
+              id={"AutoMoveGotoDuration"}
+              value={this.state.goto_duration}
+              onChange={(e) => this.onUpdateGotoText(e, 'goto_duration', 'AutoMoveGotoDuration')}
+              onKeyDown={(e) => this.onKeyGotoText(e, 'AutoMoveGotoDuration', appNamespace + "/set_goto_duration")}
+            />
+          </Label>
+
+        </div>
+
+        {/* Visible in both modes: the max_move_m clamp governs the click, and
+            in velocity mode the clamped distance is what the duration and the
+            velocities are derived from. */}
         <Label title={"Clamped to Max Move"}>
           <BooleanIndicator value={status_msg.goto_clamped === true} />
         </Label>

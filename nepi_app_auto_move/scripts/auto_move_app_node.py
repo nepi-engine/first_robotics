@@ -66,6 +66,7 @@ class NepiAutoMoveApp(object):
                             description = self.APP_DESCRIPTION,
                             controls_dict = controls_dict,
                             planMoveFunction = self.planMove,
+                            planVelocityMoveFunction = self.planVelocityMove,
                             msg_if = self.msg_if
                             )
 
@@ -88,6 +89,18 @@ class NepiAutoMoveApp(object):
                                         robot_dict,
                                         controls_dict,
                                         obstacles_list)
+
+    def planVelocityMove(self, goto_dict, np_depth_map, objects_list, targets_list, robot_dict, controls_dict, obstacles_list = None):
+        # The velocity-mode twin of planMove. Same arguments, same pass-through
+        # shape; the returned steps carry m/s and deg/s plus a duration instead
+        # of metres and degrees.
+        return nepi_auto_move.plan_velocity_move(goto_dict,
+                                                 np_depth_map,
+                                                 objects_list,
+                                                 targets_list,
+                                                 robot_dict,
+                                                 controls_dict,
+                                                 obstacles_list)
 
 
 #########################################

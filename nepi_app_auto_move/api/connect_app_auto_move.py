@@ -119,6 +119,42 @@ class ConnectAppAutoMove:
                 'msg': Float32,
                 'qsize': 1
             },
+            'set_goto_velocity_enabled': {
+                'namespace': self.namespace,
+                'topic': 'set_goto_velocity_enabled',
+                'msg': Bool,
+                'qsize': 1
+            },
+            'set_move_speed': {
+                'namespace': self.namespace,
+                'topic': 'set_move_speed',
+                'msg': Float32,
+                'qsize': 1
+            },
+            'set_goto_vx': {
+                'namespace': self.namespace,
+                'topic': 'set_goto_vx',
+                'msg': Float32,
+                'qsize': 1
+            },
+            'set_goto_vy': {
+                'namespace': self.namespace,
+                'topic': 'set_goto_vy',
+                'msg': Float32,
+                'qsize': 1
+            },
+            'set_goto_yaw_rate': {
+                'namespace': self.namespace,
+                'topic': 'set_goto_yaw_rate',
+                'msg': Float32,
+                'qsize': 1
+            },
+            'set_goto_duration': {
+                'namespace': self.namespace,
+                'topic': 'set_goto_duration',
+                'msg': Float32,
+                'qsize': 1
+            },
             'set_depth_map_transparency': {
                 'namespace': self.namespace,
                 'topic': 'set_depth_map_transparency',
@@ -333,6 +369,84 @@ class ConnectAppAutoMove:
         msg = Float32()
         msg.data = max_move_meters
         self.con_node_if.publish_pub('set_max_move', msg)
+
+    def set_goto_velocity_enabled(self, enabled):
+        """Switch the app between position mode and timed velocity mode.
+
+        Velocity mode does not change how a click is resolved. It changes what
+        a goto issues: a body-frame velocity held for a duration, open loop,
+        instead of a distance the robot closes on.
+
+        Args:
+            enabled (bool): True for velocity mode, False for position mode.
+                Persisted by the app.
+        """
+        msg = Bool()
+        msg.data = enabled
+        self.con_node_if.publish_pub('set_goto_velocity_enabled', msg)
+
+    def set_move_speed(self, move_speed_mps):
+        """Set how fast the operator says this robot moves.
+
+        A clicked distance is divided by this to get a velocity move's duration.
+        NEPI does not read this from the robot: the RBX contract reports no
+        chassis speed, so this is an operator statement, not a measurement.
+
+        Args:
+            move_speed_mps (float): Speed in METERS PER SECOND. The app clamps
+                to 0.1-20 m/s and persists the value, per app rather than per
+                robot.
+        """
+        msg = Float32()
+        msg.data = move_speed_mps
+        self.con_node_if.publish_pub('set_move_speed', msg)
+
+    def set_goto_vx(self, x_mps):
+        """Set the forward velocity of the requested timed move.
+
+        Args:
+            x_mps (float): Forward velocity in METERS PER SECOND, robot body
+                frame. Overwritten by the next click while velocity mode is on.
+        """
+        msg = Float32()
+        msg.data = x_mps
+        self.con_node_if.publish_pub('set_goto_vx', msg)
+
+    def set_goto_vy(self, y_mps):
+        """Set the left velocity of the requested timed move.
+
+        Args:
+            y_mps (float): Left velocity in METERS PER SECOND, robot body
+                frame. Overwritten by the next click while velocity mode is on.
+        """
+        msg = Float32()
+        msg.data = y_mps
+        self.con_node_if.publish_pub('set_goto_vy', msg)
+
+    def set_goto_yaw_rate(self, yaw_degps):
+        """Set the yaw rate of the requested timed move.
+
+        A click sets this to zero -- a click gives a translation, not a
+        rotation -- so this is the only way to command a turn.
+
+        Args:
+            yaw_degps (float): Yaw rate in DEGREES PER SECOND, positive to
+                port. Converted to rad/s before it reaches the robot.
+        """
+        msg = Float32()
+        msg.data = yaw_degps
+        self.con_node_if.publish_pub('set_goto_yaw_rate', msg)
+
+    def set_goto_duration(self, duration_s):
+        """Set how long the robot holds the requested velocity.
+
+        Args:
+            duration_s (float): Duration in SECONDS. The app clamps to at most
+                60 s. Overwritten by the next click while velocity mode is on.
+        """
+        msg = Float32()
+        msg.data = duration_s
+        self.con_node_if.publish_pub('set_goto_duration', msg)
 
     def set_depth_map_transparency(self, transparency):
         """Set how transparent the depth map overlay is drawn.

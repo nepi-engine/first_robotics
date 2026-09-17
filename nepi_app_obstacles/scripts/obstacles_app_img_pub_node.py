@@ -845,6 +845,17 @@ class ObstaclesImgPub:
         use_frame_id = use_img_msg.header.frame_id
         use_cv2_img = nepi_img.rosimg_to_cv2img(use_img_msg)
 
+        # A source with no sibling colour image leaves mapSourceTopic's topic as
+        # the depth map itself, and a depth map is 32FC1 range data, not a
+        # viewable image: rosimg_to_cv2img passes it through as float32, every
+        # overlay draws on it, and the publish then dies in cv_bridge with
+        # "encoding specified as bgr8, but image has incompatible type 32FC1"
+        # -- throttled to one warn every 5 s, so the product just never appears.
+        # Colourize it here, with the same call the segmentation renders use, so
+        # the overlay has a bgr8 canvas whether or not a colour image exists.
+        if use_img_msg.encoding == '32FC1':
+            use_cv2_img = self.getMapColorImg(use_cv2_img)
+
         self.processObstaclesImage(source_topic,
                                     use_cv2_img,
                                     obstacles_dict_list,
