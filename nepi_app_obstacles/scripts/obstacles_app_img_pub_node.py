@@ -1215,10 +1215,10 @@ class ObstaclesImgPub:
         for box_dict in boxes_dict_list:
             ###### Apply Image Overlays and Publish Image ROS Message
             class_name = box_dict['name']
-            xmin = box_dict['xmin']
-            ymin = box_dict['ymin']
-            xmax = box_dict['xmax']
-            ymax = box_dict['ymax']
+            xmin = box_dict['xmin_pixel']
+            ymin = box_dict['ymin_pixel']
+            xmax = box_dict['xmax_pixel']
+            ymax = box_dict['ymax_pixel']
 
             if xmin <= 0:
                 xmin = 5
@@ -1319,14 +1319,10 @@ class ObstaclesImgPub:
         current_time = nepi_utils.get_time()
         # msg.obstacles is an Obstacle[] array -- convert_msg2dict takes a single
         # message, so convert per entry.
-        obstacles_list = []
-        for obstacle_msg in msg.obstacles:
-            obstacles_list.append(nepi_sdk.convert_msg2dict(obstacle_msg))
-        navpose_dict = nepi_sdk.convert_msg2dict(msg.navpose_msg)
+        obstacles_dict = nepi_sdk.convert_msg2dict(msg)
+        obstacles_dict_list = obstacles_dict['obstacles']
+        navpose_dict = obstacles_dict['navpose_msg']
 
-        overlay_obstacles_list = []
-        for obstacle in obstacles_list:
-            overlay_obstacles_list.append(self.getBoxDict(obstacle))
 
         # Build the replacement entry, then store it in one assignment. Writing
         # the fields into the live entry is what let the render path read a box
@@ -1334,7 +1330,7 @@ class ObstaclesImgPub:
         # the published frame to the wrong one of the two.
         result_dict = dict(self.getSourceResult(source_topic))
         result_dict['source_stamp'] = msg.source_timestamp
-        result_dict['obstacles_dict_list'] = overlay_obstacles_list
+        result_dict['obstacles_dict_list'] = obstacles_dict_list
         result_dict['navpose_dict'] = navpose_dict
         result_dict['last_det_time'] = current_time
         self.setSourceResult(source_topic, result_dict)

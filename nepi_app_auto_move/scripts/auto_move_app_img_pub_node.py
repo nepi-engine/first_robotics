@@ -638,11 +638,10 @@ class AutoMoveImgPub:
     def targetsCb(self, msg):
         if self.image_topic == 'None' or msg.source_topic != self.image_topic:
             return
-        markers = []
-        for target_msg in msg.targets:
-            markers.append(self.getPixelBoxDict(target_msg))
+        targets_dict = nepi_sdk.convert_msg2dict(msg)
+        targets_dict_list = targets_dict['targets']
         result_dict = dict(self.getResult())
-        result_dict['targets_list'] = markers
+        result_dict['targets_list'] = targets_dict_list
         self.setResult(result_dict)
 
     def obstaclesCb(self, msg):
@@ -651,11 +650,10 @@ class AutoMoveImgPub:
         # source_topic names.
         if self.depth_map_topic == '' or msg.source_topic != self.depth_map_topic:
             return
-        boxes = []
-        for obstacle_msg in msg.obstacles:
-            boxes.append(self.getPixelBoxDict(obstacle_msg))
+        obstacles_dict = nepi_sdk.convert_msg2dict(msg)
+        obstacles_dict_list = obstacles_dict['obstacles']
         result_dict = dict(self.getResult())
-        result_dict['obstacles_list'] = boxes
+        result_dict['obstacles_list'] = obstacles_dict_list
         self.setResult(result_dict)
 
     def statusCb(self, msg):
