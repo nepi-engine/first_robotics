@@ -1669,11 +1669,17 @@ class NepiWpilibApp(object):
         # fires once with the received data dict. The connect IFs take no
         # device_info dict or driver callbacks -- they consume the wire contract
         # rather than produce it.
+        #
+        # ConnectTargetsIF spells its callback keywords dataCB/statusCb, not the
+        # data_callback/status_callback ConnectNavPoseIF below uses. Neither it
+        # nor ConnectNodeIF takes **kwargs, so the NavPose spelling here is not
+        # ignored -- it raises TypeError and the node never starts. The spelling
+        # is taken from connect_targets_if.py.
         self.targets_if = ConnectTargetsIF(
                         show_selector = True,
                         show_controls = False,
                         show_data = False,
-                        data_callback = self.targetsConnectCb,
+                        dataCB = self.targetsConnectCb,
                         msg_if = self.msg_if)
 
         self.navpose_if = ConnectNavPoseIF(
@@ -1720,7 +1726,8 @@ class NepiWpilibApp(object):
     ###################
     ## Connect IF First-Connection Callbacks
     #
-    # Each connect IF invokes its data_callback with a single data dict. The
+    # Each connect IF invokes its data callback (data_callback on NavPose and
+    # Obstacles, dataCB on Targets) with a single data dict. The
     # callback stores that dict and the IF's current status message (via
     # get_status_msg()) on every invocation. On the FIRST invocation per IF it
     # also logs both, then sets the got_first flag so it logs only once. The

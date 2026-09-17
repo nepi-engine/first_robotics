@@ -95,8 +95,8 @@ CONTROLS_NAME = 'controls'
 DEPTH_MAP_TOPIC = 'depth_map'
 DEPTH_MAP_IMAGE_TOPIC = 'depth_map_image'
 
-# Collective fan-out topics. An AI detector publishes targets and targets
-# under its own node namespace and republishes them here, and an obstacles
+# Collective fan-out topics. An AI detector publishes targets under its own
+# node namespace and republishes them here, and an obstacles
 # process does the same with its obstacle list. Subscribing here once costs one
 # subscriber instead of one per producer, and each message names the source it
 # was computed from, which is the only way to tie it back to a selected image.
@@ -1146,14 +1146,34 @@ class AutoMoveIF:
 
 
     def targetsCb(self, msg):
+        # The fan-out carries every detector on the device. Only the messages
+        # computed from the selected image are ours.
+        #
+        # This fills BOTH perception lists from the one message. Before the
+        # Detections contract was removed, objects came from <base>/all/detections
+        # and targets from <base>/all/targets, and the two carried the same
+        # detector output described twice. Only targets survives, so the two
+        # lists are now two readings of one fan-out rather than two sources.
+        # They stay separate because their consumers are separate: objects_list
+        # is what _collect_obstacles() in the planner treats as obstacles, and
+        # objects_topic/objects_found are published in the status message. A
+        # Target dict carries name/range_m/azimuth_deg, which is all
+        # _entry_to_xy() reads, so it serves as an object entry unchanged.
         if self.image_topic == 'None' or msg.source_topic != self.image_topic:
             return
-        self.targets_last_time = nepi_utils.get_time()
-        self.targets_topic = nepi_sdk.create_namespace(msg.process_namespace, TARGETS_ALL_TOPIC)
+        cur_time = nepi_utils.get_time()
+        source_topic = nepi_sdk.create_namespace(msg.process_namespace, TARGETS_ALL_TOPIC)
         targets_list = []
         for target_msg in msg.targets:
             targets_list.append(nepi_sdk.convert_msg2dict(target_msg))
+
+        self.targets_last_time = cur_time
+        self.targets_topic = source_topic
         self.targets_list = targets_list
+
+        self.objects_last_time = cur_time
+        self.objects_topic = source_topic
+        self.objects_list = list(targets_list)
 
     def obstaclesCb(self, msg):
         # Obstacles match on the DEPTH MAP topic, not the image topic: an

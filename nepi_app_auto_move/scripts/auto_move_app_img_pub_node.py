@@ -636,12 +636,20 @@ class AutoMoveImgPub:
         self.setResult(result_dict)
 
     def targetsCb(self, msg):
+        # One fan-out, two overlays. Object boxes used to be drawn from
+        # <base>/all/detections and target markers from <base>/all/targets;
+        # only targets survives, so both overlay lists are filled from this one
+        # message. Keeping them as separate result keys keeps the two RUI
+        # toggles (show_objects_enabled, show_targets_enabled) independent, and
+        # the box and the centre marker are still two different drawings of the
+        # same thing: a box with a dot in it, which is how it has always looked.
         if self.image_topic == 'None' or msg.source_topic != self.image_topic:
             return
         targets_dict = nepi_sdk.convert_msg2dict(msg)
         targets_dict_list = targets_dict['targets']
         result_dict = dict(self.getResult())
         result_dict['targets_list'] = targets_dict_list
+        result_dict['objects_list'] = list(targets_dict_list)
         self.setResult(result_dict)
 
     def obstaclesCb(self, msg):

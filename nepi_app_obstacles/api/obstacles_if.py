@@ -1768,7 +1768,14 @@ class ObstaclesIF:
         self.process_status_msg.data_products = self.data_products
         self.process_status_msg.save_data_topic = self.save_data_namespace
 
-        self.process_status_msg.max_process_rate_hz = self.max_process_rate_hz
+        # ProcessStatus spells the CONFIGURED rate set_process_rate, with its
+        # bounds in min_max_process_rates. max_process_rate is a different
+        # field: the measured achievable rate, set further down from the actual
+        # process time. The _hz suffix is this class's own attribute and param
+        # naming, not the message's -- writing it onto the message raises
+        # AttributeError and takes the node down at construction.
+        self.process_status_msg.min_max_process_rates = [MIN_MAX_RATE, MAX_MAX_RATE]
+        self.process_status_msg.set_process_rate = self.max_process_rate_hz
 
         self.process_status_msg.multi_source_enabled = True
         self.process_status_msg.available_source_topics = self.available_source_topics
@@ -1797,7 +1804,11 @@ class ObstaclesIF:
         self.process_status_msg.has_image_pub = True
         self.process_status_msg.image_pub_name = 'obstacles_image'
         self.process_status_msg.image_pub_enabled = self.imaging_enabled
-        self.process_status_msg.max_image_pub_rate_hz = self.max_image_pub_rate_hz
+        # Same rename on the imaging side. NOTE: no other code in the engine or
+        # the apps writes set_image_rate, so this mirrors the process-rate
+        # pattern above by the message's own layout rather than copying a call
+        # site. max_image_pub_rate_hz is not a field and raises AttributeError.
+        self.process_status_msg.set_image_rate = self.max_image_pub_rate_hz
         self.process_status_msg.use_last_image = self.use_last_image
 
         image_source_topics = []

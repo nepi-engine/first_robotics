@@ -367,7 +367,7 @@ def plan_move(goto_dict, np_depth_map, objects_list, targets_list, robot_dict, c
     Builds a conservative RBX goto_position plan. The planner can stop short of
     the clicked point, hold altitude, split long moves into smaller steps, turn
     toward the target first, and route laterally around range/bearing obstacles.
-    Obstacles from the obstacle app and ranged object detections are both used
+    Obstacles from the obstacle app and ranged detected objects are both used
     when avoid_obstacles is enabled.
     """
     x_m = _as_float(goto_dict.get('x_m', 0.0), 0.0)

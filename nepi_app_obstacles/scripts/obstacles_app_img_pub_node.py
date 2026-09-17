@@ -1362,7 +1362,9 @@ class ObstaclesImgPub:
 
         self.enabled = self.status_msg.enabled
         self.state_str_msg = self.status_msg.msg_str
-        self.max_image_pub_rate_hz = self.status_msg.max_image_pub_rate_hz
+        # ProcessStatus carries the configured image rate as set_image_rate;
+        # max_image_pub_rate_hz is this node's own attribute name, not a field.
+        self.max_image_pub_rate_hz = self.status_msg.set_image_rate
         self.use_last_image = self.status_msg.use_last_image
         self.imaging_enabled = self.status_msg.image_pub_enabled
 

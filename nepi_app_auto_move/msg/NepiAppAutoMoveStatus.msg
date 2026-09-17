@@ -62,7 +62,9 @@ bool depth_map_image_found
 
 # objects and targets are NOT namespace-derivable. An AI detector publishes them
 # under its own node namespace and fans the same messages out on
-# <base>/all/detections and <base>/all/targets. The app subscribes to the
+# <base>/all/targets. Objects and targets are two readings of that one fan-out
+# since the separate detections contract was removed, so both topics below
+# report the same producer. The app subscribes to the
 # fan-out and matches on the message's source_topic; the topic reported here is
 # the producing detector's own topic, learned from the matching message's
 # process_namespace, and is empty until one arrives.
