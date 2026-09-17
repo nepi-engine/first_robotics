@@ -27,7 +27,6 @@ import cv2
 
 from sensor_msgs.msg import Image
 
-from nepi_interfaces.msg import Detections
 from nepi_interfaces.msg import ImageStatus
 from nepi_interfaces.msg import Targets
 
@@ -224,19 +223,7 @@ class AutoMoveImgPub:
                 'callback': self.statusCb,
                 'callback_args': ()
             },
-            # The overlay lists arrive on the collective fan-out topics, the
-            # same ones the parent subscribes to, and are filtered here by the
-            # same source_topic rule. Reading them directly rather than having
-            # the parent republish them keeps a second full copy of every
-            # detection off the wire.
-            'auto_move_all_detections_sub': {
-                'msg': Detections,
-                'namespace': self.all_namespace,
-                'topic': 'detections',
-                'qsize': 1,
-                'callback': self.detectionsCb,
-                'callback_args': ()
-            },
+
             'auto_move_all_targets_sub': {
                 'msg': Targets,
                 'namespace': self.all_namespace,
@@ -648,16 +635,6 @@ class AutoMoveImgPub:
         result_dict['depth_map_stamp'] = float(image_msg.header.stamp.to_sec())
         self.setResult(result_dict)
 
-    def detectionsCb(self, msg):
-        if self.image_topic == 'None' or msg.source_topic != self.image_topic:
-            return
-        boxes = []
-        for detection_msg in msg.detections:
-            boxes.append(self.getDetectionBoxDict(detection_msg))
-        result_dict = dict(self.getResult())
-        result_dict['objects_list'] = boxes
-        self.setResult(result_dict)
-
     def targetsCb(self, msg):
         if self.image_topic == 'None' or msg.source_topic != self.image_topic:
             return
@@ -974,10 +951,10 @@ class AutoMoveImgPub:
 
         for box_dict in boxes_dict_list:
             class_name = box_dict['name']
-            xmin = box_dict['xmin']
-            ymin = box_dict['ymin']
-            xmax = box_dict['xmax']
-            ymax = box_dict['ymax']
+            xmin = box_dict['xmin_pixel']
+            ymin = box_dict['ymin_pixel']
+            xmax = box_dict['xmax_pixel']
+            ymax = box_dict['ymax_pixel']
 
             if xmin <= 0:
                 xmin = 5
@@ -1045,10 +1022,7 @@ class AutoMoveImgPub:
         return cv2_img
 
     def applyTargetsOverlay(self, targets_dict_list, cv2_img, color):
-        # Targets are drawn as centre markers rather than boxes. A target is a
-        # located thing, and its extent is already described by whatever
-        # detection it came from -- a second box around the same pixels would
-        # only clutter the frame.
+
         if targets_dict_list is None or len(targets_dict_list) == 0:
             return cv2_img
 
@@ -1059,8 +1033,8 @@ class AutoMoveImgPub:
 
         for target_dict in targets_dict_list:
             try:
-                x_center = int((target_dict['xmin'] + target_dict['xmax']) / 2)
-                y_center = int((target_dict['ymin'] + target_dict['ymax']) / 2)
+                x_center = int((target_dict['xmin_pixel'] + target_dict['xmax_pixel']) / 2)
+                y_center = int((target_dict['ymin_pixel'] + target_dict['ymax_pixel']) / 2)
                 if x_center < 0 or y_center < 0 or x_center >= width_px or y_center >= height_px:
                     continue
                 cv2.circle(cv2_img, (x_center, y_center), marker_px, color, thickness = line_thickness)
@@ -1103,32 +1077,7 @@ class AutoMoveImgPub:
         except Exception as e:
             self.msg_if.pub_warn("Failed to apply crosshair overlay: " + str(e), throttle_s = 5.0)
 
-    def getDetectionBoxDict(self, detection_msg):
-        # nepi_interfaces/Detection names its pixel bounds xmin/ymin/xmax/ymax.
-        return {
-            'name': getattr(detection_msg, 'name', ''),
-            'xmin': int(getattr(detection_msg, 'xmin', 0)),
-            'ymin': int(getattr(detection_msg, 'ymin', 0)),
-            'xmax': int(getattr(detection_msg, 'xmax', 0)),
-            'ymax': int(getattr(detection_msg, 'ymax', 0)),
-            'range_m': getattr(detection_msg, 'range_m', -999),
-            'azimuth_deg': getattr(detection_msg, 'azimuth_deg', -999),
-            'elevation_deg': getattr(detection_msg, 'elevation_deg', -999),
-        }
 
-    def getPixelBoxDict(self, entry_msg):
-        # nepi_interfaces/Target and nepi_app_obstacles/Obstacle both name their
-        # pixel bounds with the _pixel suffix, so one converter serves both.
-        return {
-            'name': getattr(entry_msg, 'name', ''),
-            'xmin': int(getattr(entry_msg, 'xmin_pixel', 0)),
-            'ymin': int(getattr(entry_msg, 'ymin_pixel', 0)),
-            'xmax': int(getattr(entry_msg, 'xmax_pixel', 0)),
-            'ymax': int(getattr(entry_msg, 'ymax_pixel', 0)),
-            'range_m': getattr(entry_msg, 'range_m', -999),
-            'azimuth_deg': getattr(entry_msg, 'azimuth_deg', -999),
-            'elevation_deg': getattr(entry_msg, 'elevation_deg', -999),
-        }
 
     def shutdownCb(self):
         try:

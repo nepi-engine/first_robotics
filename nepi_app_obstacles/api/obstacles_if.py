@@ -1698,11 +1698,7 @@ class ObstaclesIF:
         nepi_sdk.start_timer_process((0.01), self.publishDepthMapCb, oneshot = True)
 
     def saveObstaclesData(self, obstacles_msg, timestamp):
-        # Mirrors DetectionsIF.publish_data: gate on the rate/snapshot check
-        # first, then convert to a dict, because SaveDataIF writes dicts as YAML
-        # and cannot infer a type from a ROS message. The message no longer
-        # carries the two depth maps, so nothing has to be stripped here -- the
-        # saved visual form of that data is the obstacles_image data product.
+    
         if self.save_data_if is None or obstacles_msg is None:
             return
         should_save = self.save_data_if.data_product_should_save('obstacles') == True

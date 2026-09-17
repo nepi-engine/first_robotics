@@ -30,7 +30,7 @@ import Select, { Option } from "./Select"
 import BooleanIndicator from "./BooleanIndicator"
 import AsyncToggle from "./AsyncToggle"
 
-import NepiIFConnectDetections from "./Nepi_IF_ConnectDetections"
+import NepiIFConnectTargets from "./Nepi_IF_ConnectTargets"
 import NepiIFConnectNavPose from "./Nepi_IF_ConnectNavPose"
 
 import NepiIFControls from "./Nepi_IF_Controls"
@@ -75,7 +75,7 @@ const UNMAPPED_MOTOR_ID = -1
 // Wpilib Application page
 //
 // The Connections section is one selector per connect path the node
-// instantiates, in node order: Detections, Obstacles, NavPose. Detections and
+// instantiates, in node order: Targets, Obstacles, NavPose. Targets and
 // NavPose are the reusable Nepi_IF_Connect* components, bound to the connect
 // namespace <app>/<connect_name> that the matching ConnectNodeIF subclass owns
 // (pattern from NepiAppStereoCam.js). Obstacles has no ConnectNodeIF and so no
@@ -271,7 +271,7 @@ class NepiAppWpilibIF extends Component {
   // status message must be recent, AND its connected field must be true. The
   // node currently drives that field from a placeholder that is always set True,
   // so the staleness half is what makes a dead node read red today. When the
-  // placeholder is replaced by real NetworkTables connection detection, the
+  // placeholder is replaced by real NetworkTables connection target, the
   // field going false turns this red on its own with no change here.
   getRobotNetworkConnected() {
     const status_msg = this.state.status_msg
@@ -856,8 +856,8 @@ class NepiAppWpilibIF extends Component {
     return (
       <Section title={"Connections"}>
 
-        <NepiIFConnectDetections
-          namespace={this.getConnectNamespace("detections_connect")}
+        <NepiIFConnectTargets
+          namespace={this.getConnectNamespace("targets_connect")}
           title={"Dete"}
           show_selector={true}
           show_data={false}
