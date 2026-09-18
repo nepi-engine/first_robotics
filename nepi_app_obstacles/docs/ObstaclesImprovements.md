@@ -140,6 +140,8 @@ it per frame rather than shipping a constant.
 
 ## 2. Two byte-identical speed changes worth 26% of `process_results`
 
+**Landed 2026-09-18 in `c341229`.**
+
 **Effort: low. Risk: low. Category: speed.**
 
 ### The mechanism
@@ -357,6 +359,8 @@ is that the far-field classification can be trusted, and today it cannot.
 ---
 
 ## 5. Stop paying for the segmentation rasters nobody is watching
+
+**Landed 2026-09-18 in `feac413`.**
 
 **Effort: low. Risk: low. Category: speed.**
 
