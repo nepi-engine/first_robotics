@@ -547,6 +547,7 @@ class NepiAppObstacles extends Component {
           <NepiIFControls
             namespace={controls_namespace}
             title={"Obstacle Detection Controls"}
+            show_bounds={false}
           />
         : null}
 
