@@ -223,6 +223,13 @@ class ObstaclesImgPub:
 
         self.selected_source_topics = []
 
+        # The segmentation map subscription is not held open. It is registered
+        # and unregistered by updateDepthMapSub in step with needsImgCheck, so
+        # the pair of full-size 32FC1 rasters crosses the wire only while
+        # something is actually rendering them.
+        self.depth_map_subscribed = False
+        self.depth_map_needed_time = 0.0
+
         ##############################
         # Create NodeClassIF Class
 
@@ -258,19 +265,28 @@ class ObstaclesImgPub:
                 'callback': self.obstaclesCb,
                 'callback_args': ()
             },
-            # The segmentation maps arrive on their own topic so that consumers
-            # of the obstacle list do not carry the images. This node wants
-            # both, so it subscribes to both. The parent publishes the pair back
-            # to back from one process cycle, so the maps land within one
-            # message of the obstacle list they were derived from.
-            'obstacles_depth_map_sub': {
-                'msg': ObstaclesDepthMap,
-                'namespace': self.process_namespace,
-                'topic': 'obstacles_depth_map',
-                'qsize': 1,
-                'callback': self.obstaclesDepthMapCb,
-                'callback_args': ()
-            },
+        }
+
+        # The segmentation maps arrive on their own topic so that consumers of
+        # the obstacle list do not carry the images. The parent publishes the
+        # pair back to back from one process cycle, so the maps land within one
+        # message of the obstacle list they were derived from.
+        #
+        # Deliberately NOT in SUBS_DICT. Registered here at construction is what
+        # made the parent's pub_has_subscribers guard inert: this node was always
+        # a subscriber for as long as the app was enabled, so the parent encoded
+        # and published two 1.23 MB float32 rasters every cycle whether or not
+        # any overlay or segmentation image had a consumer. updateDepthMapSub
+        # registers a copy of this template when one is wanted -- a copy because
+        # _initializeSubs writes its live handle into the dict it is given and
+        # skips any entry that already carries one.
+        self.DEPTH_MAP_SUB_DICT = {
+            'msg': ObstaclesDepthMap,
+            'namespace': self.process_namespace,
+            'topic': 'obstacles_depth_map',
+            'qsize': 1,
+            'callback': self.obstaclesDepthMapCb,
+            'callback_args': ()
         }
 
         # Create Node Class ####################
@@ -471,6 +487,20 @@ class ObstaclesImgPub:
             self.results_dict[source_topic] = self.createResultDict()
         self.results_lock.release()
 
+    def clearSourceMaps(self, source_topic):
+        # The segmentation half only. The obstacle list arrives on its own
+        # subscription, which is never dropped, so clearing the whole entry here
+        # would throw away data that is still current.
+        self.results_lock.acquire()
+        result_dict = self.results_dict.get(source_topic, None)
+        if result_dict is not None:
+            result_dict = dict(result_dict)
+            result_dict['depth_map_ground'] = None
+            result_dict['depth_map_obstacles'] = None
+            result_dict['maps_stamp'] = 0
+            self.results_dict[source_topic] = result_dict
+        self.results_lock.release()
+
     ###############.########################
     # Render handoff
 
@@ -542,7 +572,60 @@ class ObstaclesImgPub:
             if source_topic in self.sources_info_dict.keys():
                 self.sources_info_dict[source_topic]['needs_img'] = needs_img
 
+        self.updateDepthMapSub()
+
         nepi_sdk.start_timer_process((1), self.updaterCb, oneshot = True)
+
+    def updateDepthMapSub(self):
+        if self.node_if is None:
+            return
+
+        # Follows the cached needs-data answer refreshed just above rather than
+        # asking the IFs again, for the reason createImgInfoDict gives: the
+        # underlying flag only moves once a second and reading it takes
+        # img_node_lock.
+        needs_maps = False
+        if self.imaging_enabled == True:
+            for source_topic in self.getActiveImgTopics():
+                info_dict = self.sources_info_dict.get(source_topic, None)
+                if info_dict is not None and info_dict['needs_img'] == True:
+                    needs_maps = True
+                    break
+
+        map_topic = nepi_sdk.create_namespace(self.process_namespace, 'obstacles_depth_map')
+
+        if needs_maps == True:
+            self.depth_map_needed_time = nepi_utils.get_time()
+            if self.depth_map_subscribed == False:
+                self.msg_if.pub_info('Will subscribe to segmentation map topic: ' + map_topic)
+                self.node_if.register_sub('obstacles_depth_map_sub', dict(self.DEPTH_MAP_SUB_DICT))
+                self.depth_map_subscribed = True
+            return
+
+        if self.depth_map_subscribed == False:
+            return
+
+        # Hold-down, so a product whose consumer count flickers across the
+        # needsImgCheck boundary cannot turn this into a subscribe/unsubscribe
+        # oscillation. MAX_IMG_BUFFER_SEC is the right dwell rather than a
+        # constant of its own: it is already this node's bound on how far apart
+        # a source frame and the process result it pairs with can be, so holding
+        # the subscription for that long guarantees no render still inside the
+        # alignment window loses the maps it was going to draw. At the 1 Hz
+        # updater it is also always at least two ticks.
+        if (nepi_utils.get_time() - self.depth_map_needed_time) <= MAX_IMG_BUFFER_SEC:
+            return
+
+        self.msg_if.pub_info('Unsubscribing from segmentation map topic: ' + map_topic)
+        self.node_if.unregister_sub('obstacles_depth_map_sub')
+        self.depth_map_subscribed = False
+        # Same reasoning as the buffer purge in unsubscribeImgTopic: maps held
+        # across an unsubscribe describe a stream this node stopped following,
+        # and drawing them over a live frame on resubscribe would be worse than
+        # drawing no segmentation at all, which every consumer of them already
+        # handles.
+        for source_topic in list(self.results_dict.keys()):
+            self.clearSourceMaps(source_topic)
 
     def watchdogCb(self, timer):
         cur_time = nepi_utils.get_time()
