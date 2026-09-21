@@ -34,12 +34,12 @@ from nepi_api.messages_if import MsgIF
 from nepi_api.system_if import ControlsIF
 from nepi_api.device_if_motor import MotorsDeviceIF
 
-from nepi_api.connect_targets_if import ConnectTargetsIF
+from nepi_api.connect_process_if_targets import ConnectProcessIFTargets
 from nepi_api.connect_data_if import ConnectNavPoseIF
 # nepi_app_obstacles' CMakeLists installs its api/*.py flat into nepi_api, so at
 # runtime ConnectObstaclesIF sits beside the two above despite living in that
 # app's source tree.
-from nepi_api.connect_obstacles_if import ConnectObstaclesIF
+from nepi_api.connect_process_if_obstacles import ConnectProcessIFObstacles
 
 # The NetworkTables access layer and the RBX device, both installed beside this
 # file (scripts/ is what deploy_app.sh live-syncs, and CMakeLists installs all
@@ -1669,11 +1669,11 @@ class NepiWpilibApp(object):
         # fires once with the received data dict. The connect IFs take no
         # device_info dict or driver callbacks -- they consume the wire contract
         # rather than produce it.
-        self.targets_if = ConnectTargetsIF(
+        self.targets_if = ConnectProcessIFTargets(
                         show_selector = True,
                         show_controls = False,
                         show_data = False,
-                        data_callback = self.targetsConnectCb,
+                        results_callback = self.targetsConnectCb,
                         msg_if = self.msg_if)
 
         self.navpose_if = ConnectNavPoseIF(
@@ -1708,9 +1708,9 @@ class NepiWpilibApp(object):
 
         self.obstacles_namespace = namespace
         try:
-            self.obstacles_if = ConnectObstaclesIF(
-                            namespace = namespace,
-                            data_callback = self.obstaclesConnectCb)
+            self.obstacles_if = ConnectProcessIFObstacles(
+                            connect_namespace = namespace,
+                            results_callback = self.obstaclesConnectCb)
         except Exception as e:
             self.obstacles_if = None
             self.msg_if.pub_warn("Failed to connect obstacles app at " +

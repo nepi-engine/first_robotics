@@ -1595,15 +1595,15 @@ class ObstaclesIF:
                 obstacle_msg_list.append(obstacle_msg)
 
         obstacles_msg = Obstacles()
-        obstacles_msg.timestamp = float(obstacles_timestamp)
+        obstacles_msg.timestamp = float(source_timestamp)
 
-        obstacles_msg.process_name = self.node_name
-        obstacles_msg.process_namespace = self.obstacles_namespace
+        obstacles_msg.data_header.process_name = self.node_name
+        obstacles_msg.data_header.process_namespace = self.obstacles_namespace
+        obstacles_msg.data_header.process_timestamp = float(obstacles_timestamp)
 
-        obstacles_msg.source_topic = source_topic
-        obstacles_msg.source_timestamp = float(source_timestamp)
+        obstacles_msg.data_header.source_topic = source_topic
+        obstacles_msg.data_header.source_timestamp = float(source_timestamp)
 
-        obstacles_msg.navpose_frame = str(navpose_dict.get('navpose_frame', '')) if navpose_dict is not None else ''
         navpose_msg = None
         try:
             navpose_msg = nepi_nav.convert_navpose_dict2msg(navpose_dict)
@@ -1649,11 +1649,10 @@ class ObstaclesIF:
         # both being rebuilt from the same locals.
         slot_dict = {
             'timestamp': obstacles_msg.timestamp,
-            'process_name': obstacles_msg.process_name,
-            'process_namespace': obstacles_msg.process_namespace,
-            'source_topic': obstacles_msg.source_topic,
-            'source_timestamp': obstacles_msg.source_timestamp,
-            'navpose_frame': obstacles_msg.navpose_frame,
+            'process_name': obstacles_msg.data_header.process_name,
+            'process_namespace': obstacles_msg.data_header.process_namespace,
+            'source_topic': obstacles_msg.data_header.source_topic,
+            'source_timestamp': obstacles_msg.data_header.source_timestamp,
             'navpose_msg': obstacles_msg.navpose_msg,
             'depth_map_ground': depth_map_ground,
             'depth_map_obstacles': depth_map_obstacles,
@@ -1683,7 +1682,6 @@ class ObstaclesIF:
                 depth_map_msg.source_topic = slot_dict['source_topic']
                 depth_map_msg.source_timestamp = slot_dict['source_timestamp']
 
-                depth_map_msg.navpose_frame = slot_dict['navpose_frame']
                 depth_map_msg.navpose_msg = slot_dict['navpose_msg']
 
                 depth_map_msg.depth_map_ground = self.getDepthMapImgMsg(slot_dict['depth_map_ground'])

@@ -1146,10 +1146,10 @@ class AutoMoveIF:
 
 
     def targetsCb(self, msg):
-        if self.image_topic == 'None' or msg.source_topic != self.image_topic:
+        if self.image_topic == 'None' or msg.data_header.source_topic != self.image_topic:
             return
         self.targets_last_time = nepi_utils.get_time()
-        self.targets_topic = nepi_sdk.create_namespace(msg.process_namespace, TARGETS_ALL_TOPIC)
+        self.targets_topic = nepi_sdk.create_namespace(msg.data_header.process_namespace, TARGETS_ALL_TOPIC)
         targets_list = []
         for target_msg in msg.targets:
             targets_list.append(nepi_sdk.convert_msg2dict(target_msg))
@@ -1159,10 +1159,10 @@ class AutoMoveIF:
         # Obstacles match on the DEPTH MAP topic, not the image topic: an
         # obstacles process consumes depth maps, so that is what its
         # source_topic names.
-        if self.depth_map_topic == '' or msg.source_topic != self.depth_map_topic:
+        if self.depth_map_topic == '' or msg.data_header.source_topic != self.depth_map_topic:
             return
         self.obstacles_last_time = nepi_utils.get_time()
-        self.obstacles_topic = nepi_sdk.create_namespace(msg.process_namespace, OBSTACLES_ALL_TOPIC)
+        self.obstacles_topic = nepi_sdk.create_namespace(msg.data_header.process_topic, OBSTACLES_ALL_TOPIC)
         obstacles_list = []
         for obstacle_msg in msg.obstacles:
             obstacles_list.append(nepi_sdk.convert_msg2dict(obstacle_msg))
