@@ -1394,7 +1394,7 @@ class ObstaclesImgPub:
 
     def obstaclesCb(self, msg):
         self.connected = True
-        source_topic = self.mapSourceTopic(msg.source_topic)
+        source_topic = self.mapSourceTopic(msg.data_header.source_topic)
         if source_topic not in self.sources_info_dict.keys():
             return
 
@@ -1411,7 +1411,7 @@ class ObstaclesImgPub:
         # list from one cycle and a source stamp from the next, and then align
         # the published frame to the wrong one of the two.
         result_dict = dict(self.getSourceResult(source_topic))
-        result_dict['source_stamp'] = msg.source_timestamp
+        result_dict['source_stamp'] = msg.data_header.source_timestamp
         result_dict['obstacles_dict_list'] = obstacles_dict_list
         result_dict['navpose_dict'] = navpose_dict
         result_dict['last_det_time'] = current_time
