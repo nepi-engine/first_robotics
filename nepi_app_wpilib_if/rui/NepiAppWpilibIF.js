@@ -271,7 +271,7 @@ class NepiAppWpilibIF extends Component {
   // status message must be recent, AND its connected field must be true. The
   // node currently drives that field from a placeholder that is always set True,
   // so the staleness half is what makes a dead node read red today. When the
-  // placeholder is replaced by real NetworkTables connection target, the
+  // placeholder is replaced by real NetworkTables connection detection, the
   // field going false turns this red on its own with no change here.
   getRobotNetworkConnected() {
     const status_msg = this.state.status_msg
@@ -858,7 +858,7 @@ class NepiAppWpilibIF extends Component {
 
         <NepiIFConnectTargets
           namespace={this.getConnectNamespace("targets_connect")}
-          title={"Dete"}
+          title={"Targets"}
           show_selector={true}
           show_data={false}
           show_controls={false}

@@ -95,8 +95,8 @@ CONTROLS_NAME = 'controls'
 DEPTH_MAP_TOPIC = 'depth_map'
 DEPTH_MAP_IMAGE_TOPIC = 'depth_map_image'
 
-# Collective fan-out topics. An AI detector publishes targets and targets
-# under its own node namespace and republishes them here, and an obstacles
+# Collective fan-out topics. An AI detector publishes targets under its own
+# node namespace and republishes them here, and an obstacles
 # process does the same with its obstacle list. Subscribing here once costs one
 # subscriber instead of one per producer, and each message names the source it
 # was computed from, which is the only way to tie it back to a selected image.
@@ -1153,7 +1153,15 @@ class AutoMoveIF:
         targets_list = []
         for target_msg in msg.targets:
             targets_list.append(nepi_sdk.convert_msg2dict(target_msg))
+        cur_time = nepi_utils.get_time()
+        source_topic = nepi_sdk.create_namespace(msg.process_namespace, TARGETS_ALL_TOPIC)
+        self.targets_last_time = cur_time
+        self.targets_topic = source_topic
         self.targets_list = targets_list
+
+        self.objects_last_time = cur_time
+        self.objects_topic = source_topic
+        self.objects_list = list(targets_list)
 
     def obstaclesCb(self, msg):
         # Obstacles match on the DEPTH MAP topic, not the image topic: an

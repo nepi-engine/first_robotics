@@ -1720,7 +1720,8 @@ class NepiWpilibApp(object):
     ###################
     ## Connect IF First-Connection Callbacks
     #
-    # Each connect IF invokes its data_callback with a single data dict. The
+    # Each connect IF invokes its data callback (data_callback on NavPose and
+    # Obstacles, dataCB on Targets) with a single data dict. The
     # callback stores that dict and the IF's current status message (via
     # get_status_msg()) on every invocation. On the FIRST invocation per IF it
     # also logs both, then sets the got_first flag so it logs only once. The

@@ -1628,7 +1628,18 @@ class ObstaclesIF:
         # publish nor the start of the next process cycle pays for the two
         # full-size 32FC1 conversions. A consumer still pairs the two messages
         # on source_topic + source_timestamp.
-        self.queueDepthMapData(obstacles_msg, depth_map_ground, depth_map_obstacles)
+        #
+        # Not written on a cycle whose product cannot be wanted. Imaging off
+        # means the img pub node renders nothing, so the slot would only ever be
+        # overwritten unread -- but this topic is a documented product in its own
+        # right, so a subscriber that is not the img pub node still gets its
+        # maps. publishDepthMapCb drains whatever the last cycle left within one
+        # 10 ms tick either way.
+        queue_maps = self.imaging_enabled
+        if queue_maps == False and self.node_if is not None:
+            queue_maps = self.node_if.pub_has_subscribers('obstacles_depth_map_pub')
+        if queue_maps == True:
+            self.queueDepthMapData(obstacles_msg, depth_map_ground, depth_map_obstacles)
 
         self.saveObstaclesData(obstacles_msg, obstacles_timestamp)
 
@@ -1766,7 +1777,14 @@ class ObstaclesIF:
         self.process_status_msg.data_products = self.data_products
         self.process_status_msg.save_data_topic = self.save_data_namespace
 
-        self.process_status_msg.max_process_rate_hz = self.max_process_rate_hz
+        # ProcessStatus spells the CONFIGURED rate set_process_rate, with its
+        # bounds in min_max_process_rates. max_process_rate is a different
+        # field: the measured achievable rate, set further down from the actual
+        # process time. The _hz suffix is this class's own attribute and param
+        # naming, not the message's -- writing it onto the message raises
+        # AttributeError and takes the node down at construction.
+        self.process_status_msg.min_max_process_rates = [MIN_MAX_RATE, MAX_MAX_RATE]
+        self.process_status_msg.set_process_rate = self.max_process_rate_hz
 
         self.process_status_msg.multi_source_enabled = True
         self.process_status_msg.available_source_topics = self.available_source_topics
@@ -1795,7 +1813,11 @@ class ObstaclesIF:
         self.process_status_msg.has_image_pub = True
         self.process_status_msg.image_pub_name = 'obstacles_image'
         self.process_status_msg.image_pub_enabled = self.imaging_enabled
-        self.process_status_msg.max_image_pub_rate_hz = self.max_image_pub_rate_hz
+        # Same rename on the imaging side. NOTE: no other code in the engine or
+        # the apps writes set_image_rate, so this mirrors the process-rate
+        # pattern above by the message's own layout rather than copying a call
+        # site. max_image_pub_rate_hz is not a field and raises AttributeError.
+        self.process_status_msg.set_image_rate = self.max_image_pub_rate_hz
         self.process_status_msg.use_last_image = self.use_last_image
 
         image_source_topics = []
@@ -1833,7 +1855,7 @@ class ObstaclesIF:
         self.process_status_msg.max_process_rate = max_process_rate
 
         #################
-        self.process_status_msg.show_selector = True
+        self.process_status_msg.show_sources = True
         self.process_status_msg.show_controls = True
         self.process_status_msg.show_data = True
 

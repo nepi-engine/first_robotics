@@ -223,6 +223,12 @@ class ObstaclesImgPub:
 
         self.selected_source_topics = []
 
+        # The segmentation map subscription is not held open. It is registered
+        # and unregistered by updateDepthMapSub in step with imaging_enabled, so
+        # the pair of full-size 32FC1 rasters crosses the wire only while the
+        # operator has overlay publishing turned on.
+        self.depth_map_subscribed = False
+
         ##############################
         # Create NodeClassIF Class
 
@@ -258,19 +264,28 @@ class ObstaclesImgPub:
                 'callback': self.obstaclesCb,
                 'callback_args': ()
             },
-            # The segmentation maps arrive on their own topic so that consumers
-            # of the obstacle list do not carry the images. This node wants
-            # both, so it subscribes to both. The parent publishes the pair back
-            # to back from one process cycle, so the maps land within one
-            # message of the obstacle list they were derived from.
-            'obstacles_depth_map_sub': {
-                'msg': ObstaclesDepthMap,
-                'namespace': self.process_namespace,
-                'topic': 'obstacles_depth_map',
-                'qsize': 1,
-                'callback': self.obstaclesDepthMapCb,
-                'callback_args': ()
-            },
+        }
+
+        # The segmentation maps arrive on their own topic so that consumers of
+        # the obstacle list do not carry the images. The parent publishes the
+        # pair back to back from one process cycle, so the maps land within one
+        # message of the obstacle list they were derived from.
+        #
+        # Deliberately NOT in SUBS_DICT. Registered here at construction is what
+        # made the parent's pub_has_subscribers guard inert: this node was always
+        # a subscriber for as long as the app was enabled, so the parent encoded
+        # and published two 1.23 MB float32 rasters every cycle whether or not
+        # any overlay or segmentation image had a consumer. updateDepthMapSub
+        # registers a copy of this template when one is wanted -- a copy because
+        # _initializeSubs writes its live handle into the dict it is given and
+        # skips any entry that already carries one.
+        self.DEPTH_MAP_SUB_DICT = {
+            'msg': ObstaclesDepthMap,
+            'namespace': self.process_namespace,
+            'topic': 'obstacles_depth_map',
+            'qsize': 1,
+            'callback': self.obstaclesDepthMapCb,
+            'callback_args': ()
         }
 
         # Create Node Class ####################
@@ -471,6 +486,20 @@ class ObstaclesImgPub:
             self.results_dict[source_topic] = self.createResultDict()
         self.results_lock.release()
 
+    def clearSourceMaps(self, source_topic):
+        # The segmentation half only. The obstacle list arrives on its own
+        # subscription, which is never dropped, so clearing the whole entry here
+        # would throw away data that is still current.
+        self.results_lock.acquire()
+        result_dict = self.results_dict.get(source_topic, None)
+        if result_dict is not None:
+            result_dict = dict(result_dict)
+            result_dict['depth_map_ground'] = None
+            result_dict['depth_map_obstacles'] = None
+            result_dict['maps_stamp'] = 0
+            self.results_dict[source_topic] = result_dict
+        self.results_lock.release()
+
     ###############.########################
     # Render handoff
 
@@ -542,7 +571,60 @@ class ObstaclesImgPub:
             if source_topic in self.sources_info_dict.keys():
                 self.sources_info_dict[source_topic]['needs_img'] = needs_img
 
+        self.updateDepthMapSub()
+
         nepi_sdk.start_timer_process((1), self.updaterCb, oneshot = True)
+
+    def updateDepthMapSub(self):
+        if self.node_if is None:
+            return
+
+        # Follows imaging_enabled ALONE, deliberately, and not the per-product
+        # needs_img answer updaterCb caches just above. needs_img resolves to
+        # needs_data on the published image topics, which is has_subs or a save
+        # request -- so it moves with a viewer's subscriber count, and a viewer
+        # that polls rather than holding one stream open makes it flap. Driving a
+        # subscription from a flapping flag is something a hold-down can only
+        # slow, not fix: every gap costs the renderer its maps until a fresh pair
+        # arrives, and what the operator sees is the overlay stalling.
+        #
+        # imaging_enabled is the operator declaring whether anything renders at
+        # all. It moves only when they move it, and it still buys what this
+        # exists for: the two full-size 32FC1 rasters stay off the wire the whole
+        # time imaging is off. What it gives up is the narrower case of imaging on
+        # with nobody looking, which is not worth a subscription that can
+        # oscillate.
+        needs_maps = (self.imaging_enabled == True)
+
+        map_topic = nepi_sdk.create_namespace(self.process_namespace, 'obstacles_depth_map')
+
+        if needs_maps == True:
+            if self.depth_map_subscribed == False:
+                self.msg_if.pub_info('Will subscribe to segmentation map topic: ' + map_topic)
+                self.node_if.register_sub('obstacles_depth_map_sub', dict(self.DEPTH_MAP_SUB_DICT))
+                self.depth_map_subscribed = True
+            return
+
+        if self.depth_map_subscribed == False:
+            return
+
+        # No hold-down. The previous version dwelled for MAX_IMG_BUFFER_SEC
+        # before unsubscribing, to keep a flickering consumer count from turning
+        # into oscillation; with imaging_enabled as the only input there is
+        # nothing to debounce, and a dwell would only delay an unsubscribe the
+        # operator has already asked for.
+        self.msg_if.pub_info('Unsubscribing from segmentation map topic: ' + map_topic)
+        self.node_if.unregister_sub('obstacles_depth_map_sub')
+        self.depth_map_subscribed = False
+        # Kept, and it matters more now that an unsubscribe only happens when the
+        # operator turns imaging off. NOTHING reads maps_stamp -- it is written in
+        # obstaclesDepthMapCb and never checked -- so the render path draws
+        # whichever maps sit in results_dict without regard to their age. Maps
+        # held across an imaging off/on cycle would be drawn over a live frame
+        # from however much later, which is worse than drawing no segmentation at
+        # all, and every consumer of them already handles their absence.
+        for source_topic in list(self.results_dict.keys()):
+            self.clearSourceMaps(source_topic)
 
     def watchdogCb(self, timer):
         cur_time = nepi_utils.get_time()
@@ -1362,7 +1444,9 @@ class ObstaclesImgPub:
 
         self.enabled = self.status_msg.enabled
         self.state_str_msg = self.status_msg.msg_str
-        self.max_image_pub_rate_hz = self.status_msg.max_image_pub_rate_hz
+        # ProcessStatus carries the configured image rate as set_image_rate;
+        # max_image_pub_rate_hz is this node's own attribute name, not a field.
+        self.max_image_pub_rate_hz = self.status_msg.set_image_rate
         self.use_last_image = self.status_msg.use_last_image
         self.imaging_enabled = self.status_msg.image_pub_enabled
 
