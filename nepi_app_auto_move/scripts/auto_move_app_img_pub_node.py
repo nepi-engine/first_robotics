@@ -643,7 +643,7 @@ class AutoMoveImgPub:
         # toggles (show_objects_enabled, show_targets_enabled) independent, and
         # the box and the centre marker are still two different drawings of the
         # same thing: a box with a dot in it, which is how it has always looked.
-        if self.image_topic == 'None' or msg.source_topic != self.image_topic:
+        if self.image_topic == 'None' or msg.data_header.source_topic != self.image_topic:
             return
         targets_dict = nepi_sdk.convert_msg2dict(msg)
         targets_dict_list = targets_dict['targets']
@@ -656,7 +656,7 @@ class AutoMoveImgPub:
         # Obstacles match on the DEPTH MAP topic, not the image topic: an
         # obstacles process consumes depth maps, so that is what its
         # source_topic names.
-        if self.depth_map_topic == '' or msg.source_topic != self.depth_map_topic:
+        if self.depth_map_topic == '' or msg.data_header.source_topic != self.depth_map_topic:
             return
         obstacles_dict = nepi_sdk.convert_msg2dict(msg)
         obstacles_dict_list = obstacles_dict['obstacles']
