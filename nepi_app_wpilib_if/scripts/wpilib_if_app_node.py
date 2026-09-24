@@ -750,7 +750,7 @@ class NepiWpilibApp(object):
         controls_init_dict = nepi_controls.EXAMPLE_INIT_DICT
         return controls_init_dict
 
-    def exampleControlsUpdatedCb(self, control_name):
+    def exampleControlsUpdatedCb(self, control_name, control_value):
         # Called by ControlsIF after a control value/display change is applied.
         value = None
         if self.example_controls_if is not None:

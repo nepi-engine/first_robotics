@@ -252,7 +252,7 @@ class NepiControlsSandboxApp(object):
   #######################
   ### Controls Callback
 
-  def controlsUpdatedCb(self, control_name):
+  def controlsUpdatedCb(self, control_name, conrol_value):
     # Called by ControlsIF after a control value/display change is applied.
     value = None
     if self.controls_if is not None:
