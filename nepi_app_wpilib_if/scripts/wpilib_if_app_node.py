@@ -1673,7 +1673,7 @@ class NepiWpilibApp(object):
                         show_selector = True,
                         show_controls = False,
                         show_data = False,
-                        data_callback = self.detectionsConnectCb,
+                        data_CB = self.detectionsConnectCb,
                         msg_if = self.msg_if)
 
         self.navpose_if = ConnectNavPoseIF(
@@ -1710,7 +1710,7 @@ class NepiWpilibApp(object):
         try:
             self.obstacles_if = ConnectObstaclesIF(
                             namespace = namespace,
-                            data_callback = self.obstaclesConnectCb)
+                            dataCB = self.obstaclesConnectCb)
         except Exception as e:
             self.obstacles_if = None
             self.msg_if.pub_warn("Failed to connect obstacles app at " +

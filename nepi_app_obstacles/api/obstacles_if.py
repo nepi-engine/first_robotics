@@ -1810,8 +1810,8 @@ class ObstaclesIF:
             if source_topic in active_source_topics:
                 image_source_topics.append(source_topic)
                 image_pub_topics.append(sources_info_dict[source_topic]['img_pub_topic'])
-        self.process_status_msg.image_source_topics = image_source_topics
-        self.process_status_msg.image_pub_topics = image_pub_topics
+        self.process_status_msg.imaging_source_topics = image_source_topics
+        self.process_status_msg.imaging_pub_topics = image_pub_topics
         self.image_source_topics = image_source_topics
 
         #################
