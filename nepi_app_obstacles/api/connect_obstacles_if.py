@@ -21,7 +21,7 @@ from std_msgs.msg import Bool, Empty, String, Float32
 
 from nepi_interfaces.msg import StringArray
 
-from nepi_app_obstacles.msg import ObstaclesStatus
+from nepi_app_obstacles.msg import Obstacles, ObstaclesStatus
 
 from nepi_sdk import nepi_sdk
 
@@ -41,9 +41,10 @@ class ConnectObstaclesIF:
 
     connected = False
     status_msg = None
+    results_msg = None
     status_connected = False
 
-    # Optional consumer callback, invoked from _statusCb with the status dict.
+    # Optional consumer callback, invoked from _resultsCb with the status dict.
     # The obstacles app publishes no data product this interface subscribes to,
     # so the status dict IS the data dict here.
     dataCB = None
@@ -164,12 +165,12 @@ class ConnectObstaclesIF:
 
         # Subscribers Config Dict ####################
         self.SUBS_DICT = {
-            'status_sub': {
-                'namespace': self.namespace,
-                'topic': 'status',
-                'msg': ObstaclesStatus,
+            'results_sub': {
+                'namespace': self.app_namespace,
+                'topic': 'obstacles',
+                'msg': Obstacles,
                 'qsize': 1,
-                'callback': self._statusCb
+                'callback': self._resultsCb
             }
         }
 
@@ -232,6 +233,27 @@ class ConnectObstaclesIF:
                 status message has arrived yet.
         """
         return self.status_msg
+
+    def get_results_dict(self):
+        """Return the last received ObstaclesStatus message as a dictionary.
+
+        Returns:
+            dict: The status message converted to a dict, or None if no status
+                message has arrived yet.
+        """
+        if self.results_msg is not None:
+            return nepi_sdk.convert_msg2dict(self.results_msg)
+        return None
+
+    def get_results_msg(self):
+        """Return the last received ObstaclesStatus message.
+
+        Returns:
+            ObstaclesStatus: The most recent status message, or None if no
+                status message has arrived yet.
+        """
+        return self.results_msg
+    
 
     def set_enabled(self, enabled):
         """Enable or disable obstacle processing.
@@ -369,10 +391,10 @@ class ConnectObstaclesIF:
             except Exception as e:
                 self.msg_if.pub_warn("Failed to unregister: " + str(e))
 
-    def _statusCb(self, status_msg):
+    def _resultsCb(self, results_msg):
         self.status_connected = True
         self.connected = True
-        self.status_msg = status_msg
+        self.results_msg = results_msg
 
         if self.dataCB is not None:
-            self.dataCB(self.get_status_dict())
+            self.dataCB(self.get_results_dict())

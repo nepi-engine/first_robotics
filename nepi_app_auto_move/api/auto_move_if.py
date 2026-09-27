@@ -29,11 +29,10 @@ from std_msgs.msg import Bool, Empty, Float32
 from sensor_msgs.msg import Image
 
 from nepi_interfaces.msg import DepthMapStatus
-from nepi_interfaces.msg import Detections
+from nepi_interfaces.msg import Targets
 from nepi_interfaces.msg import ImageMouseEvent
 from nepi_interfaces.msg import ImagePixel
 from nepi_interfaces.msg import MgrSystemStatus
-from nepi_interfaces.msg import Targets
 
 from nepi_app_auto_move.msg import NepiAppAutoMoveStatus
 
@@ -96,12 +95,11 @@ CONTROLS_NAME = 'controls'
 DEPTH_MAP_TOPIC = 'depth_map'
 DEPTH_MAP_IMAGE_TOPIC = 'depth_map_image'
 
-# Collective fan-out topics. An AI detector publishes detections and targets
-# under its own node namespace and republishes them here, and an obstacles
+# Collective fan-out topics. An AI detector publishes targets under its own
+# node namespace and republishes them here, and an obstacles
 # process does the same with its obstacle list. Subscribing here once costs one
 # subscriber instead of one per producer, and each message names the source it
 # was computed from, which is the only way to tie it back to a selected image.
-DETECTIONS_ALL_TOPIC = 'detections'
 TARGETS_ALL_TOPIC = 'targets'
 OBSTACLES_ALL_TOPIC = 'obstacles'
 
@@ -588,14 +586,6 @@ class AutoMoveIF:
             ############
             # Collective data fan-out
             ############
-            self.node_if_prefix + 'all_detections': {
-                'namespace': self.all_namespace,
-                'topic': DETECTIONS_ALL_TOPIC,
-                'msg': Detections,
-                'qsize': 1,
-                'callback': self.detectionsCb,
-                'callback_args': ()
-            },
             self.node_if_prefix + 'all_targets': {
                 'namespace': self.all_namespace,
                 'topic': TARGETS_ALL_TOPIC,
@@ -1154,36 +1144,31 @@ class AutoMoveIF:
         self.depth_map_stamp = float(img_msg.header.stamp.to_sec())
         self.depth_map_lock.release()
 
-    def detectionsCb(self, msg):
-        # The fan-out carries every detector on the device. Only the messages
-        # computed from the selected image are ours.
-        if self.image_topic == 'None' or msg.source_topic != self.image_topic:
-            return
-        self.objects_last_time = nepi_utils.get_time()
-        self.objects_topic = nepi_sdk.create_namespace(msg.process_namespace, DETECTIONS_ALL_TOPIC)
-        objects_list = []
-        for detection_msg in msg.detections:
-            objects_list.append(nepi_sdk.convert_msg2dict(detection_msg))
-        self.objects_list = objects_list
 
     def targetsCb(self, msg):
-        if self.image_topic == 'None' or msg.source_topic != self.image_topic:
+        if self.image_topic == 'None' or msg.data_header.source_topic != self.image_topic:
             return
-        self.targets_last_time = nepi_utils.get_time()
-        self.targets_topic = nepi_sdk.create_namespace(msg.process_namespace, TARGETS_ALL_TOPIC)
         targets_list = []
         for target_msg in msg.targets:
             targets_list.append(nepi_sdk.convert_msg2dict(target_msg))
+        cur_time = nepi_utils.get_time()
+        source_topic = nepi_sdk.create_namespace(msg.data_header.process_namespace, TARGETS_ALL_TOPIC)
+        self.targets_last_time = cur_time
+        self.targets_topic = source_topic
         self.targets_list = targets_list
+
+        self.objects_last_time = cur_time
+        self.objects_topic = source_topic
+        self.objects_list = list(targets_list)
 
     def obstaclesCb(self, msg):
         # Obstacles match on the DEPTH MAP topic, not the image topic: an
         # obstacles process consumes depth maps, so that is what its
         # source_topic names.
-        if self.depth_map_topic == '' or msg.source_topic != self.depth_map_topic:
+        if self.depth_map_topic == '' or msg.data_header.source_topic != self.depth_map_topic:
             return
         self.obstacles_last_time = nepi_utils.get_time()
-        self.obstacles_topic = nepi_sdk.create_namespace(msg.process_namespace, OBSTACLES_ALL_TOPIC)
+        self.obstacles_topic = nepi_sdk.create_namespace(msg.data_header.process_namespace, OBSTACLES_ALL_TOPIC)
         obstacles_list = []
         for obstacle_msg in msg.obstacles:
             obstacles_list.append(nepi_sdk.convert_msg2dict(obstacle_msg))

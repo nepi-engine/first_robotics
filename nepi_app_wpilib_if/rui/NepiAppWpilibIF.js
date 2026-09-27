@@ -30,7 +30,7 @@ import Select, { Option } from "./Select"
 import BooleanIndicator from "./BooleanIndicator"
 import AsyncToggle from "./AsyncToggle"
 
-import NepiIFConnectDetections from "./Nepi_IF_ConnectDetections"
+import NepiIFConnectTargets from "./Nepi_IF_ConnectTargets"
 import NepiIFConnectNavPose from "./Nepi_IF_ConnectNavPose"
 
 import NepiIFControls from "./Nepi_IF_Controls"
@@ -75,7 +75,7 @@ const UNMAPPED_MOTOR_ID = -1
 // Wpilib Application page
 //
 // The Connections section is one selector per connect path the node
-// instantiates, in node order: Detections, Obstacles, NavPose. Detections and
+// instantiates, in node order: Targets, Obstacles, NavPose. Targets and
 // NavPose are the reusable Nepi_IF_Connect* components, bound to the connect
 // namespace <app>/<connect_name> that the matching ConnectNodeIF subclass owns
 // (pattern from NepiAppStereoCam.js). Obstacles has no ConnectNodeIF and so no
@@ -856,9 +856,9 @@ class NepiAppWpilibIF extends Component {
     return (
       <Section title={"Connections"}>
 
-        <NepiIFConnectDetections
-          namespace={this.getConnectNamespace("detections_connect")}
-          title={"Dete"}
+        <NepiIFConnectTargets
+          namespace={this.getConnectNamespace("targets_connect")}
+          title={"Targets"}
           show_selector={true}
           show_data={false}
           show_controls={false}

@@ -1595,15 +1595,15 @@ class ObstaclesIF:
                 obstacle_msg_list.append(obstacle_msg)
 
         obstacles_msg = Obstacles()
-        obstacles_msg.timestamp = float(obstacles_timestamp)
+        obstacles_msg.timestamp = float(source_timestamp)
 
-        obstacles_msg.process_name = self.node_name
-        obstacles_msg.process_namespace = self.obstacles_namespace
+        obstacles_msg.data_header.process_name = self.node_name
+        obstacles_msg.data_header.process_namespace = self.obstacles_namespace
+        obstacles_msg.data_header.process_timestamp = float(obstacles_timestamp)
 
-        obstacles_msg.source_topic = source_topic
-        obstacles_msg.source_timestamp = float(source_timestamp)
+        obstacles_msg.data_header.source_topic = source_topic
+        obstacles_msg.data_header.source_timestamp = float(source_timestamp)
 
-        obstacles_msg.navpose_frame = str(navpose_dict.get('navpose_frame', '')) if navpose_dict is not None else ''
         navpose_msg = None
         try:
             navpose_msg = nepi_nav.convert_navpose_dict2msg(navpose_dict)
@@ -1628,7 +1628,18 @@ class ObstaclesIF:
         # publish nor the start of the next process cycle pays for the two
         # full-size 32FC1 conversions. A consumer still pairs the two messages
         # on source_topic + source_timestamp.
-        self.queueDepthMapData(obstacles_msg, depth_map_ground, depth_map_obstacles)
+        #
+        # Not written on a cycle whose product cannot be wanted. Imaging off
+        # means the img pub node renders nothing, so the slot would only ever be
+        # overwritten unread -- but this topic is a documented product in its own
+        # right, so a subscriber that is not the img pub node still gets its
+        # maps. publishDepthMapCb drains whatever the last cycle left within one
+        # 10 ms tick either way.
+        queue_maps = self.imaging_enabled
+        if queue_maps == False and self.node_if is not None:
+            queue_maps = self.node_if.pub_has_subscribers('obstacles_depth_map_pub')
+        if queue_maps == True:
+            self.queueDepthMapData(obstacles_msg, depth_map_ground, depth_map_obstacles)
 
         self.saveObstaclesData(obstacles_msg, obstacles_timestamp)
 
@@ -1649,11 +1660,10 @@ class ObstaclesIF:
         # both being rebuilt from the same locals.
         slot_dict = {
             'timestamp': obstacles_msg.timestamp,
-            'process_name': obstacles_msg.process_name,
-            'process_namespace': obstacles_msg.process_namespace,
-            'source_topic': obstacles_msg.source_topic,
-            'source_timestamp': obstacles_msg.source_timestamp,
-            'navpose_frame': obstacles_msg.navpose_frame,
+            'process_name': obstacles_msg.data_header.process_name,
+            'process_namespace': obstacles_msg.data_header.process_namespace,
+            'source_topic': obstacles_msg.data_header.source_topic,
+            'source_timestamp': obstacles_msg.data_header.source_timestamp,
             'navpose_msg': obstacles_msg.navpose_msg,
             'depth_map_ground': depth_map_ground,
             'depth_map_obstacles': depth_map_obstacles,
@@ -1683,7 +1693,6 @@ class ObstaclesIF:
                 depth_map_msg.source_topic = slot_dict['source_topic']
                 depth_map_msg.source_timestamp = slot_dict['source_timestamp']
 
-                depth_map_msg.navpose_frame = slot_dict['navpose_frame']
                 depth_map_msg.navpose_msg = slot_dict['navpose_msg']
 
                 depth_map_msg.depth_map_ground = self.getDepthMapImgMsg(slot_dict['depth_map_ground'])
@@ -1698,11 +1707,7 @@ class ObstaclesIF:
         nepi_sdk.start_timer_process((0.01), self.publishDepthMapCb, oneshot = True)
 
     def saveObstaclesData(self, obstacles_msg, timestamp):
-        # Mirrors DetectionsIF.publish_data: gate on the rate/snapshot check
-        # first, then convert to a dict, because SaveDataIF writes dicts as YAML
-        # and cannot infer a type from a ROS message. The message no longer
-        # carries the two depth maps, so nothing has to be stripped here -- the
-        # saved visual form of that data is the obstacles_image data product.
+    
         if self.save_data_if is None or obstacles_msg is None:
             return
         should_save = self.save_data_if.data_product_should_save('obstacles') == True
@@ -1772,7 +1777,14 @@ class ObstaclesIF:
         self.process_status_msg.data_products = self.data_products
         self.process_status_msg.save_data_topic = self.save_data_namespace
 
-        self.process_status_msg.max_process_rate_hz = self.max_process_rate_hz
+        # ProcessStatus spells the CONFIGURED rate set_process_rate, with its
+        # bounds in min_max_process_rates. max_process_rate is a different
+        # field: the measured achievable rate, set further down from the actual
+        # process time. The _hz suffix is this class's own attribute and param
+        # naming, not the message's -- writing it onto the message raises
+        # AttributeError and takes the node down at construction.
+        self.process_status_msg.min_max_process_rates = [MIN_MAX_RATE, MAX_MAX_RATE]
+        self.process_status_msg.set_process_rate = self.max_process_rate_hz
 
         self.process_status_msg.multi_source_enabled = True
         self.process_status_msg.available_source_topics = self.available_source_topics
@@ -1801,7 +1813,11 @@ class ObstaclesIF:
         self.process_status_msg.has_image_pub = True
         self.process_status_msg.image_pub_name = 'obstacles_image'
         self.process_status_msg.image_pub_enabled = self.imaging_enabled
-        self.process_status_msg.max_image_pub_rate_hz = self.max_image_pub_rate_hz
+        # Same rename on the imaging side. NOTE: no other code in the engine or
+        # the apps writes set_image_rate, so this mirrors the process-rate
+        # pattern above by the message's own layout rather than copying a call
+        # site. max_image_pub_rate_hz is not a field and raises AttributeError.
+        self.process_status_msg.set_image_rate = self.max_image_pub_rate_hz
         self.process_status_msg.use_last_image = self.use_last_image
 
         image_source_topics = []
@@ -1839,7 +1855,7 @@ class ObstaclesIF:
         self.process_status_msg.max_process_rate = max_process_rate
 
         #################
-        self.process_status_msg.show_selector = True
+        self.process_status_msg.show_sources = True
         self.process_status_msg.show_controls = True
         self.process_status_msg.show_data = True
 

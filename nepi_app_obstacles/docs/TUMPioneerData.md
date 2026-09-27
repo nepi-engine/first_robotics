@@ -127,20 +127,26 @@ magnitude.
 
 ## Known-good reference detections
 
-Useful as regression anchors. Frame names are abbreviated from
+Useful as regression anchors. Frame names are the stamp prefix of
 `D2011-07-28T18-13-20p398TzUTC_freiburg2_pioneer_360-depth_map.npy`.
+
+Anchors are keyed on the full stamp because the short tag is not unique —
+`398TzUTC` names four frames in this sequence and `788TzUTC` names three,
+seconds apart, and matching on the tag alone selects
+`D2011-07-28T18-13-27p788TzUTC`, which genuinely reports no obstacles and reads
+as a regression failure.
 
 | frame | expect |
 |---|---|
-| `398TzUTC` | a pillar at ~1.77 m, ~46 px wide, taller than wide |
-| `788TzUTC` | a pillar at ~1.74 m, ~55 px wide |
-| `342TzUTC` | a pillar at ~2.18 m |
-| `469TzUTC` | no obstacles at the corrected settings |
-| `424TzUTC` | no obstacles at the corrected settings |
+| `D2011-07-28T18-13-20p398TzUTC` | a pillar at ~1.77 m, ~46 px wide, taller than wide |
+| `D2011-07-28T18-13-53p788TzUTC` | a pillar at ~1.74 m, ~55 px wide |
+| `D2011-07-28T18-14-14p342TzUTC` | a pillar at ~2.18 m |
+| `D2011-07-28T18-13-37p469TzUTC` | no obstacles at the corrected settings |
+| `D2011-07-28T18-14-29p424TzUTC` | no obstacles at the corrected settings |
 
-`398TzUTC` is the most informative single frame: at the corrected settings it
-decomposes into four components — three wall sections at 4.4–5.4 m plus the
-pillar at 1.77 m. If it comes back as one blob, levelling is wrong. If the pillar
+`D2011-07-28T18-13-20p398TzUTC` is the most informative single frame: at the
+corrected settings it decomposes into four components — three wall sections at
+4.4–5.4 m plus the pillar at 1.77 m. If it comes back as one blob, levelling is wrong. If the pillar
 is missing but the walls are present, the range-step grouping is fusing it into
 the background.
 

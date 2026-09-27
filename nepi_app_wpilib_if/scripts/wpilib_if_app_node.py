@@ -34,12 +34,12 @@ from nepi_api.messages_if import MsgIF
 from nepi_api.system_if import ControlsIF
 from nepi_api.device_if_motor import MotorsDeviceIF
 
-from nepi_api.connect_detections_if import ConnectDetectionsIF
+from nepi_api.connect_process_if_targets import ConnectProcessIFTargets
 from nepi_api.connect_data_if import ConnectNavPoseIF
 # nepi_app_obstacles' CMakeLists installs its api/*.py flat into nepi_api, so at
 # runtime ConnectObstaclesIF sits beside the two above despite living in that
 # app's source tree.
-from nepi_api.connect_obstacles_if import ConnectObstaclesIF
+from nepi_api.connect_process_if_obstacles import ConnectProcessIFObstacles
 
 # The NetworkTables access layer and the RBX device, both installed beside this
 # file (scripts/ is what deploy_app.sh live-syncs, and CMakeLists installs all
@@ -190,15 +190,15 @@ class NepiWpilibApp(object):
 
     # Per-IF first-connection flags. Each connect IF's callback prints the first
     # data dict and status msg it receives exactly once, then sets its flag.
-    got_first_detections = False
+    got_first_targets = False
     got_first_obstacles = False
     got_first_navpose = False
 
     # Latest data dict and status msg per connect IF. Each callback stores both
     # on every invocation, so the rest of the app reads the most recent values
     # from here rather than re-querying the IF.
-    detections_dict = None
-    detections_status = None
+    targets_dict = None
+    targets_status = None
     obstacles_dict = None
     obstacles_status = None
     navpose_dict = None
@@ -468,7 +468,7 @@ class NepiWpilibApp(object):
 
         ##############################
         # Surface NEPI connect (consumer) IFs in this app's RUI. The two
-        # nepi_api connect IFs -- ConnectDetectionsIF and ConnectNavPoseIF --
+        # nepi_api connect IFs -- ConnectTargetsIF and ConnectNavPoseIF --
         # are built with show_selector=True (expose the source selector panel)
         # and show_controls=False / show_data=False (hide the controls and data
         # panels), plus a per-IF first-connection callback that fires with the
@@ -750,7 +750,7 @@ class NepiWpilibApp(object):
         controls_init_dict = nepi_controls.EXAMPLE_INIT_DICT
         return controls_init_dict
 
-    def exampleControlsUpdatedCb(self, control_name):
+    def exampleControlsUpdatedCb(self, control_name, control_value):
         # Called by ControlsIF after a control value/display change is applied.
         value = None
         if self.example_controls_if is not None:
@@ -1669,11 +1669,11 @@ class NepiWpilibApp(object):
         # fires once with the received data dict. The connect IFs take no
         # device_info dict or driver callbacks -- they consume the wire contract
         # rather than produce it.
-        self.detections_if = ConnectDetectionsIF(
+        self.targets_if = ConnectProcessIFTargets(
                         show_selector = True,
                         show_controls = False,
                         show_data = False,
-                        data_CB = self.detectionsConnectCb,
+                        results_callback = self.targetsConnectCb,
                         msg_if = self.msg_if)
 
         self.navpose_if = ConnectNavPoseIF(
@@ -1708,9 +1708,9 @@ class NepiWpilibApp(object):
 
         self.obstacles_namespace = namespace
         try:
-            self.obstacles_if = ConnectObstaclesIF(
-                            namespace = namespace,
-                            dataCB = self.obstaclesConnectCb)
+            self.obstacles_if = ConnectProcessIFObstacles(
+                            connect_namespace = namespace,
+                            results_callback = self.obstaclesConnectCb)
         except Exception as e:
             self.obstacles_if = None
             self.msg_if.pub_warn("Failed to connect obstacles app at " +
@@ -1720,21 +1720,22 @@ class NepiWpilibApp(object):
     ###################
     ## Connect IF First-Connection Callbacks
     #
-    # Each connect IF invokes its data_callback with a single data dict. The
+    # Each connect IF invokes its data callback (data_callback on NavPose and
+    # Obstacles, dataCB on Targets) with a single data dict. The
     # callback stores that dict and the IF's current status message (via
     # get_status_msg()) on every invocation. On the FIRST invocation per IF it
     # also logs both, then sets the got_first flag so it logs only once. The
     # Obstacles app publishes no data product this consumer subscribes to, so
     # ConnectObstaclesIF fires its data_callback with the status dict instead.
 
-    def detectionsConnectCb(self, data_dict):
-        self.detections_dict = data_dict
-        self.detections_status = self.detections_if.get_status_msg()
-        if self.got_first_detections is True:
+    def targetsConnectCb(self, data_dict):
+        self.targets_dict = data_dict
+        self.targets_status = self.targets_if.get_status_msg()
+        if self.got_first_targets is True:
             return
-        self.got_first_detections = True
-        self.msg_if.pub_info("Detections first-connection data dict: " + str(self.detections_dict))
-        self.msg_if.pub_info("Detections first-connection status message: " + str(self.detections_status))
+        self.got_first_targets = True
+        self.msg_if.pub_info("Targets first-connection data dict: " + str(self.targets_dict))
+        self.msg_if.pub_info("Targets first-connection status message: " + str(self.targets_status))
 
     def obstaclesConnectCb(self, data_dict):
         self.obstacles_dict = data_dict

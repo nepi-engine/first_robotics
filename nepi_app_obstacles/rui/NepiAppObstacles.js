@@ -291,8 +291,13 @@ class NepiAppObstacles extends Component {
     const running = process_status_msg.running
     const processing = process_status_msg.state
 
-    const max_process_rate_hz = process_status_msg.max_process_rate_hz
-    const max_image_pub_rate_hz = process_status_msg.max_image_pub_rate_hz
+    // ProcessStatus carries the configured rates as set_process_rate and
+    // set_image_rate. It has no max_*_rate_hz fields -- reading those gave
+    // undefined, which left both sliders unbound while the node reported a
+    // perfectly good rate. max_process_rate is a different field: the measured
+    // achievable rate, not the operator's setting.
+    const max_process_rate_hz = process_status_msg.set_process_rate
+    const max_image_pub_rate_hz = process_status_msg.set_image_rate
 
     const imaging_enabled = process_status_msg.image_pub_enabled
     const use_last_image = process_status_msg.use_last_image
@@ -542,6 +547,7 @@ class NepiAppObstacles extends Component {
           <NepiIFControls
             namespace={controls_namespace}
             title={"Obstacle Detection Controls"}
+            show_bounds={false}
           />
         : null}
 
