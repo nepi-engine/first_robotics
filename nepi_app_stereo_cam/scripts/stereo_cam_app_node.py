@@ -1590,7 +1590,7 @@ class NepiStereoCamApp(object):
     # own bound callback carrying the process name rather than one shared callback
     # that would have to guess which set moved.
     def makeProcessControlsUpdatedCb(self, process_name):
-        def updatedCb(control_name):
+        def updatedCb(control_name, control_value):
             self.processControlsUpdatedCb(process_name, control_name)
         return updatedCb
 
@@ -1754,7 +1754,7 @@ class NepiStereoCamApp(object):
             }
         return controls_init_dict
 
-    def advancedControlsUpdatedCb(self, control_name):
+    def advancedControlsUpdatedCb(self, control_name, control_value):
         # Called by ControlsIF after an edit is validated and applied, so the value
         # read back here is the one that survived the bounds check.
         self.applyAdvancedControls()
@@ -1903,7 +1903,7 @@ class NepiStereoCamApp(object):
         }
         return controls_init_dict
 
-    def exampleControlsUpdatedCb(self, control_name):
+    def exampleControlsUpdatedCb(self, control_name, control_value):
         # Called by ControlsIF after a control value/display change is applied.
         value = None
         if self.example_controls_if is not None:
