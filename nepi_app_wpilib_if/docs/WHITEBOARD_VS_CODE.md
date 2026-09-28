@@ -50,9 +50,9 @@ upper boxes:
 
 | Board box | Code |
 |---|---|
-| `TARGET` | `ConnectProcessIFTargets` → `targetsConnectCb` (`:1672`, `:1731`) |
-| `OBS` | `ConnectProcessIFObstacles` → `obstaclesConnectCb` (`:1711`, `:1740`) |
-| `NAVPOSE` | `ConnectNavPoseIF` → `navposeConnectCb` (`:1679`, `:1750`) |
+| `TARGET` | `ConnectProcessIFTargets` → `targetsConnectCb` (`:1672`, `:1735`) |
+| `OBS` | `ConnectObstaclesIF` → `obstaclesConnectCb` (`:1715`, `:1744`) |
+| `NAVPOSE` | `ConnectNavPoseIF` → `navposeConnectCb` (`:1679`, `:1754`) |
 
 Each has a RUI selector (`rui/NepiAppWpilibIF.js:826-890`). The `NAVPOSE`
 selector binds to the NavPose Mgr's published pose, which is the board's `NP MGR`

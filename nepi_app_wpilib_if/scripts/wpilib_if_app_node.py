@@ -39,7 +39,7 @@ from nepi_api.connect_data_if import ConnectNavPoseIF
 # nepi_app_obstacles' CMakeLists installs its api/*.py flat into nepi_api, so at
 # runtime ConnectObstaclesIF sits beside the two above despite living in that
 # app's source tree.
-from nepi_api.connect_process_if_obstacles import ConnectProcessIFObstacles
+from nepi_api.connect_obstacles_if import ConnectObstaclesIF
 
 # The NetworkTables access layer and the RBX device, both installed beside this
 # file (scripts/ is what deploy_app.sh live-syncs, and CMakeLists installs all
@@ -1708,9 +1708,13 @@ class NepiWpilibApp(object):
 
         self.obstacles_namespace = namespace
         try:
-            self.obstacles_if = ConnectProcessIFObstacles(
-                            connect_namespace = namespace,
-                            results_callback = self.obstaclesConnectCb)
+            # Constructor shape differs from the two IFs above on purpose:
+            # ConnectObstaclesIF is the app's own class, not a ConnectNodeIF, so
+            # it takes namespace/dataCB rather than connect_namespace/
+            # results_callback.
+            self.obstacles_if = ConnectObstaclesIF(
+                            namespace = namespace,
+                            dataCB = self.obstaclesConnectCb)
         except Exception as e:
             self.obstacles_if = None
             self.msg_if.pub_warn("Failed to connect obstacles app at " +
@@ -1720,8 +1724,8 @@ class NepiWpilibApp(object):
     ###################
     ## Connect IF First-Connection Callbacks
     #
-    # Each connect IF invokes its data callback (data_callback on NavPose and
-    # Obstacles, dataCB on Targets) with a single data dict. The
+    # Each connect IF invokes its data callback (data_callback on NavPose,
+    # results_callback on Targets, dataCB on Obstacles) with a single data dict. The
     # callback stores that dict and the IF's current status message (via
     # get_status_msg()) on every invocation. On the FIRST invocation per IF it
     # also logs both, then sets the got_first flag so it logs only once. The
