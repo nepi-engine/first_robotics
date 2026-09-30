@@ -128,6 +128,13 @@ FRAME_SYNC_TOLERANCE_S = 0.1
 # Factory default of the 'frame_buffer_len' advanced control; live value is
 # self.frame_buffer_len, and changing it rebuilds both deques.
 FRAME_BUFFER_LEN = 10
+# Incoming TCP buffer for each camera subscriber, in bytes. rospy's default
+# (65536) is smaller than one color frame, so queue_size=1 cannot drop stale
+# frames: they back up in the socket instead and are read hundreds of ms late, by
+# a different amount on each side. That shows up as an L/R pair gap far over the
+# Frame Sync Tolerance on cameras whose own header stamps are only ~10 ms old.
+# 16 MB holds several full-resolution frames.
+IMAGE_SUB_BUFF_SIZE = 2**24
 # Calibration holds the L/R pair to a much tighter standard than depth does.
 # Depth tolerates 100 ms because a stale pixel is a local error in one frame;
 # calibration does not, because the corner positions in that pair become
@@ -1243,9 +1250,9 @@ class NepiStereoCamApp(object):
         if topic not in (None, 'None', ''):
             # qsize 1: on a depth map that takes longer than a frame period,
             # queued frames are stale by the time they are read -- drop them and
-            # work from the newest instead.
-            self.left_sub = nepi_sdk.create_subscriber(
-                topic, Image, self.leftImageCb, queue_size=1)
+            # work from the newest instead. That only works with a buff_size large
+            # enough to hold a frame -- see IMAGE_SUB_BUFF_SIZE.
+            self.left_sub = self.createImageSubscriber(topic, self.leftImageCb)
             self.msg_if.pub_info("Subscribed to left camera image: " + str(topic))
 
     def subscribeRight(self, topic):
@@ -1254,9 +1261,22 @@ class NepiStereoCamApp(object):
             self.right_frames.clear()
         self.right_img_topic = topic
         if topic not in (None, 'None', ''):
-            self.right_sub = nepi_sdk.create_subscriber(
-                topic, Image, self.rightImageCb, queue_size=1)
+            self.right_sub = self.createImageSubscriber(topic, self.rightImageCb)
             self.msg_if.pub_info("Subscribed to right camera image: " + str(topic))
+
+    def createImageSubscriber(self, topic, callback):
+        # buff_size needs the nepi_sdk create_subscriber that accepts it. scripts/
+        # live-syncs on deploy but nepi_sdk needs a catkin build, so this can run
+        # against an older SDK; fall back rather than lose the camera, and say so,
+        # since the sync warnings will persist until the SDK is rebuilt.
+        try:
+            return nepi_sdk.create_subscriber(
+                topic, Image, callback, queue_size=1, buff_size=IMAGE_SUB_BUFF_SIZE)
+        except TypeError:
+            self.msg_if.pub_warn("nepi_sdk create_subscriber has no buff_size; "
+                                 "camera frames may be read late until nepi_sdk "
+                                 "is rebuilt: " + str(topic))
+            return nepi_sdk.create_subscriber(topic, Image, callback, queue_size=1)
 
     def unsubscribeImage(self, sub):
         # Returns None so callers can assign the result straight back.
