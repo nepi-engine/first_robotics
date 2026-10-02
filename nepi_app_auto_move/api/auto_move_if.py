@@ -33,6 +33,7 @@ from nepi_interfaces.msg import Targets
 from nepi_interfaces.msg import ImageMouseEvent
 from nepi_interfaces.msg import ImagePixel
 from nepi_interfaces.msg import MgrSystemStatus
+from nepi_interfaces.msg import NavPose
 
 from nepi_app_auto_move.msg import NepiAppAutoMoveStatus
 
@@ -166,6 +167,27 @@ DEPTH_SAMPLE_HALF_PX = 2
 # How long after the last matching message a companion still counts as found.
 CONNECTED_TIMEOUT_SEC = 2
 
+# How long a robot velocity reading is trusted after its NavPose arrives.
+# Matches the WPILib app's NAVPOSE_STALE_SEC. This only catches a publisher that
+# has stopped; a stale reading from a live publisher is already marked by the
+# producer through NavPose.has_velocity.
+ROBOT_VELOCITY_STALE_SEC = 1.0
+
+# The robot velocity report get_robot_velocity_dict() returns. Every value is
+# None unless its flag is True -- never 0.0, never -999 -- so a caller that
+# skips the flag gets a TypeError instead of arithmetic on a fake number.
+BLANK_ROBOT_VELOCITY_DICT = {
+    'speed_valid': False,     # planar speed is trustworthy
+    'body_valid': False,      # body-frame x/y are trustworthy (needs yaw)
+    'yaw_rate_valid': False,  # yaw rate is trustworthy
+    'x_mps': None,            # body frame, +x forward, m/s
+    'y_mps': None,            # body frame, +y LEFT, m/s
+    'z_mps': None,            # up, m/s
+    'speed_mps': None,        # sqrt(x^2 + y^2), m/s, frame independent
+    'yaw_degps': None,        # deg/s, positive counter-clockwise (to port)
+    'age_s': None,            # seconds since the NavPose arrived
+}
+
 # How long a goto step may run before the process gives up on it. The device
 # enforces its own command timeout as well; this is the outer bound so a device
 # that stops reporting cannot strand the process in MOVING forever.
@@ -204,6 +226,13 @@ class AutoMoveIF:
     # Namespace the capability report currently held was read from, so a
     # selection change forces a re-read and a steady selection does not.
     rbx_caps_read_namespace = 'None'
+
+    # Measured velocity of the selected robot, from its NavPose. The dict is
+    # replaced whole, never mutated, so a plain read is a consistent read.
+    robot_navpose_topic = ''
+    robot_subs_if = None
+    robot_velocity_dict = None
+    robot_velocity_last_time = 0
 
     # Resolved companion topics. Each is what the app looked for; the matching
     # found flag says whether it is live.
@@ -735,6 +764,33 @@ class AutoMoveIF:
         """
         return nepi_sdk.get_full_namespace(nepi_sdk.create_namespace(self.namespace, connect_name))
 
+    def get_robot_velocity_dict(self):
+        """Return the selected robot's measured velocity.
+
+        Body frame of nepi_interfaces/GotoVelocity -- x forward, y LEFT, z up --
+        in METERS PER SECOND, yaw rate in DEGREES PER SECOND positive to port.
+        That is the frame and units of the goto_x_mps / goto_y_mps /
+        goto_yaw_degps this app commands, so measured and commanded compare
+        directly. Live: call it on every use rather than holding the result.
+
+        Returns:
+            dict: BLANK_ROBOT_VELOCITY_DICT form. A value is None unless its
+                flag is True. Every flag is False when no NavPose has arrived
+                for the selected robot, or the last one is older than
+                ROBOT_VELOCITY_STALE_SEC.
+        """
+        velocity_dict = self.robot_velocity_dict
+        last_time = self.robot_velocity_last_time
+        if velocity_dict is None:
+            return copy.deepcopy(BLANK_ROBOT_VELOCITY_DICT)
+        age_s = nepi_utils.get_time() - last_time
+        if age_s > ROBOT_VELOCITY_STALE_SEC:
+            velocity_dict = copy.deepcopy(BLANK_ROBOT_VELOCITY_DICT)
+        else:
+            velocity_dict = copy.deepcopy(velocity_dict)
+        velocity_dict['age_s'] = age_s
+        return velocity_dict
+
     def launch_image_pub_node(self):
         """Launch the auto move overlay image publisher node as a subprocess.
 
@@ -872,6 +928,7 @@ class AutoMoveIF:
         """Tear down the image pub node and this interface's ROS registrations."""
         self.kill_image_pub_node()
         self.unsubscribeSourceTopics()
+        self.unsubscribeRobotTopics()
         if self.rbx_if is not None:
             self.rbx_if.unregister()
         if self.image_if is not None:
@@ -968,9 +1025,18 @@ class AutoMoveIF:
         if selection_changed == True:
             self.rbx_has_goto_velocity = False
             self.rbx_caps_read_namespace = 'None'
+            # A velocity reading belongs to the robot it came from.
+            self.unsubscribeRobotTopics()
         if self.rbx_connected == True and self.rbx_caps_read_namespace != self.rbx_namespace:
             self.updateRbxCapabilities()
             self.rbx_caps_read_namespace = self.rbx_namespace
+
+        # Follow the selected robot's navpose topic. Re-resolved every tick
+        # because the device reports it only once its NavPose exists, which can
+        # be well after the device itself connects.
+        navpose_topic = self.getRobotNavPoseTopic()
+        if navpose_topic != self.robot_navpose_topic:
+            self.subscribeRobotTopics(navpose_topic)
 
     def updateImageSelection(self):
         if self.image_if is None:
@@ -1092,6 +1158,61 @@ class AutoMoveIF:
             self.source_subs_if = None
         self.subscribed_image_topic = 'None'
 
+    def getRobotNavPoseTopic(self):
+        # The device reports where its pose is published
+        # (DeviceRBXStatus.navpose_topic). Empty until the robot's NavPose
+        # exists -- for the WPILib app, until rbx_enabled is on and telemetry
+        # has arrived.
+        if self.rbx_if is None or self.rbx_connected == False:
+            return ''
+        try:
+            status_dict = self.rbx_if.get_status_dict()
+        except Exception:
+            return ''
+        if not isinstance(status_dict, dict):
+            return ''
+        navpose_topic = status_dict.get('navpose_topic', '')
+        if navpose_topic is None or navpose_topic == 'None':
+            return ''
+        return navpose_topic
+
+    def subscribeRobotTopics(self, navpose_topic):
+        # One subscriber per selected robot, rebuilt whenever the device's
+        # reported navpose topic changes -- the same pattern as
+        # subscribeSourceTopics for the image companions.
+        self.unsubscribeRobotTopics()
+        if navpose_topic == '':
+            return
+
+        robot_subs_dict = {
+            'auto_move_robot_navpose_sub': {
+                    'namespace': navpose_topic,
+                    'msg': NavPose,
+                    'topic': '',
+                    'qsize': 1,
+                    'callback': self.robotNavPoseCb,
+                    'callback_args': ()
+            },
+        }
+
+        self.msg_if.pub_info('Registering to robot navpose topic: ' + str(navpose_topic), log_name_list = self.log_name_list)
+        self.robot_subs_if = NodeSubscribersIF(
+                subs_dict = robot_subs_dict,
+                log_name_list = self.log_name_list,
+                msg_if = self.msg_if)
+        self.robot_navpose_topic = navpose_topic
+
+    def unsubscribeRobotTopics(self):
+        if self.robot_subs_if is not None:
+            try:
+                self.robot_subs_if.unregister_subs()
+            except Exception as e:
+                self.msg_if.pub_warn("Failed to unregister robot subs: " + str(e), log_name_list = self.log_name_list)
+            self.robot_subs_if = None
+        self.robot_navpose_topic = ''
+        self.robot_velocity_dict = None
+        self.robot_velocity_last_time = 0
+
     def clearSourceData(self):
         self.depth_map_lock.acquire()
         self.depth_map_slot = None
@@ -1173,6 +1294,35 @@ class AutoMoveIF:
         for obstacle_msg in msg.obstacles:
             obstacles_list.append(nepi_sdk.convert_msg2dict(obstacle_msg))
         self.obstacles_list = obstacles_list
+
+    def robotNavPoseCb(self, msg):
+        # NavPose velocity is in the navigation (field) frame. Rotated here into
+        # the body frame of nepi_interfaces/GotoVelocity -- x forward, y LEFT --
+        # so it compares directly with goto_x_mps / goto_y_mps. The rotation
+        # needs yaw; without it only the planar speed survives, because speed
+        # does not depend on the frame.
+        speed_valid = (msg.has_velocity == True)
+        yaw_rate_valid = (msg.has_orientation == True)
+        body_valid = speed_valid and yaw_rate_valid
+
+        velocity_dict = copy.deepcopy(BLANK_ROBOT_VELOCITY_DICT)
+        velocity_dict['speed_valid'] = speed_valid
+        velocity_dict['body_valid'] = body_valid
+        velocity_dict['yaw_rate_valid'] = yaw_rate_valid
+        if speed_valid == True:
+            x_nav = float(msg.x_m_per_sec)
+            y_nav = float(msg.y_m_per_sec)
+            velocity_dict['speed_mps'] = math.sqrt((x_nav * x_nav) + (y_nav * y_nav))
+            velocity_dict['z_mps'] = float(msg.z_m_per_sec)
+            if body_valid == True:
+                yaw_rad = math.radians(float(msg.yaw_deg))
+                velocity_dict['x_mps'] = (x_nav * math.cos(yaw_rad)) + (y_nav * math.sin(yaw_rad))
+                velocity_dict['y_mps'] = -(x_nav * math.sin(yaw_rad)) + (y_nav * math.cos(yaw_rad))
+        if yaw_rate_valid == True:
+            velocity_dict['yaw_degps'] = float(msg.yaw_deg_per_sec)
+
+        self.robot_velocity_dict = velocity_dict
+        self.robot_velocity_last_time = nepi_utils.get_time()
 
     ##########################################
     # Command Callbacks

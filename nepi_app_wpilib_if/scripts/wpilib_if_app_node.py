@@ -1455,7 +1455,18 @@ class NepiWpilibApp(object):
             navpose_dict['time_heading'] = navpose_dict['time_position']
             navpose_dict['heading_deg'] = math.degrees(float(self.position_dict['heading_rad']))
 
+        # Velocity is FIELD-relative: the RoboRIO rotates it with the same angle
+        # it publishes as Robot Orientation yaw_rad, which is the navigation
+        # frame every other NEPI navpose producer uses. See
+        # docs/ROBORIO_VELOCITY_CONTRACT.md, Robot Velocity feedback.
+        #
+        # has_velocity defaults False (NavPose.msg), so it must be set here or
+        # the robot's velocity is never published. Setting it from
+        # velocity_live is also what makes a stale Velocity group go out as
+        # -999 instead of a confident 0.0 m/s while Position is still live.
+        navpose_dict['has_velocity'] = velocity_live
         if velocity_live is True:
+            navpose_dict['time_velocity'] = self.getGroupTime(self.velocity_dict)
             navpose_dict['x_m_per_sec'] = float(self.velocity_dict['velocity_x_mps'])
             navpose_dict['y_m_per_sec'] = float(self.velocity_dict['velocity_y_mps'])
             navpose_dict['z_m_per_sec'] = float(self.velocity_dict['velocity_z_mps'])
@@ -1469,9 +1480,20 @@ class NepiWpilibApp(object):
             # yaw_rate_radps in Robot Orientation). The orientation group is the
             # authority on orientation rates, so this only fills the field when
             # that group is not contributing.
+            #
+            # DEAD ON THE WIRE -- kept deliberately, do not rely on it.
+            # convert_navpose_dict2msg writes yaw_deg_per_sec only when
+            # has_orientation is True, and it is False in exactly this branch, so
+            # this value is replaced by -999 before publish. Yaw rate reaches NEPI
+            # only from Robot Orientation yaw_rate_radps.
             if orientation_live is False:
                 navpose_dict['yaw_deg_per_sec'] = math.degrees(
                     float(self.velocity_dict['angular_velocity_radps']))
+        else:
+            # heading_m_per_sec is computed from velocity here but rides on
+            # has_heading, which Position keeps True. Without this it would carry
+            # BLANK_NAVPOSE_DICT's 0.0 as a real ground speed.
+            navpose_dict['heading_m_per_sec'] = -999
 
         if orientation_live is True:
             navpose_dict['has_orientation'] = True

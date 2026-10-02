@@ -146,6 +146,9 @@ they are already in the robot's frame. Converting from field-relative would
 rotate the command by the robot's current heading, and the robot would drive off
 at an angle that changes every time it turns.
 
+This applies to commands only. The velocity the RoboRIO reports back is
+field-relative — see *Robot Velocity feedback* below.
+
 ### NWU sign convention
 
 - `+x` is forward
@@ -192,6 +195,62 @@ report.
 
 ---
 
+## Robot Velocity feedback
+
+NEPI reads the robot's measured velocity from the Robot Velocity group and hands
+it to the Auto Move app. These rules are what make that reading correct.
+
+| Key | Type | Meaning |
+|---|---|---|
+| `/NEPI/Velocity/velocity_x_mps` | double | Field-relative x velocity, m/s |
+| `/NEPI/Velocity/velocity_y_mps` | double | Field-relative y velocity, m/s |
+| `/NEPI/Velocity/velocity_z_mps` | double | Always 0.0 on a ground robot |
+| `/NEPI/Velocity/angular_velocity_radps` | double | Not used by NEPI. Yaw rate is read from `/NEPI/Orientation/yaw_rate_radps` |
+| `/NEPI/Velocity/timestamp` | double | Sample time, seconds. Must change on every publish |
+| `/NEPI/Velocity/valid` | boolean | True while the values are a real measurement |
+
+### Field-relative: the opposite of the command
+
+```java
+ChassisSpeeds robotRelative = kinematics.toChassisSpeeds(getModuleStates());
+ChassisSpeeds fieldRelative =
+    ChassisSpeeds.fromRobotRelativeSpeeds(robotRelative, getGyroRotation());
+```
+
+Commands from NEPI are robot-relative (see *Robot-relative, not field-relative*
+above). The velocity you report back is **field-relative**. This is deliberate:
+NEPI reports every robot's velocity in the field (navigation) frame, so the same
+NEPI code reads a RoboRIO, a simulator or a drone. Do not change either side to
+match the other.
+
+`getGyroRotation()` must be **the same angle you publish as
+`/NEPI/Orientation/yaw_rad`**. NEPI rotates the velocity back into the robot's
+frame using that angle. If the two differ, forward speed shows up as sideways
+speed whenever the robot is turned.
+
+WPILib versions before 2024 have no `fromRobotRelativeSpeeds`. On those, rotate
+by hand, where `theta` is that same gyro angle in radians:
+
+```java
+double vxField = vx * Math.cos(theta) - vy * Math.sin(theta);
+double vyField = vx * Math.sin(theta) + vy * Math.cos(theta);
+```
+
+Signs and units are NWU. +x runs along field x, +y is 90° counter-clockwise from
+it, and counter-clockwise rotation is positive. Speeds are in metres per second.
+
+### What else has to be live
+
+- **`/NEPI/Orientation` valid and fresh.** Without it, NEPI still has the robot's
+  speed but not its direction relative to the robot, and it has no yaw rate.
+- **`/NEPI/Position` or `/NEPI/Orientation` valid.** When both are invalid, NEPI
+  publishes no pose at all, and the velocity goes with it.
+- **NEPI treats a group as stale** when its values haven't changed for 1.0 s. A
+  stationary robot reports a constant velocity of zero, so `timestamp` is what
+  keeps the group fresh: advance it on every publish.
+
+---
+
 ## Keys to implement, as a checklist
 
 Read (NEPI writes, RoboRIO consumes):
@@ -206,6 +265,11 @@ Write (RoboRIO produces, NEPI consumes):
 /NEPI/RBX/Feedback/max_velocity_mps                  double
 /NEPI/RBX/Feedback/max_angular_velocity_radps        double
 /NEPI/RBX/Feedback/supported_capabilities            string[]  -- add "GOTO_VELOCITY"
+/NEPI/Velocity/velocity_x_mps                        double    -- field-relative
+/NEPI/Velocity/velocity_y_mps                        double    -- field-relative
+/NEPI/Velocity/velocity_z_mps                        double    -- 0.0
+/NEPI/Velocity/timestamp                             double    -- advance every publish
+/NEPI/Velocity/valid                                 boolean
 ```
 
 Behaviour:
