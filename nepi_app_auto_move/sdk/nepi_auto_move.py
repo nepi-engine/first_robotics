@@ -472,9 +472,10 @@ def plan_move(goto_dict, np_depth_map, objects_list, targets_list, robot_dict, c
 #
 # UNITS -- DIFFERENT FROM plan_move()
 #   goto_dict still arrives in METRES and DEGREES, exactly as plan_move() gets
-#   it, and it additionally carries 'move_speed_mps' -- the operator's statement
-#   of how fast this robot moves, which is what turned the clicked distance into
-#   a duration. It also carries the already-derived velocity values.
+#   it, and it additionally carries 'move_speed_mps' -- the speed that turned
+#   the clicked distance into a duration: a fraction of the robot's reported
+#   max speed when it reports one, else the operator's hand entered value. It
+#   also carries the already-derived velocity values.
 #
 #   Every value in every RETURNED step is METRES PER SECOND and DEGREES PER
 #   SECOND, plus seconds for the duration. The keys are:

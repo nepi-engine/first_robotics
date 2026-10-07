@@ -131,6 +131,12 @@ class ConnectAppAutoMove:
                 'msg': Float32,
                 'qsize': 1
             },
+            'set_move_speed_ratio': {
+                'namespace': self.namespace,
+                'topic': 'set_move_speed_ratio',
+                'msg': Float32,
+                'qsize': 1
+            },
             'set_goto_vx': {
                 'namespace': self.namespace,
                 'topic': 'set_goto_vx',
@@ -386,11 +392,11 @@ class ConnectAppAutoMove:
         self.con_node_if.publish_pub('set_goto_velocity_enabled', msg)
 
     def set_move_speed(self, move_speed_mps):
-        """Set how fast the operator says this robot moves.
+        """Set the fallback speed used while the robot reports no max speed.
 
-        A clicked distance is divided by this to get a velocity move's duration.
-        NEPI does not read this from the robot: the RBX contract reports no
-        chassis speed, so this is an operator statement, not a measurement.
+        A clicked distance is divided by the move speed to get a velocity move's
+        duration. While the selected robot reports a max speed the app uses
+        set_move_speed_ratio() of it instead, and this value is ignored.
 
         Args:
             move_speed_mps (float): Speed in METERS PER SECOND. The app clamps
@@ -400,6 +406,20 @@ class ConnectAppAutoMove:
         msg = Float32()
         msg.data = move_speed_mps
         self.con_node_if.publish_pub('set_move_speed', msg)
+
+    def set_move_speed_ratio(self, move_speed_ratio):
+        """Set the fraction of the robot's reported max speed a move runs at.
+
+        Used whenever the selected robot reports a max speed, in place of
+        set_move_speed().
+
+        Args:
+            move_speed_ratio (float): 0.0-1.0. The app clamps to 0.05-1.0 and
+                persists the value, per app rather than per robot.
+        """
+        msg = Float32()
+        msg.data = move_speed_ratio
+        self.con_node_if.publish_pub('set_move_speed_ratio', msg)
 
     def set_goto_vx(self, x_mps):
         """Set the forward velocity of the requested timed move.

@@ -133,13 +133,19 @@ MAX_MAX_MOVE_M = 100.0
 # bounds the setter clamps an entry into. The click math divides a clicked
 # distance by this to get a duration.
 #
-# The ceiling is a SANITY BOUND, not a hardware limit. Nothing here knows what
-# the robot can do -- the RBX contract reports no chassis speed to compare
-# against -- so this only catches a typo like 200 for 2.0. The real limit is
-# applied downstream by whatever drives the robot.
+# This is the FALLBACK, used only while the selected robot reports no max speed
+# (DeviceRBXStatus.max_velocity_mps of 0.0). The ceiling is a SANITY BOUND, not
+# a hardware limit -- it only catches a typo like 200 for 2.0.
 DEFAULT_MOVE_SPEED_MPS = 1.0
 MIN_MOVE_SPEED_MPS = 0.1
 MAX_MOVE_SPEED_MPS = 20.0
+
+# Fraction of the robot's reported max speed a velocity move runs at, used
+# whenever the robot reports one. The floor keeps the derived speed above zero,
+# which is what lets the click math divide by it without a guard.
+DEFAULT_MOVE_SPEED_RATIO = 0.5
+MIN_MOVE_SPEED_RATIO = 0.05
+MAX_MOVE_SPEED_RATIO = 1.0
 
 # Bounds on a derived velocity-move duration, in seconds. Below the floor the
 # move is too short to be worth issuing; the ceiling keeps one click from
@@ -324,6 +330,11 @@ class AutoMoveIF:
 
     max_move_m = DEFAULT_MAX_MOVE_M
     move_speed_mps = DEFAULT_MOVE_SPEED_MPS
+    move_speed_ratio = DEFAULT_MOVE_SPEED_RATIO
+    # The selected robot's reported max linear speed, read off its RBX status
+    # every tick. 0.0 means "not reported" and puts the app back on the hand
+    # entered move_speed_mps.
+    robot_max_speed_mps = 0.0
 
     active_nodes = []
     active_topics = []
@@ -429,6 +440,10 @@ class AutoMoveIF:
                 'namespace': self.namespace,
                 'factory_val': DEFAULT_MOVE_SPEED_MPS
             },
+            self.node_if_prefix + 'move_speed_ratio': {
+                'namespace': self.namespace,
+                'factory_val': DEFAULT_MOVE_SPEED_RATIO
+            },
             self.node_if_prefix + 'image_controls': {
                 'namespace': self.namespace,
                 'factory_val': self.image_controls_dict
@@ -511,6 +526,14 @@ class AutoMoveIF:
                 'msg': Float32,
                 'qsize': 10,
                 'callback': self.setMoveSpeedCb,
+                'callback_args': ()
+            },
+            self.node_if_prefix + 'set_move_speed_ratio': {
+                'namespace': self.namespace,
+                'topic': 'set_move_speed_ratio',
+                'msg': Float32,
+                'qsize': 10,
+                'callback': self.setMoveSpeedRatioCb,
                 'callback_args': ()
             },
             self.node_if_prefix + 'set_goto_vx': {
@@ -904,6 +927,8 @@ class AutoMoveIF:
 
         status_msg.goto_velocity_enabled = self.goto_velocity_enabled
         status_msg.move_speed_mps = float(self.move_speed_mps)
+        status_msg.move_speed_ratio = float(self.move_speed_ratio)
+        status_msg.robot_max_speed_mps = float(self.robot_max_speed_mps)
         status_msg.goto_x_mps = float(self.goto_x_mps)
         status_msg.goto_y_mps = float(self.goto_y_mps)
         status_msg.goto_z_mps = float(self.goto_z_mps)
@@ -979,6 +1004,13 @@ class AutoMoveIF:
             self.max_move_m = self.node_if.get_param(self.node_if_prefix + 'max_move_m')
             self.goto_velocity_enabled = self.node_if.get_param(self.node_if_prefix + 'goto_velocity_enabled')
             self.move_speed_mps = self.node_if.get_param(self.node_if_prefix + 'move_speed_mps')
+            # Guarded: a config saved before this param existed must not hand
+            # getMoveSpeed() a None to multiply.
+            move_speed_ratio = self.node_if.get_param(self.node_if_prefix + 'move_speed_ratio')
+            if isinstance(move_speed_ratio, (int, float)):
+                self.move_speed_ratio = float(move_speed_ratio)
+            else:
+                self.move_speed_ratio = DEFAULT_MOVE_SPEED_RATIO
 
             image_controls_dict = self.node_if.get_param(self.node_if_prefix + 'image_controls')
             if isinstance(image_controls_dict, dict):
@@ -1024,12 +1056,17 @@ class AutoMoveIF:
         # change and on the first connection of a selection -- not every tick.
         if selection_changed == True:
             self.rbx_has_goto_velocity = False
+            self.robot_max_speed_mps = 0.0
             self.rbx_caps_read_namespace = 'None'
             # A velocity reading belongs to the robot it came from.
             self.unsubscribeRobotTopics()
         if self.rbx_connected == True and self.rbx_caps_read_namespace != self.rbx_namespace:
             self.updateRbxCapabilities()
             self.rbx_caps_read_namespace = self.rbx_namespace
+
+        # Max speed is live telemetry on the status message, not a capability,
+        # so it is re-read every tick rather than once per selection.
+        self.updateRobotMaxSpeed()
 
         # Follow the selected robot's navpose topic. Re-resolved every tick
         # because the device reports it only once its NavPose exists, which can
@@ -1377,6 +1414,20 @@ class AutoMoveIF:
             self.node_if.set_param(self.node_if_prefix + 'move_speed_mps', self.move_speed_mps)
             self.save_config()
 
+    def setMoveSpeedRatioCb(self, msg):
+        # Same shape as setMoveSpeedCb. The floor is what keeps getMoveSpeed()
+        # above zero while the robot reports a max.
+        move_speed_ratio = msg.data
+        if move_speed_ratio < MIN_MOVE_SPEED_RATIO:
+            move_speed_ratio = MIN_MOVE_SPEED_RATIO
+        elif move_speed_ratio > MAX_MOVE_SPEED_RATIO:
+            move_speed_ratio = MAX_MOVE_SPEED_RATIO
+        self.move_speed_ratio = move_speed_ratio
+        self.publish_status()
+        if self.node_if is not None:
+            self.node_if.set_param(self.node_if_prefix + 'move_speed_ratio', self.move_speed_ratio)
+            self.save_config()
+
     def setGotoVxCb(self, msg):
         self.goto_x_mps = float(msg.data)
         self.publish_status()
@@ -1561,11 +1612,11 @@ class AutoMoveIF:
         # Turns the clicked distance into a body-frame velocity and a duration.
         # Returns the text to append to click_msg.
         #
-        # move_speed_mps is already clamped above zero by setMoveSpeedCb, so no
-        # divide-by-zero guard is needed on the speed. The guard that IS needed
-        # is on the distance: a click that resolves to no move would otherwise
-        # produce a zero duration and then divide by it below.
-        move_speed_mps = float(self.move_speed_mps)
+        # getMoveSpeed() never returns zero (see there), so no divide-by-zero
+        # guard is needed on the speed. The guard that IS needed is on the
+        # distance: a click that resolves to no move would otherwise produce a
+        # zero duration and then divide by it below.
+        move_speed_mps = self.getMoveSpeed()
         distance_m = math.sqrt((x_m * x_m) + (y_m * y_m) + (z_m * z_m))
 
         if distance_m == 0.0:
@@ -1742,6 +1793,28 @@ class AutoMoveIF:
         self.goto_msg = 'Planning move'
         self.publish_status()
 
+    def updateRobotMaxSpeed(self):
+        # Reads max_velocity_mps off the selected device's DeviceRBXStatus. An
+        # absent field (a device built before the field existed), a missing
+        # status or a bad value all read as 0.0, "not reported".
+        max_speed_mps = 0.0
+        if self.rbx_if is not None and self.rbx_connected == True:
+            try:
+                status_dict = self.rbx_if.get_status_dict()
+                if isinstance(status_dict, dict):
+                    max_speed_mps = float(status_dict.get('max_velocity_mps', 0.0))
+            except Exception:
+                max_speed_mps = 0.0
+        self.robot_max_speed_mps = max(max_speed_mps, 0.0)
+
+    def getMoveSpeed(self):
+        # The speed a click is turned into a timed move at. A fraction of the
+        # robot's own reported max when it reports one, else the hand entered
+        # fallback. Both setters clamp above zero, so this never returns 0.0.
+        if self.robot_max_speed_mps > 0.0:
+            return float(self.robot_max_speed_mps * self.move_speed_ratio)
+        return float(self.move_speed_mps)
+
     def updateRbxCapabilities(self):
         # Reads has_goto_velocity off the selected device's RBXCapabilitiesQuery
         # response. A device that cannot be queried reports nothing rather than
@@ -1797,7 +1870,7 @@ class AutoMoveIF:
             'y_m': float(self.goto_y_m),
             'z_m': float(self.goto_z_m),
             'max_move_m': float(self.max_move_m),
-            'move_speed_mps': float(self.move_speed_mps),
+            'move_speed_mps': self.getMoveSpeed(),
         }
         if self.goto_velocity_enabled == True:
             # The velocity planner reads these; the position values above stay
