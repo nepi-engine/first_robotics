@@ -581,11 +581,15 @@ class NepiWpilibApp(object):
             self.msg_if.pub_warn("Ignoring motor slot count " + str(slot_count) +
                                  ": must be 0 to " + str(MAX_MOTOR_SLOT_COUNT))
             return
-        self.motor_slot_count = slot_count
         # Both per-slot lists are resized to match, so slot order stays
         # unambiguous: new slots come up unmapped and unnamed rather than
         # inheriting whatever was at that index before.
-        self.motor_ids = self.resizeMotorIds(self.motor_ids, slot_count)
+        motor_ids = self.resizeMotorIds(self.motor_ids, slot_count)
+        # Before the count changes: a dropped slot still holding a ratio is
+        # zeroed at the motor_id it had.
+        self.zeroRemappedRbxMotors(motor_ids)
+        self.motor_slot_count = slot_count
+        self.motor_ids = motor_ids
         self.motor_names = self.resizeMotorNames(self.motor_names, slot_count)
         self.publish_status()
         if self.node_if is not None:
@@ -607,6 +611,7 @@ class NepiWpilibApp(object):
         # actually made.
         if motor_ids != self.motor_ids:
             self.msg_if.pub_info("Motor ids set to " + str(motor_ids))
+            self.zeroRemappedRbxMotors(motor_ids)
         self.motor_ids = motor_ids
         self.publish_status()
         if self.node_if is not None:
@@ -671,9 +676,14 @@ class NepiWpilibApp(object):
             self.value = self.node_if.get_param('value')
 
             self.team_number = int(self.node_if.get_param('team_number'))
-            self.motor_slot_count = int(self.node_if.get_param('motor_slot_count'))
-            self.motor_ids = self.resizeMotorIds(self.node_if.get_param('motor_ids'),
-                                                 self.motor_slot_count)
+            # A reset or factory reset reloads the mapping through here, so it
+            # is a remap like any other.
+            motor_slot_count = int(self.node_if.get_param('motor_slot_count'))
+            motor_ids = self.resizeMotorIds(self.node_if.get_param('motor_ids'),
+                                            motor_slot_count)
+            self.zeroRemappedRbxMotors(motor_ids)
+            self.motor_slot_count = motor_slot_count
+            self.motor_ids = motor_ids
             self.motor_names = self.resizeMotorNames(self.node_if.get_param('motor_names'),
                                                      self.motor_slot_count)
             self.rbx_enabled = bool(self.node_if.get_param('rbx_enabled'))
@@ -1606,6 +1616,15 @@ class NepiWpilibApp(object):
             return
         self.msg_if.pub_info("RBX device enabled at " + str(self.rbx_if.get_namespace()))
         self.publish_status()
+
+    # Called BEFORE motor_ids or motor_slot_count change, so the RBX device
+    # still reads the old mapping and zeroes the old motor_id. Taken off a local
+    # reference: teardown can set rbx_if None on another thread.
+    def zeroRemappedRbxMotors(self, new_motor_ids):
+        rbx_if = self.rbx_if
+        if rbx_if is None:
+            return
+        rbx_if.zero_remapped_motors(new_motor_ids)
 
     def teardownRbxIF(self):
         with self.rbx_lock:

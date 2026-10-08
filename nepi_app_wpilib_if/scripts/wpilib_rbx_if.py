@@ -43,6 +43,7 @@ import threading
 from std_msgs.msg import String
 
 from nepi_sdk import nepi_sdk
+from nepi_sdk import nepi_controls
 
 from nepi_interfaces.msg import AxisControls
 
@@ -93,6 +94,18 @@ FIRST_REQUEST_ID = 1
 VELOCITY_STREAM_RATE_HZ = 10.0
 VELOCITY_MAX_DURATION_SEC = 60.0
 
+# Re-send rate for a nonzero manual motor command. The same rate as the velocity
+# stream on purpose: the RoboRIO runs the same 250 ms watchdog per motor, so the
+# robot programmer implements one pattern for both. See
+# docs/ROBORIO_MOTOR_CONTRACT.md.
+MOTOR_STREAM_RATE_HZ = VELOCITY_STREAM_RATE_HZ
+
+# Operator timeout for manual motor control. Same name, bounds and default as
+# rbx_ardupilot_node.py, because the RBX RUI page reads and writes a setting
+# named exactly motor_test_timeout_s.
+MOTOR_TEST_TIMEOUT_SETTING = 'motor_test_timeout_s'
+MOTOR_TEST_TIMEOUT_DEFAULT_SEC = 30.0
+
 
 #########################################
 # WPILib RBX IF Class
@@ -104,6 +117,19 @@ class WpilibRbxIF:
 
     rbx_if = None
     namespace = 'None'
+
+    # The only RBX device settings. Held by this module, not the RoboRIO: the
+    # operator timeout is enforced NEPI-side, so there is nothing on the robot
+    # to read it back from. Same shape as rbx_ardupilot_node.py.
+    CAP_SETTINGS = dict(
+        motor_test_timeout_s = {"type":"Float","name":"motor_test_timeout_s","options":["1.0","300.0"]}
+    )
+
+    FACTORY_SETTINGS = dict(
+        motor_test_timeout_s = {"type":"Float","name":"motor_test_timeout_s","value":"30"}
+    )
+
+    settings_dict = dict()
 
     def __init__(self,
                  device_name,
@@ -179,8 +205,24 @@ class WpilibRbxIF:
         # Manual motor-control set points, in slot order. This is the index
         # space RBXRobotIF bounds-checks MotorControl.motor_ind against, so its
         # length is resynced from the slot list on every read.
+        #
+        # motor_command_times holds, per slot, the NEPI time of the last
+        # OPERATOR command -- not the last keepalive write -- so the operator
+        # timeout measures how long nobody has touched the slider.
+        #
+        # motor_lock covers both lists AND the write that follows a change.
+        # The subscriber thread, the keepalive timer, goStop and the app's
+        # remap callbacks all touch them, and without holding the lock across
+        # the write a keepalive tick could re-send a ratio a stop had just
+        # zeroed.
+        self.motor_lock = threading.RLock()
         self.motor_ratios = []
+        self.motor_command_times = []
         self.syncMotorRatios()
+
+        ##############################
+        # Device settings
+        self.settings_dict = self.initSettingsDict()
 
         ##############################
         # Build the RBX device
@@ -190,18 +232,19 @@ class WpilibRbxIF:
                              serial_number='',
                              hw_version='',
                              sw_version=''),
-            # No settings: the RoboRIO contract exposes nothing an operator sets
-            # on the device itself (motor mapping and team number are the app's
-            # own params). SettingsIF substitutes its NONE_* defaults for each
-            # None, so the settings panel renders empty rather than fake.
+            # One setting, motor_test_timeout_s, held and enforced here rather
+            # than on the RoboRIO (motor mapping and team number stay the app's
+            # own params). RBXRobotIF builds a SettingsIF on its own node_if
+            # from these two, which persists the value under the rbx namespace
+            # and fills in the RBX page's Motor Test Timeout box.
             #
             # These two are the ONLY settings arguments RBXRobotIF accepts.
             # capSettings / factorySettings / settingUpdateFunction are the PTX
             # DRIVER signature (ptx_servos_node.py), not this one -- passing them
             # here raised "unexpected keyword argument 'capSettings'" on every
             # build attempt, so the device was never created.
-            getSettingsFunction=None,
-            setSettingFunction=None,
+            getSettingsFunction=self.getSettingsFunction,
+            setSettingFunction=self.setSettingFunction,
             axisControls=self.buildAxisControls(),
             # None: the RBX Feedback group carries no battery field, so there is
             # no battery state to report.
@@ -271,6 +314,11 @@ class WpilibRbxIF:
         nepi_sdk.start_timer_process(float(1) / FEEDBACK_UPDATE_RATE_HZ,
                                      self.feedbackUpdateCb)
 
+        ##############################
+        # Keep nonzero manual motor commands alive, and time them out
+        nepi_sdk.start_timer_process(float(1) / MOTOR_STREAM_RATE_HZ,
+                                     self.motorKeepaliveCb)
+
         self.ready = True
         self.msg_if.pub_info("WPILib RBX interface running at " + str(self.namespace) +
                              " with capabilities: " + str(self.supported_capabilities))
@@ -326,10 +374,64 @@ class WpilibRbxIF:
         """
         return list(self.motor_ratios)
 
+    def zero_all_motors(self, reason):
+        """Write an explicit 0 to every mapped motor holding a nonzero ratio.
+
+        Each such slot is set to 0 first, so the keepalive stops streaming it
+        whether or not the zero lands.
+
+        Args:
+            reason (str): Why the motors are being zeroed, for the log.
+
+        Returns:
+            bool: True if every zero that was needed was written.
+        """
+        with self.motor_lock:
+            slots = self.getSlots()
+            motor_ids = []
+            for i in range(len(self.motor_ratios)):
+                motor_id = slots[i].get('motor_id', -1) if i < len(slots) else -1
+                motor_ids.append(-1 if motor_id is None else motor_id)
+            return self.zeroSlots(motor_ids, reason)
+
+    def zero_remapped_motors(self, new_motor_ids):
+        """Zero every running motor whose slot is about to map somewhere else.
+
+        Call this BEFORE the slot mapping changes. A slot holding a nonzero
+        ratio whose motor_id changes, or which disappears because the slot
+        count shrinks, has its OLD motor_id written to 0 and its ratio cleared.
+        Without this the keepalive would carry the ratio over to the new
+        motor_id and the old motor would hold its last value until the
+        RoboRIO watchdog fired.
+
+        The caller changes the mapping after this returns, outside this
+        module's lock, so an operator command landing in that gap can still
+        be written once to the old motor_id. The keepalive then streams to the
+        new one, so the old motor's key goes quiet and the RoboRIO watchdog
+        stops it within 250 ms.
+
+        Args:
+            new_motor_ids (list): The per-slot RoboRIO motor_id list about to
+                take effect, in slot order.
+
+        Returns:
+            bool: True if every zero that was needed was written.
+        """
+        with self.motor_lock:
+            slots = self.getSlots()
+            moved_ids = []
+            for i in range(len(self.motor_ratios)):
+                old_id = slots[i].get('motor_id', -1) if i < len(slots) else -1
+                new_id = int(new_motor_ids[i]) if i < len(new_motor_ids) else -1
+                if old_id is None:
+                    old_id = -1
+                moved_ids.append(old_id if int(old_id) != new_id else None)
+            return self.zeroSlots(moved_ids, "motor mapping changed")
+
     def shutdown(self):
         """Retract as much of the RBX device from the ROS graph as nepi_api allows.
 
-        Unregisters the RBXRobotIF NodeClassIF (every rbx/* topic, service and
+        First writes an explicit 0 to every running manual motor. Then unregisters the RBXRobotIF NodeClassIF (every rbx/* topic, service and
         param) and each child interface that exposes a public unregister. What
         CANNOT be retracted is logged rather than glossed over: RBXRobotIF has
         no teardown entry point of its own, its NPXDeviceIF exposes none, and
@@ -342,6 +444,12 @@ class WpilibRbxIF:
         """
         if self.rbx_if is None:
             return False
+
+        # Before anything is unregistered, while the transport is still up.
+        # The keepalive timer cannot be cancelled, but every ratio is now 0 so
+        # it has nothing left to stream, and it stops checking once rbx_if goes
+        # None below.
+        self.zero_all_motors("RBX device teardown")
 
         self.ready = False
         success = False
@@ -432,12 +540,16 @@ class WpilibRbxIF:
 
     def syncMotorRatios(self):
         slot_count = len(self.getSlots())
-        if len(self.motor_ratios) == slot_count:
-            return
-        ratios = [0.0] * slot_count
-        for i in range(min(slot_count, len(self.motor_ratios))):
-            ratios[i] = self.motor_ratios[i]
-        self.motor_ratios = ratios
+        with self.motor_lock:
+            if len(self.motor_ratios) == slot_count:
+                return
+            ratios = [0.0] * slot_count
+            command_times = [0.0] * slot_count
+            for i in range(min(slot_count, len(self.motor_ratios))):
+                ratios[i] = self.motor_ratios[i]
+                command_times[i] = self.motor_command_times[i]
+            self.motor_ratios = ratios
+            self.motor_command_times = command_times
 
     def allocateRequestId(self):
         with self.request_lock:
@@ -482,6 +594,74 @@ class WpilibRbxIF:
             self.msg_if.pub_warn("RBX command request " + str(request_id) +
                                  " (" + str(request_type) + ") was not written")
         return bool(success)
+
+    #**********************
+    # Setting functions
+
+    def initSettingsDict(self):
+        init_settings_dict = dict()
+        for setting_name in self.CAP_SETTINGS.keys():
+            cap_setting = self.CAP_SETTINGS[setting_name]
+            setting_type = cap_setting['type']
+            setting_dict = dict()
+            setting_dict['type'] = setting_type
+            # Cap-settings form carries an Int/Float min and max as an
+            # 'options' pair; the controls contract calls that 'bounds'.
+            try:
+                if setting_type == 'Int':
+                    setting_dict['bounds'] = [int(cap_setting['options'][0]), int(cap_setting['options'][1])]
+                elif setting_type == 'Float':
+                    setting_dict['bounds'] = [float(cap_setting['options'][0]), float(cap_setting['options'][1])]
+                else:
+                    setting_dict['options'] = [str(option) for option in cap_setting['options']]
+            except Exception as e:
+                self.msg_if.pub_warn("Invalid bounds for setting: " + setting_name + " : " + str(e))
+            try:
+                default = self.FACTORY_SETTINGS[setting_name]['value']
+                if setting_type == 'Int':
+                    default = int(float(default))
+                elif setting_type == 'Float':
+                    default = float(default)
+                else:
+                    default = str(default)
+            except Exception as e:
+                self.msg_if.pub_warn("Invalid factory value for setting: " + setting_name + " : " + str(e))
+                continue
+            setting_dict['default'] = default
+            init_settings_dict[setting_name] = setting_dict
+        settings_dict = nepi_controls.create_controls_dict(init_settings_dict)
+        self.msg_if.pub_info("Initialized Settings: " + str(nepi_controls.get_values_dict(settings_dict)))
+        return settings_dict
+
+    def getSettingsFunction(self):
+        return self.settings_dict
+
+    def setSettingFunction(self, setting_name, setting_value):
+        setting_str = setting_name + ":" + str(setting_value)
+        if setting_name not in self.settings_dict.keys():
+            msg = (self.class_name + " Setting name " + setting_str + " is not supported")
+            return False, msg, self.settings_dict
+        # get_clean_value() returns None for an invalid value. Test 'is None',
+        # not falsiness, as rbx_ardupilot_node.py does.
+        if nepi_controls.get_clean_value(self.settings_dict, setting_name, setting_value) is None:
+            msg = (self.class_name + " Setting data " + setting_str + " is not valid")
+            return False, msg, self.settings_dict
+        self.settings_dict = nepi_controls.set_value(self.settings_dict, setting_name, setting_value)
+        msg = (self.class_name + " UPDATED SETTINGS " + setting_str)
+        return True, msg, self.settings_dict
+
+    def getMotorTestTimeout(self):
+        # Read defensively and re-bounded here: this runs on the keepalive
+        # timer, so an out-of-bounds value is clamped and an unreadable one
+        # falls back to the factory timeout, never to "never time out".
+        try:
+            timeout_s = float(nepi_controls.get_value(self.settings_dict, MOTOR_TEST_TIMEOUT_SETTING))
+        except Exception:
+            return MOTOR_TEST_TIMEOUT_DEFAULT_SEC
+        [min_s, max_s] = [float(v) for v in self.CAP_SETTINGS[MOTOR_TEST_TIMEOUT_SETTING]['options']]
+        if math.isnan(timeout_s):
+            return MOTOR_TEST_TIMEOUT_DEFAULT_SEC
+        return max(min_s, min(max_s, timeout_s))
 
     ##########################
     # RBX Interface Functions
@@ -545,32 +725,36 @@ class WpilibRbxIF:
         # points are operator-driven, not periodic, so this is not a log flood.
         self.logCommandEntry("set_motor_control_ratio", "motor_ind " + str(motor_ind) +
                              "  speed_ratio " + str(speed_ratio))
-        self.syncMotorRatios()
-        slots = self.getSlots()
-        if motor_ind < 0 or motor_ind >= len(slots):
-            self.msg_if.pub_warn("Motor control ignored: slot " + str(motor_ind) +
-                                 " is out of range 0-" + str(len(slots) - 1))
-            return
-        motor_id = slots[motor_ind].get('motor_id', -1)
-        if motor_id is None or int(motor_id) < 0:
-            self.msg_if.pub_warn("Motor control ignored: slot " + str(motor_ind) +
-                                 " has no RoboRIO motor_id mapped")
-            return
+        with self.motor_lock:
+            self.syncMotorRatios()
+            slots = self.getSlots()
+            if motor_ind < 0 or motor_ind >= len(slots):
+                self.msg_if.pub_warn("Motor control ignored: slot " + str(motor_ind) +
+                                     " is out of range 0-" + str(len(slots) - 1))
+                return
+            motor_id = slots[motor_ind].get('motor_id', -1)
+            if motor_id is None or int(motor_id) < 0:
+                self.msg_if.pub_warn("Motor control ignored: slot " + str(motor_ind) +
+                                     " has no RoboRIO motor_id mapped")
+                return
 
-        speed_ratio = max(0.0, min(1.0, float(speed_ratio)))
-        self.motor_ratios[motor_ind] = speed_ratio
-        try:
-            self.setMotorCommandFunction(int(motor_id), speed_ratio)
-        except Exception as e:
-            self.msg_if.pub_warn("Failed to write motor command for slot " +
-                                 str(motor_ind) + ": " + str(e))
+            speed_ratio = max(0.0, min(1.0, float(speed_ratio)))
+            self.motor_ratios[motor_ind] = speed_ratio
+            # Every operator command restarts the timeout, including a repeat
+            # of the current value -- re-sliding is how an operator says "keep
+            # going", the same as on the ArduPilot motor test.
+            self.motor_command_times[motor_ind] = nepi_sdk.get_time()
+            self.writeMotorRatio(motor_ind, motor_id, speed_ratio)
 
     def goStop(self):
         self.logCommandEntry("go_stop", "zeroing " + str(len(self.motor_ratios)) +
                              " motor ratios")
         self.stop_triggered = True
-        for i in range(len(self.motor_ratios)):
-            self.motor_ratios[i] = 0.0
+        # Per-motor zeros first, IN ADDITION to the STOP request below, not
+        # instead of it: STOP is one request the RoboRIO may or may not act on
+        # for motors it drives individually, and the per-motor keys are what a
+        # running motor is actually reading.
+        self.zero_all_motors("stop")
         return self.sendCommandRequest(self.command_types['stop'],
                                        chassis_speeds=dict(velocity_x_mps=0.0,
                                                            velocity_y_mps=0.0,
@@ -772,6 +956,90 @@ class WpilibRbxIF:
         except Exception as e:
             self.msg_if.pub_warn("Failed to read navpose: " + str(e), throttle_s=10.0)
             return None
+
+    ##########################
+    # Manual motor stream
+
+    # Caller must hold motor_lock. motor_ids is per slot, the motor_id each
+    # slot's zero goes to. None leaves that slot alone; a negative id clears its
+    # ratio with nothing to write, so a stale ratio can never ride onto a
+    # mapping made later. Every cleared slot stays cleared whether or not its
+    # write lands.
+    #
+    # If the NetworkTables client is gone the zero cannot be written. That is
+    # logged and nothing more is attempted: the RoboRIO's per-motor 250 ms
+    # watchdog (docs/ROBORIO_MOTOR_CONTRACT.md) stops the motor on its own once
+    # the keepalive goes quiet, which it does because the ratio is now 0.
+    def zeroSlots(self, motor_ids, reason):
+        success = True
+        for motor_ind in range(min(len(motor_ids), len(self.motor_ratios))):
+            if self.motor_ratios[motor_ind] <= 0.0:
+                continue
+            motor_id = motor_ids[motor_ind]
+            if motor_id is None:
+                continue
+            self.motor_ratios[motor_ind] = 0.0
+            if int(motor_id) < 0:
+                continue
+            if self.writeMotorRatio(motor_ind, motor_id, 0.0) is False:
+                success = False
+                self.msg_if.pub_warn("Could not zero motor slot " + str(motor_ind) +
+                                     " (RoboRIO motor_id " + str(motor_id) + ") on " +
+                                     str(reason) + ": relying on the RoboRIO watchdog")
+            else:
+                self.msg_if.pub_info("Zeroed motor slot " + str(motor_ind) +
+                                     " (RoboRIO motor_id " + str(motor_id) + ") on " +
+                                     str(reason))
+        return success
+
+    # Caller must hold motor_lock. Returns the write's own success, so callers
+    # that zero a motor can say when the zero did not land.
+    def writeMotorRatio(self, motor_ind, motor_id, speed_ratio, throttle_s=None):
+        try:
+            success = self.setMotorCommandFunction(int(motor_id), speed_ratio)
+        except Exception as e:
+            self.msg_if.pub_warn("Failed to write motor command for slot " +
+                                 str(motor_ind) + ": " + str(e), throttle_s=throttle_s)
+            return False
+        return success is not False
+
+    def motorKeepaliveCb(self, timer):
+        if self.rbx_if is None:
+            return
+        try:
+            self.streamMotorRatios()
+        except Exception as e:
+            self.msg_if.pub_warn("Motor keepalive failed: " + str(e), throttle_s=10.0)
+
+    def streamMotorRatios(self):
+        # Re-sends every nonzero slot so its NetworkTables timestamp changes on
+        # every tick; the RoboRIO's per-motor 250 ms watchdog triggers on that
+        # key going quiet. A zero is written once, on change, by whoever set it
+        # and is never streamed: a motor the watchdog has already stopped needs
+        # nothing more. See docs/ROBORIO_MOTOR_CONTRACT.md.
+        timeout_s = self.getMotorTestTimeout()
+        now = nepi_sdk.get_time()
+        # Slots are read inside the lock, so a remap that zeroed a slot cannot
+        # be followed by a re-send to the mapping it just left.
+        with self.motor_lock:
+            self.syncMotorRatios()
+            slots = self.getSlots()
+            for motor_ind in range(min(len(slots), len(self.motor_ratios))):
+                speed_ratio = self.motor_ratios[motor_ind]
+                if speed_ratio <= 0.0:
+                    continue
+                motor_id = slots[motor_ind].get('motor_id', -1)
+                if motor_id is None or int(motor_id) < 0:
+                    continue
+                if (now - self.motor_command_times[motor_ind]) > timeout_s:
+                    self.motor_ratios[motor_ind] = 0.0
+                    self.writeMotorRatio(motor_ind, motor_id, 0.0)
+                    self.msg_if.pub_warn("Motor slot " + str(motor_ind) + " (RoboRIO motor_id " +
+                                         str(motor_id) + ") stopped: no operator command for " +
+                                         str(timeout_s) + " s (motor_test_timeout_s)")
+                    continue
+                # Throttled: a dead link fails this write at the stream rate.
+                self.writeMotorRatio(motor_ind, motor_id, speed_ratio, throttle_s=10.0)
 
     ##########################
     # RBX Feedback -> device state

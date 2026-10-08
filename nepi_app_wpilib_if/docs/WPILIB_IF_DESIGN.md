@@ -30,6 +30,10 @@ motor somehow. Either the RoboRIO implements this key group or per-motor manual
 control does not exist for this robot. This app implements the write; the
 RoboRIO side is a stated dependency, not an assumption.
 
+The RoboRIO side of Motor Command (key types, the 10 Hz keepalive, the required
+250 ms per-motor watchdog, STOP and the operator timeout) is specified in
+[`ROBORIO_MOTOR_CONTRACT.md`](ROBORIO_MOTOR_CONTRACT.md).
+
 ---
 
 ## Decision 1 — Where motor feedback lives
