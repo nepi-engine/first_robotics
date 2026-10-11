@@ -298,6 +298,11 @@ class WpilibRbxIF:
             # a waypoint -- so a robot can advertise either, both or neither.
             gotoVelocityFunction=(self.gotoVelocity
                                   if self.hasCapability(CAPABILITY_GOTO_VELOCITY) else None),
+            # Reported on DeviceRBXStatus so a client (Auto Move) can size its
+            # requests to the robot instead of relying on the clamp in
+            # gotoVelocity. Unconditional: getMaxSpeeds() already reads 0.0 for
+            # "not reported", which is what the status field means by it too.
+            getMaxSpeedsFunction=self.getMaxSpeeds,
             # None: the RoboRIO has no global position reference in this
             # contract. Robot Position is a local field-frame x/y/heading, so
             # there is no lat/lon to command to.

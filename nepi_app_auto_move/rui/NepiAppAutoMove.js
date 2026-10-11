@@ -472,6 +472,7 @@ class NepiAppAutoMove extends Component {
 
     const velocity_mode = (status_msg.goto_velocity_enabled === true)
     const robot_has_velocity = (status_msg.rbx_has_goto_velocity === true)
+    const has_max_speed = (status_msg.robot_max_speed_mps > 0)
 
     return (
       <Section title={"Goto"}>
@@ -535,17 +536,43 @@ class NepiAppAutoMove extends Component {
 
         {/* Velocity mode. Device Speed sits FIRST because the four boxes under
             it are computed from it: the click distance divided by this speed is
-            the duration, and the velocities follow from that duration. */}
+            the duration, and the velocities follow from that duration.
+
+            A robot that reports its max speed gets a ratio slider against that
+            max. One that does not (0.0 on the wire) falls back to the hand
+            entered m/s box. A new speed applies from the next click. */}
         <div hidden={velocity_mode === false}>
 
-          <Label title={"Device Speed (m/s)"}>
-            <Input
-              id={"AutoMoveMoveSpeed"}
-              value={this.state.move_speed}
-              onChange={(e) => this.onUpdateGotoText(e, 'move_speed', 'AutoMoveMoveSpeed')}
-              onKeyDown={(e) => this.onKeyGotoText(e, 'AutoMoveMoveSpeed', appNamespace + "/set_move_speed")}
+          <div hidden={has_max_speed === false}>
+            <SliderAdjustment
+              title={"Device Speed"}
+              msgType={"std_msgs/Float32"}
+              adjustment={status_msg.move_speed_ratio}
+              topic={appNamespace + "/set_move_speed_ratio"}
+              scaled={0.01}
+              min={5}
+              max={100}
+              disabled={false}
+              tooltip={"Velocity move speed as a percent of the robot's reported max speed"}
+              unit={"%"}
             />
-          </Label>
+            <Label title={"Speed (m/s)"}>
+              {round(status_msg.robot_max_speed_mps * status_msg.move_speed_ratio, 2) +
+               " of " + round(status_msg.robot_max_speed_mps, 2) + " max"}
+            </Label>
+          </div>
+
+          <div hidden={has_max_speed === true}>
+            <Label title={"Device Speed (m/s)"}>
+              <Input
+                id={"AutoMoveMoveSpeed"}
+                value={this.state.move_speed}
+                onChange={(e) => this.onUpdateGotoText(e, 'move_speed', 'AutoMoveMoveSpeed')}
+                onKeyDown={(e) => this.onKeyGotoText(e, 'AutoMoveMoveSpeed', appNamespace + "/set_move_speed")}
+              />
+            </Label>
+            <Label title={"Robot reports no max speed"} />
+          </div>
 
           <Label title={"X Velocity (m/s)"}>
             <Input

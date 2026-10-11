@@ -147,19 +147,24 @@ string click_msg
 # one a Goto issues -- it does not change how the click itself is resolved.
 bool goto_velocity_enabled
 
-# The operator's statement of how fast this robot moves, in METERS PER SECOND,
-# ENTERED BY HAND. A clicked distance is divided by this to get a duration, so
-# it is the one number that turns a position into a timed move.
+# A clicked distance is divided by a move speed to get a duration, so the speed
+# is the one number that turns a position into a timed move. Which speed is used
+# depends on whether the robot reports its own limit:
 #
-# NEPI does not read it from the robot and does not check it. The RBX contract
-# reports no chassis speed anywhere -- DeviceRBXStatus and DeviceRBXInfo carry
-# none, and the only speed RBX exposes is a unitless per-motor ratio -- so there
-# is nothing on this side to check it against. The only check that exists is
-# downstream: the WPILib app clamps the outgoing command to the maximum the
-# RoboRIO reports.
+#   robot_max_speed_mps > 0   speed = robot_max_speed_mps * move_speed_ratio
+#   robot_max_speed_mps == 0  speed = move_speed_mps, entered by hand
 #
-# Persisted PER APP, not per robot. It does not follow a change of robot
-# selection; an operator switching robots retypes it.
+# The selected robot's max linear speed in METERS PER SECOND, as its
+# DeviceRBXStatus.max_velocity_mps reports it. 0.0 means "not reported", never
+# "may not move".
+float32 robot_max_speed_mps
+# Fraction of robot_max_speed_mps a velocity move runs at, 0.05-1.0.
+float32 move_speed_ratio
+# The hand entered fallback, in METERS PER SECOND. Unchecked against the robot:
+# only the WPILib app's downstream clamp checks it.
+#
+# Both are persisted PER APP, not per robot. They do not follow a change of
+# robot selection.
 float32 move_speed_mps
 
 # The velocity the last click resolved to, in the body frame of
@@ -172,7 +177,7 @@ float32 goto_z_mps
 # zero: a click gives a translation, not a rotation.
 float32 goto_yaw_degps
 # How long the robot holds that velocity, in seconds. Derived as the clicked
-# distance divided by move_speed_mps, then clamped.
+# distance divided by the move speed above, then clamped.
 float32 goto_duration_s
 
 # Whether the SELECTED ROBOT advertises timed velocity moves at all. False means
