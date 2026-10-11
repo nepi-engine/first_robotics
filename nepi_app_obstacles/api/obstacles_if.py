@@ -1857,7 +1857,6 @@ class ObstaclesIF:
         self.process_status_msg.max_process_rate = max_process_rate
 
         #################
-        self.process_status_msg.show_sources = True
         self.process_status_msg.show_controls = True
         self.process_status_msg.show_data = True
 
