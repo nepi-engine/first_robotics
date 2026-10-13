@@ -341,7 +341,7 @@ class NepiStereoCamApp(object):
 
         ##############################
         # Create Msg Class
-        self.msg_if = MsgIF(log_name=self.class_name)
+        self.msg_if = MsgIF()
         self.msg_if.pub_info("Starting IF Initialization Processes")
 
         ##############################
@@ -541,7 +541,6 @@ class NepiStereoCamApp(object):
             data_ref_description='left_camera_lense',
             perspective='pov',
             pub_image=True,
-            log_name_list=[self.node_name],
             msg_if=self.msg_if
         )
         self.depth_map_if.wait_for_ready()
@@ -1597,7 +1596,6 @@ class NepiStereoCamApp(object):
                         controls_description = 'Controls for stereo process ' + str(process_name),
                         controls_init_dict = stereo_settings.PROCESSES_DICT[process_name]['default_controls_dict'],
                         controls_updated_callback = self.makeProcessControlsUpdatedCb(process_name),
-                        log_name = process_name,
                         msg_if = self.msg_if)
             controls_if.wait_for_controls_ready()
             self.process_controls_ifs[process_name] = controls_if
@@ -1714,7 +1712,6 @@ class NepiStereoCamApp(object):
                     controls_description = 'Stereo pipeline tuning: frame pairing, frame time source, calibration capture gates',
                     controls_init_dict = self.createAdvancedControlsInitDict(),
                     controls_updated_callback = self.advancedControlsUpdatedCb,
-                    log_name = ADVANCED_CONTROLS_NAME,
                     msg_if = self.msg_if)
         self.advanced_controls_if.wait_for_controls_ready()
         # Adopt whatever the IF restored from its param before anything reads the
@@ -1868,7 +1865,6 @@ class NepiStereoCamApp(object):
                     controls_description = 'One control of every supported type',
                     controls_init_dict = self.createExampleControlsInitDict(),
                     controls_updated_callback = self.exampleControlsUpdatedCb,
-                    log_name = EXAMPLE_CONTROLS_NAME,
                     msg_if = self.msg_if)
         self.example_controls_if.wait_for_controls_ready()
 

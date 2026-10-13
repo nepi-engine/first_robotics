@@ -141,7 +141,6 @@ class WpilibRbxIF:
                  writeCommandRequestFunction,
                  command_types,
                  supported_capabilities=None,
-                 log_name=None,
                  msg_if=None):
         """Build and own the RBX device for the WPILib robot.
 
@@ -164,7 +163,6 @@ class WpilibRbxIF:
                 'chassis_speeds', 'target_pose', 'named_action', 'stop'.
             supported_capabilities (list): Capability strings from the RBX
                 Feedback group. Decides which callbacks are non-None.
-            log_name (str): Optional log name for this interface.
             msg_if (MsgIF): Shared message interface, or None to create one.
         """
         self.class_name = type(self).__name__
@@ -185,8 +183,7 @@ class WpilibRbxIF:
         if msg_if is not None:
             self.msg_if = msg_if
         else:
-            self.msg_if = MsgIF(log_name=self.class_name)
-        self.log_name = log_name
+            self.msg_if = MsgIF()
 
         ##############################
         # Command and state tracking
@@ -309,7 +306,6 @@ class WpilibRbxIF:
             gotoLocationFunction=None,
             getNavPoseCb=self.getNavPoseCb,
             navpose_update_rate=10,
-            log_name=self.log_name,
             msg_if=self.msg_if)
 
         self.namespace = self.rbx_if.namespace

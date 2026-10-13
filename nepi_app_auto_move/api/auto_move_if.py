@@ -357,8 +357,6 @@ class AutoMoveIF:
                 planMoveFunction,
                 planVelocityMoveFunction = None,
                 enable_image_pub = True,
-                log_name = None,
-                log_name_list = [],
                 msg_if = None
                 ):
         ####  IF INIT SETUP ####
@@ -373,11 +371,7 @@ class AutoMoveIF:
             self.msg_if = msg_if
         else:
             self.msg_if = MsgIF()
-        self.log_name_list = copy.deepcopy(log_name_list)
-        self.log_name_list.append(self.class_name)
-        if log_name is not None:
-            self.log_name_list.append(log_name)
-        self.msg_if.pub_debug("Starting AutoMove IF Initialization Processes", log_name_list = self.log_name_list)
+        self.msg_if.pub_debug("Starting AutoMove IF Initialization Processes")
 
         ##############################
         # Init Class Variables
@@ -399,17 +393,17 @@ class AutoMoveIF:
 
         ##############################
         # Get System Folders
-        self.msg_if.pub_info("Waiting for system folders", log_name_list = self.log_name_list)
-        system_folders = nepi_system.get_system_folders(log_name_list = [self.node_name])
+        self.msg_if.pub_info("Waiting for system folders")
+        system_folders = nepi_system.get_system_folders()
         while system_folders is None and nepi_sdk.is_shutdown() == False:
-            system_folders = nepi_system.get_system_folders(log_name_list = [self.node_name])
+            system_folders = nepi_system.get_system_folders()
             nepi_sdk.sleep(1)
 
         if system_folders is not None and 'api_lib' in system_folders.keys():
             self.api_lib_folder = system_folders['api_lib']
         # The app's own lib folder is a sibling of the nepi_api lib folder.
         self.img_pub_lib_folder = os.path.join(os.path.dirname(self.api_lib_folder), IMG_PUB_PKG_NAME)
-        self.msg_if.pub_info("Using image pub lib folder: " + str(self.img_pub_lib_folder), log_name_list = self.log_name_list)
+        self.msg_if.pub_info("Using image pub lib folder: " + str(self.img_pub_lib_folder))
 
         ##############################
         ### Setup Node
@@ -671,8 +665,7 @@ class AutoMoveIF:
                 'callback_args': ()
             }
         else:
-            self.msg_if.pub_info("Obstacles message package not installed, obstacle overlay disabled",
-                                 log_name_list = self.log_name_list)
+            self.msg_if.pub_info("Obstacles message package not installed, obstacle overlay disabled")
 
         # Create Node Class ####################
         self.node_if = NodeClassIF(
@@ -681,7 +674,6 @@ class AutoMoveIF:
                         services_dict = self.SRVS_DICT,
                         pubs_dict = self.PUBS_DICT,
                         subs_dict = self.SUBS_DICT,
-                        log_name_list = self.log_name_list,
                         msg_if = self.msg_if
                         )
         self.node_if.wait_for_ready()
@@ -700,8 +692,6 @@ class AutoMoveIF:
                         controls_display_name = 'Auto Move Controls',
                         controls_description = self.description,
                         controls_init_dict = self.controls_dict,
-                        log_name = CONTROLS_NAME,
-                        log_name_list = self.log_name_list,
                         msg_if = self.msg_if)
         self.controls_if.wait_for_controls_ready()
 
@@ -723,7 +713,7 @@ class AutoMoveIF:
 
         self.ready = True
         ##########################
-        self.msg_if.pub_info("IF Initialization Complete", log_name_list = self.log_name_list)
+        self.msg_if.pub_info("IF Initialization Complete")
         ##########################
 
 
@@ -829,19 +819,19 @@ class AutoMoveIF:
 
         node_file_path = os.path.join(self.img_pub_lib_folder, IMG_PUB_NODE_FILE)
         if self.launch_node_process is not None:
-            self.msg_if.pub_warn("Node Already Launched: " + node_name, log_name_list = self.log_name_list)
+            self.msg_if.pub_warn("Node Already Launched: " + node_name)
         elif self.enable_image_pub == False:
-            self.msg_if.pub_info("Image pub node disabled", log_name_list = self.log_name_list)
+            self.msg_if.pub_info("Image pub node disabled")
         elif os.path.exists(node_file_path) == False:
-            self.msg_if.pub_warn("Could not find Node File at: " + node_file_path, log_name_list = self.log_name_list)
+            self.msg_if.pub_warn("Could not find Node File at: " + node_file_path)
         else:
-            self.msg_if.pub_info("Launching Auto Move Img Node with settings " + str([IMG_PUB_PKG_NAME, IMG_PUB_NODE_FILE, node_name]), log_name_list = self.log_name_list)
+            self.msg_if.pub_info("Launching Auto Move Img Node with settings " + str([IMG_PUB_PKG_NAME, IMG_PUB_NODE_FILE, node_name]))
             [success, msg, sub_process] = nepi_sdk.launch_node(IMG_PUB_PKG_NAME, IMG_PUB_NODE_FILE, node_name, namespace = launch_namespace)
             if success == True:
                 self.launch_node_process = sub_process
                 self.pub_img_node_name = node_name
                 self.pub_img_namespace = node_namespace
-            self.msg_if.pub_info("Node launch return msg: " + str(msg), log_name_list = self.log_name_list)
+            self.msg_if.pub_info("Node launch return msg: " + str(msg))
 
     def kill_image_pub_node(self):
         """Terminate the running auto move overlay image publisher node.
@@ -851,16 +841,16 @@ class AutoMoveIF:
         on success. Logs a warning if the node is not currently running.
         """
         if self.launch_node_process is None:
-            self.msg_if.pub_warn("Node Not Running", log_name_list = self.log_name_list)
+            self.msg_if.pub_warn("Node Not Running")
         else:
             success = nepi_sdk.kill_node_process(self.pub_img_node_name, self.launch_node_process)
             if success == True:
                 self.launch_node_process = None
                 self.pub_img_node_name = ""
                 self.pub_img_namespace = ""
-                self.msg_if.pub_info("Node Killed", log_name_list = self.log_name_list)
+                self.msg_if.pub_info("Node Killed")
             else:
-                self.msg_if.pub_warn("Failed to Kill Node", log_name_list = self.log_name_list)
+                self.msg_if.pub_warn("Failed to Kill Node")
 
     def save_config(self):
         """Persist this interface's parameters through the config manager."""
@@ -981,7 +971,6 @@ class AutoMoveIF:
                         show_selector = True,
                         show_controls = False,
                         show_data = False,
-                        log_name = RBX_CONNECT_NAME,
                         msg_if = self.msg_if)
 
         self.image_if = ConnectImageIF(
@@ -1083,7 +1072,7 @@ class AutoMoveIF:
             selected_topic = 'None'
 
         if selected_topic != self.image_topic:
-            self.msg_if.pub_info("Image selection changed to: " + str(selected_topic), log_name_list = self.log_name_list)
+            self.msg_if.pub_info("Image selection changed to: " + str(selected_topic))
             self.image_topic = selected_topic
             self.resolveCompanionTopics()
             self.subscribeSourceTopics()
@@ -1179,10 +1168,9 @@ class AutoMoveIF:
             },
         }
 
-        self.msg_if.pub_info('Registering to depth map topic: ' + str(self.depth_map_topic), log_name_list = self.log_name_list)
+        self.msg_if.pub_info('Registering to depth map topic: ' + str(self.depth_map_topic))
         self.source_subs_if = NodeSubscribersIF(
                 subs_dict = source_subs_dict,
-                log_name_list = self.log_name_list,
                 msg_if = self.msg_if)
         self.subscribed_image_topic = self.image_topic
 
@@ -1191,7 +1179,7 @@ class AutoMoveIF:
             try:
                 self.source_subs_if.unregister_subs()
             except Exception as e:
-                self.msg_if.pub_warn("Failed to unregister source subs: " + str(e), log_name_list = self.log_name_list)
+                self.msg_if.pub_warn("Failed to unregister source subs: " + str(e))
             self.source_subs_if = None
         self.subscribed_image_topic = 'None'
 
@@ -1232,10 +1220,9 @@ class AutoMoveIF:
             },
         }
 
-        self.msg_if.pub_info('Registering to robot navpose topic: ' + str(navpose_topic), log_name_list = self.log_name_list)
+        self.msg_if.pub_info('Registering to robot navpose topic: ' + str(navpose_topic))
         self.robot_subs_if = NodeSubscribersIF(
                 subs_dict = robot_subs_dict,
-                log_name_list = self.log_name_list,
                 msg_if = self.msg_if)
         self.robot_navpose_topic = navpose_topic
 
@@ -1244,7 +1231,7 @@ class AutoMoveIF:
             try:
                 self.robot_subs_if.unregister_subs()
             except Exception as e:
-                self.msg_if.pub_warn("Failed to unregister robot subs: " + str(e), log_name_list = self.log_name_list)
+                self.msg_if.pub_warn("Failed to unregister robot subs: " + str(e))
             self.robot_subs_if = None
         self.robot_navpose_topic = ''
         self.robot_velocity_dict = None
@@ -1294,7 +1281,7 @@ class AutoMoveIF:
         try:
             np_depth_map = nepi_img.rosimg_to_cv2img(img_msg)
         except Exception as e:
-            self.msg_if.pub_warn("Failed to convert depth map: " + str(e), log_name_list = self.log_name_list, throttle_s = 5.0)
+            self.msg_if.pub_warn("Failed to convert depth map: " + str(e), throttle_s = 5.0)
             return
 
         self.depth_map_lock.acquire()
@@ -1745,7 +1732,7 @@ class AutoMoveIF:
             range_m = range_mm / 1000.0
             return range_m
         except Exception as e:
-            self.msg_if.pub_warn("Failed to sample depth map: " + str(e), log_name_list = self.log_name_list, throttle_s = 5.0)
+            self.msg_if.pub_warn("Failed to sample depth map: " + str(e), throttle_s = 5.0)
             return None
 
     ##########################################
@@ -1760,12 +1747,12 @@ class AutoMoveIF:
     def startGoto(self):
         if self.goto_state == NepiAppAutoMoveStatus.GOTO_STATE_PLANNING or \
                 self.goto_state == NepiAppAutoMoveStatus.GOTO_STATE_MOVING:
-            self.msg_if.pub_warn("Goto already running", log_name_list = self.log_name_list)
+            self.msg_if.pub_warn("Goto already running")
             return
         if self.rbx_if is None or self.rbx_connected == False:
             self.goto_state = NepiAppAutoMoveStatus.GOTO_STATE_IDLE
             self.goto_msg = 'No robot connected'
-            self.msg_if.pub_warn("Goto ignored: no robot connected", log_name_list = self.log_name_list)
+            self.msg_if.pub_warn("Goto ignored: no robot connected")
             self.publish_status()
             return
 
@@ -1778,8 +1765,7 @@ class AutoMoveIF:
         if self.goto_velocity_enabled == True and self.rbx_has_goto_velocity == False:
             self.goto_state = NepiAppAutoMoveStatus.GOTO_STATE_IDLE
             self.goto_msg = 'Connected robot does not support velocity moves'
-            self.msg_if.pub_warn("Velocity goto ignored: selected robot reports no goto_velocity capability",
-                                 log_name_list = self.log_name_list)
+            self.msg_if.pub_warn("Velocity goto ignored: selected robot reports no goto_velocity capability")
             self.publish_status()
             return
 
@@ -1826,7 +1812,7 @@ class AutoMoveIF:
             caps_dict = self.rbx_if.get_goto_capabilities()
         except Exception as e:
             self.msg_if.pub_warn("Failed to read robot capabilities: " + str(e),
-                                 log_name_list = self.log_name_list, throttle_s = 10.0)
+                                 throttle_s = 10.0)
             return
         if isinstance(caps_dict, dict):
             self.rbx_has_goto_velocity = (caps_dict.get('has_goto_velocity', False) == True)
@@ -1837,7 +1823,7 @@ class AutoMoveIF:
             try:
                 self.rbx_if.go_stop()
             except Exception as e:
-                self.msg_if.pub_warn("Failed to send stop: " + str(e), log_name_list = self.log_name_list)
+                self.msg_if.pub_warn("Failed to send stop: " + str(e))
         self.goto_plan = []
         self.goto_step = 0
         self.goto_step_count = 0
@@ -1853,7 +1839,7 @@ class AutoMoveIF:
             elif self.goto_state == NepiAppAutoMoveStatus.GOTO_STATE_MOVING:
                 self.runMoving()
         except Exception as e:
-            self.msg_if.pub_warn("Goto process failed: " + str(e), log_name_list = self.log_name_list, throttle_s = 5.0)
+            self.msg_if.pub_warn("Goto process failed: " + str(e), throttle_s = 5.0)
             self.goto_state = NepiAppAutoMoveStatus.GOTO_STATE_IDLE
             self.goto_msg = 'Goto process failed: ' + str(e)
             self.publish_status()

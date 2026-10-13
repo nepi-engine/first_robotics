@@ -249,8 +249,6 @@ class ObstaclesIF:
                 controls_dict,
                 processResultsFunction,
                 enable_image_pub = True,
-                log_name = None,
-                log_name_list = [],
                 msg_if = None
                 ):
         ####  IF INIT SETUP ####
@@ -265,11 +263,7 @@ class ObstaclesIF:
             self.msg_if = msg_if
         else:
             self.msg_if = MsgIF()
-        self.log_name_list = copy.deepcopy(log_name_list)
-        self.log_name_list.append(self.class_name)
-        if log_name is not None:
-            self.log_name_list.append(log_name)
-        self.msg_if.pub_debug("Starting Obstacles IF Initialization Processes", log_name_list = self.log_name_list)
+        self.msg_if.pub_debug("Starting Obstacles IF Initialization Processes")
 
         ##############################
         # Init Class Variables
@@ -290,17 +284,17 @@ class ObstaclesIF:
 
         ##############################
         # Get System Folders
-        self.msg_if.pub_info("Waiting for system folders", log_name_list = self.log_name_list)
-        system_folders = nepi_system.get_system_folders(log_name_list = [self.node_name])
+        self.msg_if.pub_info("Waiting for system folders")
+        system_folders = nepi_system.get_system_folders()
         while system_folders is None and nepi_sdk.is_shutdown() == False:
-            system_folders = nepi_system.get_system_folders(log_name_list = [self.node_name])
+            system_folders = nepi_system.get_system_folders()
             nepi_sdk.sleep(1)
 
         if system_folders is not None and 'api_lib' in system_folders.keys():
             self.api_lib_folder = system_folders['api_lib']
         # The app's own lib folder is a sibling of the nepi_api lib folder.
         self.img_pub_lib_folder = os.path.join(os.path.dirname(self.api_lib_folder), IMG_PUB_PKG_NAME)
-        self.msg_if.pub_info("Using image pub lib folder: " + str(self.img_pub_lib_folder), log_name_list = self.log_name_list)
+        self.msg_if.pub_info("Using image pub lib folder: " + str(self.img_pub_lib_folder))
 
         ## Init Status Messages
         self.process_status_msg.node_name = self.node_name
@@ -654,7 +648,6 @@ class ObstaclesIF:
                         services_dict = self.SRVS_DICT,
                         pubs_dict = self.PUBS_DICT,
                         subs_dict = self.SUBS_DICT,
-                        log_name_list = self.log_name_list,
                         msg_if = self.msg_if
                         )
         self.node_if.wait_for_ready()
@@ -673,8 +666,6 @@ class ObstaclesIF:
                         controls_display_name = 'Obstacles Controls',
                         controls_description = self.description,
                         controls_init_dict = self.controls_dict,
-                        log_name = 'controls',
-                        log_name_list = self.log_name_list,
                         msg_if = self.msg_if)
         self.controls_if.wait_for_controls_ready()
 
@@ -684,7 +675,6 @@ class ObstaclesIF:
         self.states_if = StatesIF(
                         states_name = 'obstacles',
                         get_states_dict_function = self.getObstaclesStates,
-                        log_name_list = self.log_name_list,
                         msg_if = self.msg_if)
 
         # Setup Triggers IF
@@ -698,7 +688,6 @@ class ObstaclesIF:
                             }
         }
         self.triggers_if = TriggersIF(triggers_dict = self.triggers_dict,
-                        log_name_list = self.log_name_list,
                         msg_if = self.msg_if)
 
         # Setup Save Data IF
@@ -709,13 +698,12 @@ class ObstaclesIF:
         self.save_data_if = SaveDataIF(namespace = self.namespace,
                         data_products = self.data_products,
                         factory_rate_dict = factory_data_rates,
-                        log_name_list = self.log_name_list,
                         msg_if = self.msg_if)
         nepi_sdk.sleep(1)
         if self.save_data_if is not None:
             self.save_data_namespace = self.save_data_if.get_namespace()
             self.process_status_msg.save_data_topic = self.save_data_namespace
-            self.msg_if.pub_info("Using save_data namespace: " + str(self.save_data_namespace), log_name_list = self.log_name_list)
+            self.msg_if.pub_info("Using save_data namespace: " + str(self.save_data_namespace))
 
         ###############################
         # Launch the overlay image publisher node
@@ -734,7 +722,7 @@ class ObstaclesIF:
         self.msg_str = 'Loaded'
         self.ready = True
         ##########################
-        self.msg_if.pub_info("IF Initialization Complete", log_name_list = self.log_name_list)
+        self.msg_if.pub_info("IF Initialization Complete")
         ##########################
 
 
@@ -786,19 +774,19 @@ class ObstaclesIF:
 
         node_file_path = os.path.join(self.img_pub_lib_folder, IMG_PUB_NODE_FILE)
         if self.launch_node_process is not None:
-            self.msg_if.pub_warn("Node Already Launched: " + node_name, log_name_list = self.log_name_list)
+            self.msg_if.pub_warn("Node Already Launched: " + node_name)
         elif self.enable_image_pub == False:
-            self.msg_if.pub_info("Image pub node disabled", log_name_list = self.log_name_list)
+            self.msg_if.pub_info("Image pub node disabled")
         elif os.path.exists(node_file_path) == False:
-            self.msg_if.pub_warn("Could not find Node File at: " + node_file_path, log_name_list = self.log_name_list)
+            self.msg_if.pub_warn("Could not find Node File at: " + node_file_path)
         else:
-            self.msg_if.pub_info("Launching Obstacles Img Node with settings " + str([IMG_PUB_PKG_NAME, IMG_PUB_NODE_FILE, node_name]), log_name_list = self.log_name_list)
+            self.msg_if.pub_info("Launching Obstacles Img Node with settings " + str([IMG_PUB_PKG_NAME, IMG_PUB_NODE_FILE, node_name]))
             [success, msg, sub_process] = nepi_sdk.launch_node(IMG_PUB_PKG_NAME, IMG_PUB_NODE_FILE, node_name, namespace = launch_namespace)
             if success == True:
                 self.launch_node_process = sub_process
                 self.pub_img_node_name = node_name
                 self.pub_img_namespace = node_namespace
-            self.msg_if.pub_info("Node launch return msg: " + str(msg), log_name_list = self.log_name_list)
+            self.msg_if.pub_info("Node launch return msg: " + str(msg))
 
     def kill_image_pub_node(self):
         """Terminate the running obstacles overlay image publisher node.
@@ -808,16 +796,16 @@ class ObstaclesIF:
         on success. Logs a warning if the node is not currently running.
         """
         if self.launch_node_process is None:
-            self.msg_if.pub_warn("Node Not Running", log_name_list = self.log_name_list)
+            self.msg_if.pub_warn("Node Not Running")
         else:
             success = nepi_sdk.kill_node_process(self.pub_img_node_name, self.launch_node_process)
             if success == True:
                 self.launch_node_process = None
                 self.pub_img_node_name = ""
                 self.pub_img_namespace = ""
-                self.msg_if.pub_info("Node Killed", log_name_list = self.log_name_list)
+                self.msg_if.pub_info("Node Killed")
             else:
-                self.msg_if.pub_warn("Failed to Kill Node", log_name_list = self.log_name_list)
+                self.msg_if.pub_warn("Failed to Kill Node")
 
     def set_pub_image(self, enable):
         """Enable or disable overlay image publishing and persist the setting.
@@ -931,7 +919,7 @@ class ObstaclesIF:
                     if key in image_controls_dict.keys():
                         self.image_controls_dict[key] = image_controls_dict[key]
 
-            self.msg_if.pub_info("Init selected sources: " + str(self.selected_sources), log_name_list = self.log_name_list)
+            self.msg_if.pub_info("Init selected sources: " + str(self.selected_sources))
         if do_updates == True:
             pass
         self.publish_status()
@@ -1008,7 +996,7 @@ class ObstaclesIF:
         if source_topic not in source_topics:
             source_topics.append(source_topic)
         else:
-            self.msg_if.pub_warn('Source topic already selected: ' + str(source_topic), log_name_list = self.log_name_list)
+            self.msg_if.pub_warn('Source topic already selected: ' + str(source_topic))
         self.selected_sources = source_topics
         self.auto_select_active = False
         self.publish_status()
@@ -1147,7 +1135,7 @@ class ObstaclesIF:
             if os.path.basename(source_topic) in self.OUTPUT_IMG_PRODUCTS:
                 continue
             if source_topic not in active_source_topics and source_topic in available_source_topics:
-                self.msg_if.pub_info('Will subscribe to source topic: ' + source_topic, log_name_list = self.log_name_list)
+                self.msg_if.pub_info('Will subscribe to source topic: ' + source_topic)
                 if source_topic not in self.active_source_topics:
                     self.active_source_topics.append(source_topic)
                 self.subscribeSourceTopic(source_topic)
@@ -1158,7 +1146,7 @@ class ObstaclesIF:
             if source_topic not in available_source_topics or source_topic not in selected_sources:
                 purge_list.append(source_topic)
         for source_topic in purge_list:
-            self.msg_if.pub_info('Will unsubscribe from source topic: ' + source_topic, log_name_list = self.log_name_list)
+            self.msg_if.pub_info('Will unsubscribe from source topic: ' + source_topic)
             try:
                 self.active_source_topics.remove(source_topic)
             except ValueError:
@@ -1261,7 +1249,7 @@ class ObstaclesIF:
             self.source_ifs_lock.release()
             return True
 
-        self.msg_if.pub_info('Registering to source topic: ' + source_topic, log_name_list = self.log_name_list)
+        self.msg_if.pub_info('Registering to source topic: ' + source_topic)
 
         ####################
         # Create source info dict
@@ -1302,7 +1290,6 @@ class ObstaclesIF:
         # Subs Config
         source_subs_if = NodeSubscribersIF(
                 subs_dict = source_subs_dict,
-                log_name_list = self.log_name_list,
                 msg_if = self.msg_if)
 
         self.source_ifs_lock.acquire()
@@ -1457,7 +1444,7 @@ class ObstaclesIF:
                     self.source_dict[source_topic]['data'] = np_depth_map
                     self.source_dict[source_topic]['lock'].release()
                 except Exception as e:
-                    self.msg_if.pub_warn("Failed to write source dict " + str(source_topic) + " : " + str(e), log_name_list = self.log_name_list, throttle_s = 5.0)
+                    self.msg_if.pub_warn("Failed to write source dict " + str(source_topic) + " : " + str(e), throttle_s = 5.0)
 
     def navposeCb(self, msg, args):
         source_topic = args
@@ -1538,7 +1525,7 @@ class ObstaclesIF:
                                                                                                     controls_dict)
                     self.first_process_complete = True
                 except Exception as e:
-                    self.msg_if.pub_warn("Failed to process obstacles with exception: " + str(e), log_name_list = self.log_name_list, throttle_s = 5.0)
+                    self.msg_if.pub_warn("Failed to process obstacles with exception: " + str(e), throttle_s = 5.0)
                     obstacles_dict_list = []
 
                 ###############################
@@ -1718,7 +1705,7 @@ class ObstaclesIF:
             data_dict = nepi_sdk.convert_msg2dict(obstacles_msg)
             self.save_data_if.save('obstacles', data_dict, timestamp = timestamp)
         except Exception as e:
-            self.msg_if.pub_warn("Failed to save obstacles data: " + str(e), log_name_list = self.log_name_list, throttle_s = 5.0)
+            self.msg_if.pub_warn("Failed to save obstacles data: " + str(e), throttle_s = 5.0)
 
     def getObstacleMsg(self, obstacle_dict):
         obstacle_msg = None
@@ -1748,7 +1735,7 @@ class ObstaclesIF:
             obstacle_msg.elevation_deg = float(obstacle_dict['elevation_deg'])
         except Exception as e:
             obstacle_msg = None
-            self.msg_if.pub_warn("Failed to convert obstacle dict: " + str(e), log_name_list = self.log_name_list, throttle_s = 5.0)
+            self.msg_if.pub_warn("Failed to convert obstacle dict: " + str(e), throttle_s = 5.0)
         return obstacle_msg
 
     def getDepthMapImgMsg(self, np_depth_map):
@@ -1760,7 +1747,7 @@ class ObstaclesIF:
             img_msg = nepi_img.cv2img_to_rosimg(np_depth_map, encoding = '32FC1')
         except Exception as e:
             img_msg = None
-            self.msg_if.pub_warn("Failed to convert depth map to img msg: " + str(e), log_name_list = self.log_name_list, throttle_s = 5.0)
+            self.msg_if.pub_warn("Failed to convert depth map to img msg: " + str(e), throttle_s = 5.0)
         return img_msg if img_msg is not None else Image()
 
     ###############.########################

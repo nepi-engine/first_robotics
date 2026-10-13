@@ -181,7 +181,7 @@ class AutoMoveImgPub:
 
         ##############################
         # Create Msg Class
-        self.msg_if = MsgIF(log_name = self.class_name)
+        self.msg_if = MsgIF()
         self.msg_if.pub_info("Starting Node Initialization Processes")
 
         ##############################
@@ -490,11 +490,11 @@ class AutoMoveImgPub:
 
         self.msg_if.pub_info('Publishing image ' + source_topic + ' on namespace: ' + img_pub_topic)
 
-        img_pub = nepi_sdk.create_publisher(img_pub_topic, Image, queue_size = 1, log_name_list = [])
+        img_pub = nepi_sdk.create_publisher(img_pub_topic, Image, queue_size = 1)
         nepi_sdk.sleep(1)
-        img_sub = nepi_sdk.create_subscriber(source_topic, Image, self.imageCb, queue_size = 1, log_name_list = [])
+        img_sub = nepi_sdk.create_subscriber(source_topic, Image, self.imageCb, queue_size = 1)
         img_status_topic = nepi_sdk.create_namespace(source_topic, 'status')
-        img_status_sub = nepi_sdk.create_subscriber(img_status_topic, ImageStatus, self.imageStatusCb, queue_size = 1, log_name_list = [])
+        img_status_sub = nepi_sdk.create_subscriber(img_status_topic, ImageStatus, self.imageStatusCb, queue_size = 1)
 
         # The depth map render is a plain Image subscriber rather than a data IF:
         # this node only needs the colourized frame to blend, and the topic is
@@ -503,7 +503,7 @@ class AutoMoveImgPub:
         depth_map_image_topic = self.depth_map_image_topic
         if depth_map_image_topic is not None and depth_map_image_topic != '':
             depth_map_image_sub = nepi_sdk.create_subscriber(depth_map_image_topic, Image,
-                                                             self.depthMapImageCb, queue_size = 1, log_name_list = [])
+                                                             self.depthMapImageCb, queue_size = 1)
             self.msg_if.pub_info('Subscribing to depth map image: ' + str(depth_map_image_topic))
 
         img_if = ColorImageIF(namespace = pub_namespace,
@@ -515,8 +515,6 @@ class AutoMoveImgPub:
                         init_overlay_text_list = [],
                         live_adjustments_disabled = True,
                         aspect_adjustment_disabled = True,
-                        log_name = self.OVERLAY_IMG_DATA_PRODUCT,
-                        log_name_list = [],
                         msg_if = self.msg_if)
 
         self.img_node_lock.acquire()
@@ -713,7 +711,7 @@ class AutoMoveImgPub:
         depth_map_image_topic = self.depth_map_image_topic
         if depth_map_image_topic is not None and depth_map_image_topic != '':
             new_sub = nepi_sdk.create_subscriber(depth_map_image_topic, Image,
-                                                 self.depthMapImageCb, queue_size = 1, log_name_list = [])
+                                                 self.depthMapImageCb, queue_size = 1)
             self.msg_if.pub_info('Subscribing to depth map image: ' + str(depth_map_image_topic))
 
         self.img_node_lock.acquire()

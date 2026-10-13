@@ -274,7 +274,7 @@ class NepiWpilibApp(object):
 
         ##############################
         # Create Msg Class
-        self.msg_if = MsgIF(log_name=self.class_name)
+        self.msg_if = MsgIF()
         self.msg_if.pub_info("Starting IF Initialization Processes")
 
         ##############################
@@ -744,7 +744,6 @@ class NepiWpilibApp(object):
                         controls_description = 'One control of every supported type',
                         controls_init_dict = self.createExampleControlsInitDict(),
                         controls_updated_callback = self.exampleControlsUpdatedCb,
-                        log_name = EXAMPLE_CONTROLS_NAME,
                         msg_if = self.msg_if)
         self.example_controls_if.wait_for_controls_ready()
 
@@ -1608,7 +1607,6 @@ class NepiWpilibApp(object):
                 writeCommandRequestFunction=self.writeRbxCommandRequest,
                 command_types=RBX_COMMAND_TYPES,
                 supported_capabilities=capabilities,
-                log_name='rbx',
                 msg_if=self.msg_if)
         except Exception as e:
             self.rbx_if = None

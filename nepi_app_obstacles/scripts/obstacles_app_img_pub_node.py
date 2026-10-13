@@ -200,7 +200,7 @@ class ObstaclesImgPub:
 
         ##############################
         # Create Msg Class
-        self.msg_if = MsgIF(log_name = self.class_name)
+        self.msg_if = MsgIF()
         self.msg_if.pub_info("Starting Node Initialization Processes")
 
         ##############################
@@ -655,14 +655,14 @@ class ObstaclesImgPub:
                 return False
             self.img_node_lock.acquire()
             if source_topic in self.img_node_dict.keys():
-                self.img_node_dict[source_topic]['img_pub'] = nepi_sdk.create_publisher(img_pub_topic, Image, queue_size = 1, log_name_list = [])
+                self.img_node_dict[source_topic]['img_pub'] = nepi_sdk.create_publisher(img_pub_topic, Image, queue_size = 1)
                 for product in self.SEGMENT_IMG_PRODUCTS:
                     segment_pub_topic = os.path.join(pub_namespace, product['data_product'])
-                    self.img_node_dict[source_topic][product['pub_key']] = nepi_sdk.create_publisher(segment_pub_topic, Image, queue_size = 1, log_name_list = [])
+                    self.img_node_dict[source_topic][product['pub_key']] = nepi_sdk.create_publisher(segment_pub_topic, Image, queue_size = 1)
                 nepi_sdk.sleep(1)
-                self.img_node_dict[source_topic]['img_sub'] = nepi_sdk.create_subscriber(source_topic, Image, self.imageCb, queue_size = 1, callback_args = (source_topic), log_name_list = [])
+                self.img_node_dict[source_topic]['img_sub'] = nepi_sdk.create_subscriber(source_topic, Image, self.imageCb, queue_size = 1, callback_args = (source_topic))
                 img_status_topic = nepi_sdk.create_namespace(source_topic, 'status')
-                self.img_node_dict[source_topic]['img_status_sub'] = nepi_sdk.create_subscriber(img_status_topic, ImageStatus, self.imageStatusCb, queue_size = 1, callback_args = (source_topic), log_name_list = [])
+                self.img_node_dict[source_topic]['img_status_sub'] = nepi_sdk.create_subscriber(img_status_topic, ImageStatus, self.imageStatusCb, queue_size = 1, callback_args = (source_topic))
                 self.img_node_dict[source_topic]['img_if'].register_pubs()
                 for product in self.SEGMENT_IMG_PRODUCTS:
                     segment_if = self.img_node_dict[source_topic][product['if_key']]
@@ -676,11 +676,11 @@ class ObstaclesImgPub:
 
         self.msg_if.pub_info('Publishing image ' + source_topic + ' on namespace: ' + img_pub_topic)
 
-        img_pub = nepi_sdk.create_publisher(img_pub_topic, Image, queue_size = 1, log_name_list = [])
+        img_pub = nepi_sdk.create_publisher(img_pub_topic, Image, queue_size = 1)
         nepi_sdk.sleep(1)
-        img_sub = nepi_sdk.create_subscriber(source_topic, Image, self.imageCb, queue_size = 1, callback_args = (source_topic), log_name_list = [])
+        img_sub = nepi_sdk.create_subscriber(source_topic, Image, self.imageCb, queue_size = 1, callback_args = (source_topic))
         img_status_topic = nepi_sdk.create_namespace(source_topic, 'status')
-        img_status_sub = nepi_sdk.create_subscriber(img_status_topic, ImageStatus, self.imageStatusCb, queue_size = 1, callback_args = (source_topic), log_name_list = [])
+        img_status_sub = nepi_sdk.create_subscriber(img_status_topic, ImageStatus, self.imageStatusCb, queue_size = 1, callback_args = (source_topic))
 
         # Create obstacles image publisher
         img_if = ColorImageIF(namespace = pub_namespace,
@@ -692,8 +692,6 @@ class ObstaclesImgPub:
                         init_overlay_text_list = [],
                         live_adjustments_disabled = True,
                         aspect_adjustment_disabled = True,
-                        log_name = self.OBSTACLES_IMG_DATA_PRODUCT,
-                        log_name_list = [],
                         msg_if = self.msg_if)
 
         # Create the two segmentation image publishers beside the overlay one.
@@ -705,7 +703,7 @@ class ObstaclesImgPub:
             data_product = product['data_product']
             segment_pub_topic = os.path.join(pub_namespace, data_product)
             self.msg_if.pub_info('Publishing image ' + source_topic + ' on namespace: ' + segment_pub_topic)
-            segment_nodes_dict[product['pub_key']] = nepi_sdk.create_publisher(segment_pub_topic, Image, queue_size = 1, log_name_list = [])
+            segment_nodes_dict[product['pub_key']] = nepi_sdk.create_publisher(segment_pub_topic, Image, queue_size = 1)
             segment_nodes_dict[product['if_key']] = ColorImageIF(namespace = pub_namespace,
                             data_product = data_product,
                             data_source_description = 'image',
@@ -715,8 +713,6 @@ class ObstaclesImgPub:
                             init_overlay_text_list = [],
                             live_adjustments_disabled = True,
                             aspect_adjustment_disabled = True,
-                            log_name = data_product,
-                            log_name_list = [],
                             msg_if = self.msg_if)
 
         self.img_node_lock.acquire()
